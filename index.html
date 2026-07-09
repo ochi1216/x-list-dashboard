@@ -251,6 +251,7 @@ function speakCurrent() {
     activeUrl = flatOrder[idx].post_url;
     highlightActiveRow(true);
   }
+  markAsRead([flatOrder[idx].post_url]);
   const utter = new SpeechSynthesisUtterance(speechText(idx));
   utter.lang = "ja-JP";
   utter.rate = currentSpeedRate;
