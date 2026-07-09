@@ -8,8 +8,13 @@
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body { font-family: -apple-system, "Segoe UI", "Hiragino Sans", sans-serif; max-width: 960px; margin: 0 auto; padding: 12px; background: #0f1115; color: #e8e8e8; font-size: 16px; }
-  h1 { font-size: 17px; margin: 4px 0 10px; }
+  .header-bar { position: sticky; top: 0; z-index: 20; background: #0f1115; padding-top: 2px; margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
+  .header-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; }
+  h1 { font-size: 17px; margin: 0; }
+  #accordionToggle { background: none; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 14px; cursor: pointer; padding: 4px 10px; line-height: 1; flex-shrink: 0; }
+  #accordionToggle:hover { background: #1a1d24; }
   .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; padding: 10px; background: #1a1d24; border-radius: 8px; }
+  .controls.collapsed { display: none; }
   .controls input[type="text"] { flex: 1 1 100%; min-width: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid #333; background: #0f1115; color: #eee; font-size: 16px; }
   .controls select { padding: 8px 8px; border-radius: 8px; border: 1px solid #333; background: #0f1115; color: #eee; font-size: 15px; }
   .controls label { display: flex; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap; }
@@ -50,6 +55,7 @@
 
   @media (min-width: 640px) {
     body { font-size: 14px; padding: 16px; }
+    .header-bar { margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
     h1 { font-size: 18px; }
     .controls input[type="text"] { flex: 1; min-width: 160px; }
     .row { flex-direction: row; align-items: baseline; column-gap: 10px; padding: 7px 10px 7px 7px; font-size: 14px; }
@@ -64,21 +70,26 @@
 </style>
 </head>
 <body>
-<h1>Xリスト ダイジェスト（直近1ヶ月・1行1件）</h1>
-<div class="controls">
-  <label><input type="checkbox" id="starOnly"> ★のみ表示</label>
-  <label><input type="checkbox" id="unreadOnly"> 未読のみ表示</label>
-  <label><input type="checkbox" id="groupByAuthor" checked> 投稿者でグループ化</label>
-  <select id="groupSort">
-    <option value="count_desc">投稿数が多い順</option>
-    <option value="count_asc">投稿数が少ない順</option>
-    <option value="name_asc">投稿者名 A→Z</option>
-    <option value="name_desc">投稿者名 Z→A</option>
-  </select>
-  <input type="text" id="search" placeholder="投稿者・本文で検索">
-  <button id="reload">再読込</button>
-  <button id="toggleAll" class="primary">すべて閉じる</button>
-  <button id="markAllRead">すべて既読</button>
+<div class="header-bar" id="headerBar">
+  <div class="header-title-row">
+    <h1 id="pageTitle">Xリスト ダイジェスト（未読 0件）</h1>
+    <button id="accordionToggle" aria-expanded="true">▲ 閉じる</button>
+  </div>
+  <div class="controls" id="controlsPanel">
+    <label><input type="checkbox" id="starOnly"> ★のみ表示</label>
+    <label><input type="checkbox" id="unreadOnly"> 未読のみ表示</label>
+    <label><input type="checkbox" id="groupByAuthor" checked> 投稿者でグループ化</label>
+    <select id="groupSort">
+      <option value="count_desc">投稿数が多い順</option>
+      <option value="count_asc">投稿数が少ない順</option>
+      <option value="name_asc">投稿者名 A→Z</option>
+      <option value="name_desc">投稿者名 Z→A</option>
+    </select>
+    <input type="text" id="search" placeholder="投稿者・本文で検索">
+    <button id="reload">再読込</button>
+    <button id="toggleAll" class="primary">すべて閉じる</button>
+    <button id="markAllRead">すべて既読</button>
+  </div>
 </div>
 <div id="status">読み込み中...</div>
 <div id="list"></div>
@@ -210,6 +221,9 @@ function render() {
   const listEl = document.getElementById("list");
   listEl.innerHTML = "";
 
+  const unreadCount = posts.filter(p => !p.is_read).length;
+  document.getElementById("pageTitle").textContent = `Xリスト ダイジェスト（未読 ${unreadCount}件）`;
+
   document.getElementById("groupSort").disabled = !grouped;
 
   const filtered = posts.filter(p => {
@@ -280,6 +294,14 @@ document.getElementById("toggleAll").addEventListener("click", () => {
   }
   document.getElementById("toggleAll").textContent = allExpanded ? "すべて閉じる" : "すべて開く";
   render();
+});
+
+document.getElementById("accordionToggle").addEventListener("click", () => {
+  const panel = document.getElementById("controlsPanel");
+  const btn = document.getElementById("accordionToggle");
+  const collapsed = panel.classList.toggle("collapsed");
+  btn.setAttribute("aria-expanded", String(!collapsed));
+  btn.textContent = collapsed ? "▼ フィルター" : "▲ 閉じる";
 });
 
 load();
