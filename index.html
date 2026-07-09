@@ -24,7 +24,14 @@
   .controls button.primary { background: #b8860b; border-color: #b8860b; color: #111; font-weight: 600; }
   .controls button.primary:hover { background: #cc9a1c; }
   #status { font-size: 12px; color: #888; margin-bottom: 8px; }
-  .group-header { display: flex; align-items: center; gap: 8px; padding: 9px 12px; margin-top: 10px; background: #1a1d24; border-radius: 6px 6px 0 0; font-size: 14px; color: #ccc; position: sticky; top: 0; flex-wrap: wrap; }
+  /* Each author's header+rows are wrapped in .group so position:sticky's
+     containing block is just that group — the header stays pinned for
+     exactly its own group's scroll range, then hands off to the next.
+     Extra padding-bottom makes the outgoing header linger a little into
+     the next group's first rows, giving a grace window to tap "mark read"
+     right after finishing that author's posts. */
+  .group { position: relative; padding-bottom: 36px; }
+  .group-header { display: flex; align-items: center; gap: 8px; padding: 9px 12px; margin-top: 10px; background: #1a1d24; border-radius: 6px 6px 0 0; font-size: 14px; color: #ccc; position: sticky; top: var(--header-h, 0px); z-index: 10; flex-wrap: wrap; }
   .group-header .gh-name { color: #6cb8ff; font-weight: 600; }
   .group-header .gh-count { color: #888; }
   .group-header .gh-read-btn { margin-left: auto; padding: 4px 10px; border-radius: 6px; border: 1px solid #333; background: #23272f; color: #ccc; cursor: pointer; font-size: 12px; }
@@ -45,7 +52,7 @@
   .row .star.on { color: gold; }
   .row .star.off { color: #444; }
   .row .handle { color: #6cb8ff; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-  .row .gist { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+  .row .gist { color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
   .row .nogist { color: #666; font-style: italic; }
 
   .detail { padding: 10px 14px 16px; background: #15171d; font-size: 15px; line-height: 1.6; }
@@ -130,9 +137,13 @@ function escapeHtml(s) {
 }
 
 async function markAsRead(postUrls) {
+  return setReadState(postUrls, true);
+}
+
+async function setReadState(postUrls, markRead) {
   const targets = postUrls.filter((u) => {
     const p = posts.find((p) => p.post_url === u);
-    return p && !p.is_read;
+    return p && p.is_read !== markRead;
   });
   if (targets.length === 0) return;
   const inList = targets.map((u) => encodeURIComponent(u)).join(",");
@@ -140,16 +151,21 @@ async function markAsRead(postUrls) {
     await sbFetch(`x_posts?post_url=in.(${inList})`, {
       method: "PATCH",
       headers: { Prefer: "return=minimal" },
-      body: JSON.stringify({ is_read: true }),
+      body: JSON.stringify({ is_read: markRead }),
     });
     for (const u of targets) {
       const p = posts.find((p) => p.post_url === u);
-      if (p) p.is_read = true;
+      if (p) p.is_read = markRead;
     }
     render();
   } catch (err) {
-    console.error("mark as read failed", err);
+    console.error("read state update failed", err);
   }
+}
+
+function updateHeaderHeightVar() {
+  const h = document.getElementById("headerBar").offsetHeight;
+  document.documentElement.style.setProperty("--header-h", `${h}px`);
 }
 
 async function load() {
@@ -223,6 +239,7 @@ function render() {
 
   const unreadCount = posts.filter(p => !p.is_read).length;
   document.getElementById("pageTitle").textContent = `Xリスト ダイジェスト（未読 ${unreadCount}件）`;
+  document.getElementById("markAllRead").textContent = (posts.length > 0 && unreadCount === 0) ? "すべて未読に戻す" : "すべて既読";
 
   document.getElementById("groupSort").disabled = !grouped;
 
@@ -239,6 +256,7 @@ function render() {
       listEl.appendChild(row);
       listEl.appendChild(detail);
     }
+    updateHeaderHeightVar();
     return;
   }
 
@@ -259,19 +277,26 @@ function render() {
   });
 
   for (const g of groupList) {
+    const groupEl = document.createElement("div");
+    groupEl.className = "group";
+
+    const allRead = g.posts.every((p) => p.is_read);
     const header = document.createElement("div");
     header.className = "group-header";
-    header.innerHTML = `<span class="gh-name">${escapeHtml(g.author_handle)}</span> <span>${escapeHtml(g.author_name||"")}</span> <span class="gh-count">${g.posts.length}件</span> <button class="gh-read-btn">既読にする</button>`;
+    header.innerHTML = `<span class="gh-name">${escapeHtml(g.author_handle)}</span> <span>${escapeHtml(g.author_name||"")}</span> <span class="gh-count">${g.posts.length}件</span> <button class="gh-read-btn">${allRead ? "未読に戻す" : "既読にする"}</button>`;
     header.querySelector(".gh-read-btn").addEventListener("click", () => {
-      markAsRead(g.posts.map((p) => p.post_url));
+      setReadState(g.posts.map((p) => p.post_url), !allRead);
     });
-    listEl.appendChild(header);
+    groupEl.appendChild(header);
     for (const p of g.posts) {
       const { row, detail } = buildRow(p);
-      listEl.appendChild(row);
-      listEl.appendChild(detail);
+      groupEl.appendChild(row);
+      groupEl.appendChild(detail);
     }
+    listEl.appendChild(groupEl);
   }
+
+  updateHeaderHeightVar();
 }
 
 document.getElementById("starOnly").addEventListener("change", render);
@@ -281,7 +306,8 @@ document.getElementById("groupSort").addEventListener("change", render);
 document.getElementById("search").addEventListener("input", render);
 document.getElementById("reload").addEventListener("click", load);
 document.getElementById("markAllRead").addEventListener("click", () => {
-  markAsRead(posts.map((p) => p.post_url));
+  const allRead = posts.length > 0 && posts.every((p) => p.is_read);
+  setReadState(posts.map((p) => p.post_url), !allRead);
 });
 
 let allExpanded = true; // matches the default (empty collapsedUrls = all expanded)
@@ -302,7 +328,10 @@ document.getElementById("accordionToggle").addEventListener("click", () => {
   const collapsed = panel.classList.toggle("collapsed");
   btn.setAttribute("aria-expanded", String(!collapsed));
   btn.textContent = collapsed ? "▼ フィルター" : "▲ 閉じる";
+  updateHeaderHeightVar();
 });
+
+window.addEventListener("resize", updateHeaderHeightVar);
 
 load();
 </script>
