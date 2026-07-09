@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Xリスト ダイジェスト</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, "Segoe UI", "Hiragino Sans", sans-serif; max-width: 960px; margin: 0 auto; padding: 12px; background: #0f1115; color: #e8e8e8; font-size: 16px; }
+  h1 { font-size: 17px; margin: 4px 0 10px; }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; padding: 10px; background: #1a1d24; border-radius: 8px; }
+  .controls input[type="text"] { flex: 1 1 100%; min-width: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid #333; background: #0f1115; color: #eee; font-size: 16px; }
+  .controls select { padding: 8px 8px; border-radius: 8px; border: 1px solid #333; background: #0f1115; color: #eee; font-size: 15px; }
+  .controls label { display: flex; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap; }
+  .controls input[type="checkbox"] { width: 18px; height: 18px; }
+  .controls button { padding: 9px 14px; border-radius: 8px; border: 1px solid #333; background: #23272f; color: #eee; cursor: pointer; font-size: 14px; }
+  .controls button:hover { background: #2c313b; }
+  .controls button.primary { background: #b8860b; border-color: #b8860b; color: #111; font-weight: 600; }
+  .controls button.primary:hover { background: #cc9a1c; }
+  #status { font-size: 12px; color: #888; margin-bottom: 8px; }
+  .group-header { display: flex; align-items: center; gap: 8px; padding: 9px 12px; margin-top: 10px; background: #1a1d24; border-radius: 6px 6px 0 0; font-size: 14px; color: #ccc; position: sticky; top: 0; flex-wrap: wrap; }
+  .group-header .gh-name { color: #6cb8ff; font-weight: 600; }
+  .group-header .gh-count { color: #888; }
+
+  /* Row: mobile-first — stacked (date/star/handle on top, gist below).
+     row-main uses display:contents at wider widths so it collapses into
+     the outer flex row for a single-line desktop layout. */
+  .row { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-bottom: 1px solid #22252c; cursor: pointer; font-size: 16px; }
+  .row:hover { background: #1a1d24; }
+  .row-main { display: flex; align-items: center; gap: 8px; }
+  .row .date { color: #888; font-size: 13px; white-space: nowrap; }
+  .row .star { cursor: pointer; font-size: 20px; line-height: 1; padding: 2px 4px; margin: -2px -4px; }
+  .row .star.on { color: gold; }
+  .row .star.off { color: #444; }
+  .row .handle { color: #6cb8ff; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .row .gist { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+  .row .nogist { color: #666; font-style: italic; }
+
+  .detail { padding: 10px 14px 16px; background: #15171d; font-size: 15px; line-height: 1.6; }
+  .detail a { color: #6cb8ff; display: inline-block; margin-top: 4px; }
+  .detail .tldr { font-size: 15px; color: #ddd; margin-bottom: 6px; }
+  .hidden { display: none; }
+
+  @media (min-width: 640px) {
+    body { font-size: 14px; padding: 16px; }
+    h1 { font-size: 18px; }
+    .controls input[type="text"] { flex: 1; min-width: 160px; }
+    .row { flex-direction: row; align-items: baseline; column-gap: 10px; padding: 7px 10px; font-size: 14px; }
+    .row-main { display: contents; }
+    .row .date { width: 64px; flex-shrink: 0; font-size: 12px; }
+    .row .star { font-size: 16px; padding: 0; margin: 0; }
+    .row .handle { width: 150px; flex: 0 0 150px; }
+    .row .gist { flex: 1; font-size: 14px; }
+    .detail { padding-left: 96px; font-size: 13px; }
+    .detail .tldr { font-size: 14px; }
+  }
+</style>
+</head>
+<body>
+<h1>Xリスト ダイジェスト（直近1ヶ月・1行1件）</h1>
+<div class="controls">
+  <label><input type="checkbox" id="starOnly"> ★のみ表示</label>
+  <label><input type="checkbox" id="groupByAuthor" checked> 投稿者でグループ化</label>
+  <select id="groupSort">
+    <option value="count_desc">投稿数が多い順</option>
+    <option value="count_asc">投稿数が少ない順</option>
+    <option value="name_asc">投稿者名 A→Z</option>
+    <option value="name_desc">投稿者名 Z→A</option>
+  </select>
+  <input type="text" id="search" placeholder="投稿者・本文で検索">
+  <button id="reload">再読込</button>
+  <button id="toggleAll" class="primary">すべて閉じる</button>
+</div>
+<div id="status">読み込み中...</div>
+<div id="list"></div>
+
+<script>
+const SUPABASE_URL = "https://bpdkdwtevqsqgsxlahmd.supabase.co";
+const SUPABASE_KEY = "sb_publishable_obsKI3CBaB3PtU4Et5FE_w_Iup1JTZW";
+
+async function sbFetch(path, options = {}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${text}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+let posts = [];
+let collapsedUrls = new Set(); // post_urls whose detail is manually hidden — empty means all expanded (default)
+
+function fmtDate(iso) {
+  if (!iso) return "----/--/--";
+  const d = new Date(iso);
+  return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+async function load() {
+  document.getElementById("status").textContent = "読み込み中...";
+  const oneMonthAgo = new Date(Date.now() - 30*24*60*60*1000).toISOString();
+  const filter = `or=(posted_at.gte.${oneMonthAgo},posted_at.is.null)`;
+  try {
+    const data = await sbFetch(`x_posts?select=*&${filter}&order=fetched_at.desc`);
+    posts = data || [];
+    document.getElementById("status").textContent = `${posts.length}件`;
+    render();
+  } catch (err) {
+    document.getElementById("status").textContent = "読み込みエラー: " + err.message;
+  }
+}
+
+function buildRow(p) {
+  const row = document.createElement("div");
+  row.className = "row";
+  const hasGist = !!p.gist;
+  const gistText = p.gist || (p.content || "").replace(/\s+/g, " ").slice(0, 60);
+  row.innerHTML = `
+    <div class="row-main">
+      <span class="date">${fmtDate(p.posted_at || p.fetched_at)}</span>
+      <span class="star ${p.is_starred ? "on" : "off"}">★</span>
+      <span class="handle">${escapeHtml(p.author_handle)}</span>
+    </div>
+    <span class="gist ${hasGist ? "" : "nogist"}">${escapeHtml(gistText)}</span>
+  `;
+  const detail = document.createElement("div");
+  detail.className = "detail" + (collapsedUrls.has(p.post_url) ? " hidden" : "");
+  detail.innerHTML = `
+    <div class="tldr">${p.summary ? escapeHtml(p.summary) : "まだ要約がありません。チャットで「この投稿要約して」と頼んでください。"}</div>
+    <a href="${escapeHtml(p.post_url)}" target="_blank" rel="noopener">元投稿を開く</a>
+  `;
+  row.addEventListener("click", (e) => {
+    if (e.target.classList.contains("star")) return;
+    const isHidden = detail.classList.toggle("hidden");
+    if (isHidden) collapsedUrls.add(p.post_url);
+    else collapsedUrls.delete(p.post_url);
+  });
+  row.querySelector(".star").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const newVal = !p.is_starred;
+    try {
+      await sbFetch(`x_posts?post_url=eq.${encodeURIComponent(p.post_url)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ is_starred: newVal }),
+      });
+      p.is_starred = newVal;
+      render();
+    } catch (err) {
+      console.error("star update failed", err);
+    }
+  });
+  return { row, detail };
+}
+
+function render() {
+  const starOnly = document.getElementById("starOnly").checked;
+  const grouped = document.getElementById("groupByAuthor").checked;
+  const groupSort = document.getElementById("groupSort").value;
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const listEl = document.getElementById("list");
+  listEl.innerHTML = "";
+
+  document.getElementById("groupSort").disabled = !grouped;
+
+  const filtered = posts.filter(p => {
+    if (starOnly && !p.is_starred) return false;
+    if (q && !((p.content||"").toLowerCase().includes(q) || (p.author_handle||"").toLowerCase().includes(q) || (p.author_name||"").toLowerCase().includes(q))) return false;
+    return true;
+  });
+
+  if (!grouped) {
+    for (const p of filtered) {
+      const { row, detail } = buildRow(p);
+      listEl.appendChild(row);
+      listEl.appendChild(detail);
+    }
+    return;
+  }
+
+  const groups = new Map();
+  for (const p of filtered) {
+    const key = p.author_handle || "(unknown)";
+    if (!groups.has(key)) groups.set(key, { author_handle: p.author_handle, author_name: p.author_name, posts: [] });
+    groups.get(key).posts.push(p);
+  }
+
+  let groupList = Array.from(groups.values());
+  groupList.sort((a, b) => {
+    if (groupSort === "count_desc") return b.posts.length - a.posts.length;
+    if (groupSort === "count_asc") return a.posts.length - b.posts.length;
+    if (groupSort === "name_asc") return (a.author_handle||"").localeCompare(b.author_handle||"");
+    if (groupSort === "name_desc") return (b.author_handle||"").localeCompare(a.author_handle||"");
+    return 0;
+  });
+
+  for (const g of groupList) {
+    const header = document.createElement("div");
+    header.className = "group-header";
+    header.innerHTML = `<span class="gh-name">${escapeHtml(g.author_handle)}</span> <span>${escapeHtml(g.author_name||"")}</span> <span class="gh-count">${g.posts.length}件</span>`;
+    listEl.appendChild(header);
+    for (const p of g.posts) {
+      const { row, detail } = buildRow(p);
+      listEl.appendChild(row);
+      listEl.appendChild(detail);
+    }
+  }
+}
+
+document.getElementById("starOnly").addEventListener("change", render);
+document.getElementById("groupByAuthor").addEventListener("change", render);
+document.getElementById("groupSort").addEventListener("change", render);
+document.getElementById("search").addEventListener("input", render);
+document.getElementById("reload").addEventListener("click", load);
+
+let allExpanded = true; // matches the default (empty collapsedUrls = all expanded)
+document.getElementById("toggleAll").addEventListener("click", () => {
+  allExpanded = !allExpanded;
+  if (allExpanded) {
+    collapsedUrls.clear();
+  } else {
+    for (const p of posts) collapsedUrls.add(p.post_url);
+  }
+  document.getElementById("toggleAll").textContent = allExpanded ? "すべて閉じる" : "すべて開く";
+  render();
+});
+
+load();
+</script>
+</body>
+</html>
