@@ -211,11 +211,35 @@ function highlightActiveRow(scroll) {
   }
 }
 
-function speechText(p) {
-  const who = p.author_name ? `${p.author_name} さん` : (p.author_handle || "");
+function groupInfoForIndex(idx) {
+  let start = 0;
+  for (const b of authorBoundaries) {
+    if (b <= idx) start = b;
+    else break;
+  }
+  const nextBoundary = authorBoundaries.find((b) => b > idx);
+  const end = nextBoundary !== undefined ? nextBoundary : flatOrder.length;
+  return { position: idx - start + 1, total: end - start };
+}
+
+function speechText(idx) {
+  const grouped = document.getElementById("groupByAuthor").checked;
+  const p = flatOrder[idx];
   const theme = p.gist || (p.content || "").replace(/\s+/g, " ").slice(0, 60);
   const body = p.summary || "要約はまだありません。";
-  return `${who}。${theme}。${body}`;
+
+  if (!grouped) {
+    const who = p.author_name || p.author_handle || "";
+    return `${who}。${theme}。${body}`;
+  }
+
+  const info = groupInfoForIndex(idx);
+  let prefix = "";
+  if (info.position === 1) {
+    const who = p.author_name || p.author_handle || "";
+    prefix = `${who} ${info.total}件の投稿です。`;
+  }
+  return `${prefix}${info.position}. ${theme}。${body}`;
 }
 
 function speakCurrent() {
@@ -227,8 +251,7 @@ function speakCurrent() {
     activeUrl = flatOrder[idx].post_url;
     highlightActiveRow(true);
   }
-  const p = flatOrder[idx];
-  const utter = new SpeechSynthesisUtterance(speechText(p));
+  const utter = new SpeechSynthesisUtterance(speechText(idx));
   utter.lang = "ja-JP";
   utter.rate = currentSpeedRate;
   utter.onend = () => {
