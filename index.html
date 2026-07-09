@@ -22,11 +22,17 @@
   .group-header { display: flex; align-items: center; gap: 8px; padding: 9px 12px; margin-top: 10px; background: #1a1d24; border-radius: 6px 6px 0 0; font-size: 14px; color: #ccc; position: sticky; top: 0; flex-wrap: wrap; }
   .group-header .gh-name { color: #6cb8ff; font-weight: 600; }
   .group-header .gh-count { color: #888; }
+  .group-header .gh-read-btn { margin-left: auto; padding: 4px 10px; border-radius: 6px; border: 1px solid #333; background: #23272f; color: #ccc; cursor: pointer; font-size: 12px; }
+  .group-header .gh-read-btn:hover { background: #2c313b; }
 
   /* Row: mobile-first — stacked (date/star/handle on top, gist below).
      row-main uses display:contents at wider widths so it collapses into
-     the outer flex row for a single-line desktop layout. */
-  .row { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-bottom: 1px solid #22252c; cursor: pointer; font-size: 16px; }
+     the outer flex row for a single-line desktop layout.
+     border-left is reserved (transparent) at all times so the gray "read"
+     bar appearing doesn't shift layout. */
+  .row { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px 10px 9px; border-bottom: 1px solid #22252c; border-left: 3px solid transparent; cursor: pointer; font-size: 16px; }
+  .row.read { border-left-color: #55595f; }
+  .row.read .gist { color: #8a8f96; }
   .row:hover { background: #1a1d24; }
   .row-main { display: flex; align-items: center; gap: 8px; }
   .row .date { color: #888; font-size: 13px; white-space: nowrap; }
@@ -46,7 +52,7 @@
     body { font-size: 14px; padding: 16px; }
     h1 { font-size: 18px; }
     .controls input[type="text"] { flex: 1; min-width: 160px; }
-    .row { flex-direction: row; align-items: baseline; column-gap: 10px; padding: 7px 10px; font-size: 14px; }
+    .row { flex-direction: row; align-items: baseline; column-gap: 10px; padding: 7px 10px 7px 7px; font-size: 14px; }
     .row-main { display: contents; }
     .row .date { width: 64px; flex-shrink: 0; font-size: 12px; }
     .row .star { font-size: 16px; padding: 0; margin: 0; }
@@ -61,6 +67,7 @@
 <h1>Xリスト ダイジェスト（直近1ヶ月・1行1件）</h1>
 <div class="controls">
   <label><input type="checkbox" id="starOnly"> ★のみ表示</label>
+  <label><input type="checkbox" id="unreadOnly"> 未読のみ表示</label>
   <label><input type="checkbox" id="groupByAuthor" checked> 投稿者でグループ化</label>
   <select id="groupSort">
     <option value="count_desc">投稿数が多い順</option>
@@ -71,6 +78,7 @@
   <input type="text" id="search" placeholder="投稿者・本文で検索">
   <button id="reload">再読込</button>
   <button id="toggleAll" class="primary">すべて閉じる</button>
+  <button id="markAllRead">すべて既読</button>
 </div>
 <div id="status">読み込み中...</div>
 <div id="list"></div>
@@ -110,6 +118,29 @@ function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
+async function markAsRead(postUrls) {
+  const targets = postUrls.filter((u) => {
+    const p = posts.find((p) => p.post_url === u);
+    return p && !p.is_read;
+  });
+  if (targets.length === 0) return;
+  const inList = targets.map((u) => encodeURIComponent(u)).join(",");
+  try {
+    await sbFetch(`x_posts?post_url=in.(${inList})`, {
+      method: "PATCH",
+      headers: { Prefer: "return=minimal" },
+      body: JSON.stringify({ is_read: true }),
+    });
+    for (const u of targets) {
+      const p = posts.find((p) => p.post_url === u);
+      if (p) p.is_read = true;
+    }
+    render();
+  } catch (err) {
+    console.error("mark as read failed", err);
+  }
+}
+
 async function load() {
   document.getElementById("status").textContent = "読み込み中...";
   const oneMonthAgo = new Date(Date.now() - 30*24*60*60*1000).toISOString();
@@ -126,7 +157,7 @@ async function load() {
 
 function buildRow(p) {
   const row = document.createElement("div");
-  row.className = "row";
+  row.className = "row" + (p.is_read ? " read" : "");
   const hasGist = !!p.gist;
   const gistText = p.gist || (p.content || "").replace(/\s+/g, " ").slice(0, 60);
   row.innerHTML = `
@@ -164,11 +195,15 @@ function buildRow(p) {
       console.error("star update failed", err);
     }
   });
+  detail.querySelector("a").addEventListener("click", () => {
+    markAsRead([p.post_url]);
+  });
   return { row, detail };
 }
 
 function render() {
   const starOnly = document.getElementById("starOnly").checked;
+  const unreadOnly = document.getElementById("unreadOnly").checked;
   const grouped = document.getElementById("groupByAuthor").checked;
   const groupSort = document.getElementById("groupSort").value;
   const q = document.getElementById("search").value.trim().toLowerCase();
@@ -179,6 +214,7 @@ function render() {
 
   const filtered = posts.filter(p => {
     if (starOnly && !p.is_starred) return false;
+    if (unreadOnly && p.is_read) return false;
     if (q && !((p.content||"").toLowerCase().includes(q) || (p.author_handle||"").toLowerCase().includes(q) || (p.author_name||"").toLowerCase().includes(q))) return false;
     return true;
   });
@@ -211,7 +247,10 @@ function render() {
   for (const g of groupList) {
     const header = document.createElement("div");
     header.className = "group-header";
-    header.innerHTML = `<span class="gh-name">${escapeHtml(g.author_handle)}</span> <span>${escapeHtml(g.author_name||"")}</span> <span class="gh-count">${g.posts.length}件</span>`;
+    header.innerHTML = `<span class="gh-name">${escapeHtml(g.author_handle)}</span> <span>${escapeHtml(g.author_name||"")}</span> <span class="gh-count">${g.posts.length}件</span> <button class="gh-read-btn">既読にする</button>`;
+    header.querySelector(".gh-read-btn").addEventListener("click", () => {
+      markAsRead(g.posts.map((p) => p.post_url));
+    });
     listEl.appendChild(header);
     for (const p of g.posts) {
       const { row, detail } = buildRow(p);
@@ -222,10 +261,14 @@ function render() {
 }
 
 document.getElementById("starOnly").addEventListener("change", render);
+document.getElementById("unreadOnly").addEventListener("change", render);
 document.getElementById("groupByAuthor").addEventListener("change", render);
 document.getElementById("groupSort").addEventListener("change", render);
 document.getElementById("search").addEventListener("input", render);
 document.getElementById("reload").addEventListener("click", load);
+document.getElementById("markAllRead").addEventListener("click", () => {
+  markAsRead(posts.map((p) => p.post_url));
+});
 
 let allExpanded = true; // matches the default (empty collapsedUrls = all expanded)
 document.getElementById("toggleAll").addEventListener("click", () => {
