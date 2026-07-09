@@ -60,6 +60,22 @@
   .detail .tldr { font-size: 15px; color: #ddd; margin-bottom: 6px; }
   .hidden { display: none; }
 
+  .row.active-read { background: rgba(229,62,62,0.12); box-shadow: inset 0 0 0 2px rgba(229,62,62,0.6); }
+
+  /* 読み上げ用フローティングボタン（ホバーボタン） */
+  .fab-container { position: fixed; top: 50%; right: 10px; transform: translateY(-50%); display: flex; flex-direction: column; gap: 10px; z-index: 500; pointer-events: none; }
+  .fab { position: relative; pointer-events: auto; width: 50px; height: 50px; border-radius: 25px; background: rgba(255,255,255,0.08); color: #6cb8ff; border: 1px solid rgba(108,184,255,0.35); box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; justify-content: center; align-items: center; cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; font-size: 19px; transition: transform 0.12s, background 0.12s; touch-action: manipulation; }
+  .fab:active { transform: scale(0.92); }
+  .fab.author-nav { font-size: 15px; }
+  .fab.primary { border: 2px solid #6cb8ff; }
+  .fab.primary.playing { background: rgba(229,62,62,0.8); color: #fff; border-color: transparent; }
+  .fab.speed { font-size: 13px; font-weight: bold; overflow: visible; }
+
+  .speed-hover-group { position: absolute; right: 58px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: row; gap: 5px; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; white-space: nowrap; }
+  .speed-hover-group.visible { opacity: 1; pointer-events: auto; }
+  .speed-hover-btn { width: 38px; height: 38px; border-radius: 19px; background: rgba(15,17,21,0.95); color: #6cb8ff; border: 1px solid rgba(108,184,255,0.45); box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; justify-content: center; align-items: center; cursor: pointer; font-size: 11px; font-weight: bold; touch-action: manipulation; }
+  .speed-hover-btn.active-speed { background: #3182ce; color: #fff; border-color: #3182ce; }
+
   @media (min-width: 640px) {
     body { font-size: 14px; padding: 16px; }
     .header-bar { margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
@@ -101,6 +117,15 @@
 <div id="status">読み込み中...</div>
 <div id="list"></div>
 
+<div class="fab-container" id="fabContainer">
+  <div class="fab speed" id="btnSpeed">1.5x<div class="speed-hover-group" id="speedHoverGroup"></div></div>
+  <div class="fab author-nav" id="btnAuthorPrev" title="前の投稿者へ">⏫</div>
+  <div class="fab" id="btnCardPrev" title="前のカードへ">▲</div>
+  <div class="fab" id="btnCardNext" title="次のカードへ">▼</div>
+  <div class="fab author-nav" id="btnAuthorNext" title="次の投稿者へ">⏬</div>
+  <div class="fab primary" id="btnPlayPause" title="読み上げ開始/停止">▶️</div>
+</div>
+
 <script>
 const SUPABASE_URL = "https://bpdkdwtevqsqgsxlahmd.supabase.co";
 const SUPABASE_KEY = "sb_publishable_obsKI3CBaB3PtU4Et5FE_w_Iup1JTZW";
@@ -125,6 +150,14 @@ async function sbFetch(path, options = {}) {
 
 let posts = [];
 let collapsedUrls = new Set(); // post_urls whose detail is manually hidden — empty means all expanded (default)
+
+// 読み上げ（TTS）関連の状態
+let flatOrder = [];        // 現在の表示順で並んだpostsのフラット配列（フィルタ/グループ/ソート後）
+let authorBoundaries = []; // flatOrder中で「投稿者が変わる/新グループが始まる」インデックス
+let activeUrl = null;      // 現在ハイライト＆読み上げ対象のpost_url
+let isPlaying = false;
+let currentSpeedRate = 1.5;
+const speedOptions = [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
 function fmtDate(iso) {
   if (!iso) return "----/--/--";
@@ -168,6 +201,110 @@ function updateHeaderHeightVar() {
   document.documentElement.style.setProperty("--header-h", `${h}px`);
 }
 
+function highlightActiveRow(scroll) {
+  document.querySelectorAll(".row.active-read").forEach((el) => el.classList.remove("active-read"));
+  if (!activeUrl) return;
+  const rowEl = document.querySelector(`.row[data-url="${CSS.escape(activeUrl)}"]`);
+  if (rowEl) {
+    rowEl.classList.add("active-read");
+    if (scroll) rowEl.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
+function speechText(p) {
+  const who = p.author_name ? `${p.author_name} さん` : (p.author_handle || "");
+  const theme = p.gist || (p.content || "").replace(/\s+/g, " ").slice(0, 60);
+  const body = p.summary || "要約はまだありません。";
+  return `${who}。${theme}。${body}`;
+}
+
+function speakCurrent() {
+  window.speechSynthesis.cancel();
+  if (flatOrder.length === 0) return;
+  let idx = flatOrder.findIndex((p) => p.post_url === activeUrl);
+  if (idx === -1) {
+    idx = 0;
+    activeUrl = flatOrder[idx].post_url;
+    highlightActiveRow(true);
+  }
+  const p = flatOrder[idx];
+  const utter = new SpeechSynthesisUtterance(speechText(p));
+  utter.lang = "ja-JP";
+  utter.rate = currentSpeedRate;
+  utter.onend = () => {
+    if (!isPlaying) return;
+    const curIdx = flatOrder.findIndex((pp) => pp.post_url === activeUrl);
+    const nextIdx = curIdx + 1;
+    if (nextIdx < flatOrder.length) {
+      activeUrl = flatOrder[nextIdx].post_url;
+      highlightActiveRow(true);
+      speakCurrent();
+    } else {
+      isPlaying = false;
+      updatePlayButton();
+    }
+  };
+  window.speechSynthesis.speak(utter);
+}
+
+function updatePlayButton() {
+  const btn = document.getElementById("btnPlayPause");
+  btn.textContent = isPlaying ? "⏸️" : "▶️";
+  btn.classList.toggle("playing", isPlaying);
+}
+
+function moveCard(delta) {
+  if (flatOrder.length === 0) return;
+  let idx = flatOrder.findIndex((p) => p.post_url === activeUrl);
+  if (idx === -1) idx = delta > 0 ? -1 : 0;
+  idx = Math.min(Math.max(idx + delta, 0), flatOrder.length - 1);
+  activeUrl = flatOrder[idx].post_url;
+  highlightActiveRow(true);
+  if (isPlaying) speakCurrent();
+}
+
+function moveAuthor(delta) {
+  if (flatOrder.length === 0 || authorBoundaries.length === 0) return;
+  let idx = flatOrder.findIndex((p) => p.post_url === activeUrl);
+  if (idx === -1) idx = 0;
+  let newIdx;
+  if (delta > 0) {
+    const next = authorBoundaries.find((b) => b > idx);
+    newIdx = next !== undefined ? next : flatOrder.length - 1;
+  } else {
+    const prevCandidates = authorBoundaries.filter((b) => b < idx);
+    newIdx = prevCandidates.length ? prevCandidates[prevCandidates.length - 1] : 0;
+  }
+  activeUrl = flatOrder[newIdx].post_url;
+  highlightActiveRow(true);
+  if (isPlaying) speakCurrent();
+}
+
+function setSpeed(v) {
+  currentSpeedRate = v;
+  const btn = document.getElementById("btnSpeed");
+  const textNode = Array.from(btn.childNodes).find((n) => n.nodeType === Node.TEXT_NODE);
+  if (textNode) textNode.textContent = `${v}x`;
+  buildSpeedHoverGroup();
+  if (isPlaying) speakCurrent();
+}
+
+function buildSpeedHoverGroup() {
+  const group = document.getElementById("speedHoverGroup");
+  group.innerHTML = "";
+  for (const v of speedOptions) {
+    const btn = document.createElement("div");
+    btn.className = "speed-hover-btn" + (Math.abs(v - currentSpeedRate) < 0.01 ? " active-speed" : "");
+    btn.textContent = `${v}x`;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setSpeed(v);
+      document.getElementById("speedHoverGroup").classList.remove("visible");
+    });
+    group.appendChild(btn);
+  }
+}
+
 async function load() {
   document.getElementById("status").textContent = "読み込み中...";
   const oneMonthAgo = new Date(Date.now() - 30*24*60*60*1000).toISOString();
@@ -185,6 +322,7 @@ async function load() {
 function buildRow(p) {
   const row = document.createElement("div");
   row.className = "row" + (p.is_read ? " read" : "");
+  row.dataset.url = p.post_url;
   const hasGist = !!p.gist;
   const gistText = p.gist || (p.content || "").replace(/\s+/g, " ").slice(0, 60);
   row.innerHTML = `
@@ -206,6 +344,8 @@ function buildRow(p) {
     const isHidden = detail.classList.toggle("hidden");
     if (isHidden) collapsedUrls.add(p.post_url);
     else collapsedUrls.delete(p.post_url);
+    activeUrl = p.post_url;
+    highlightActiveRow(false);
   });
   row.querySelector(".star").addEventListener("click", async (e) => {
     e.stopPropagation();
@@ -236,6 +376,8 @@ function render() {
   const q = document.getElementById("search").value.trim().toLowerCase();
   const listEl = document.getElementById("list");
   listEl.innerHTML = "";
+  flatOrder = [];
+  authorBoundaries = [];
 
   const unreadCount = posts.filter(p => !p.is_read).length;
   document.getElementById("pageTitle").textContent = `Xリスト ダイジェスト（未読 ${unreadCount}件）`;
@@ -255,8 +397,13 @@ function render() {
       const { row, detail } = buildRow(p);
       listEl.appendChild(row);
       listEl.appendChild(detail);
+      if (flatOrder.length === 0 || flatOrder[flatOrder.length-1].author_handle !== p.author_handle) {
+        authorBoundaries.push(flatOrder.length);
+      }
+      flatOrder.push(p);
     }
     updateHeaderHeightVar();
+    highlightActiveRow(false);
     return;
   }
 
@@ -288,15 +435,18 @@ function render() {
       setReadState(g.posts.map((p) => p.post_url), !allRead);
     });
     groupEl.appendChild(header);
+    authorBoundaries.push(flatOrder.length);
     for (const p of g.posts) {
       const { row, detail } = buildRow(p);
       groupEl.appendChild(row);
       groupEl.appendChild(detail);
+      flatOrder.push(p);
     }
     listEl.appendChild(groupEl);
   }
 
   updateHeaderHeightVar();
+  highlightActiveRow(false);
 }
 
 document.getElementById("starOnly").addEventListener("change", render);
@@ -332,6 +482,50 @@ document.getElementById("accordionToggle").addEventListener("click", () => {
 });
 
 window.addEventListener("resize", updateHeaderHeightVar);
+
+document.getElementById("btnPlayPause").addEventListener("click", () => {
+  if (isPlaying) {
+    isPlaying = false;
+    window.speechSynthesis.cancel();
+  } else {
+    isPlaying = true;
+    speakCurrent();
+  }
+  updatePlayButton();
+});
+
+document.getElementById("btnCardPrev").addEventListener("click", () => moveCard(-1));
+document.getElementById("btnCardNext").addEventListener("click", () => moveCard(1));
+document.getElementById("btnAuthorPrev").addEventListener("click", () => moveAuthor(-1));
+document.getElementById("btnAuthorNext").addEventListener("click", () => moveAuthor(1));
+
+buildSpeedHoverGroup();
+const speedBtn = document.getElementById("btnSpeed");
+const speedHoverGroup = document.getElementById("speedHoverGroup");
+let speedPressTimer = null;
+let speedLongPressed = false;
+
+speedBtn.addEventListener("pointerdown", () => {
+  speedLongPressed = false;
+  speedPressTimer = setTimeout(() => {
+    speedLongPressed = true;
+    speedHoverGroup.classList.add("visible");
+  }, 450);
+});
+speedBtn.addEventListener("pointerup", (e) => {
+  clearTimeout(speedPressTimer);
+  if (e.target.closest(".speed-hover-btn")) return;
+  if (!speedLongPressed) {
+    let idx = speedOptions.indexOf(currentSpeedRate);
+    if (idx === -1) idx = 0;
+    idx = (idx + 1) % speedOptions.length;
+    setSpeed(speedOptions[idx]);
+  }
+});
+speedBtn.addEventListener("pointerleave", () => clearTimeout(speedPressTimer));
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#btnSpeed")) speedHoverGroup.classList.remove("visible");
+});
 
 load();
 </script>
