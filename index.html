@@ -226,6 +226,37 @@ function highlightActiveRow(scroll) {
   }
 }
 
+function isActiveRowVisible() {
+  if (!activeUrl) return false;
+  const rowEl = document.querySelector(`.row[data-url="${CSS.escape(activeUrl)}"]`);
+  if (!rowEl) return false;
+  const headerH = document.getElementById("headerBar").offsetHeight;
+  const rect = rowEl.getBoundingClientRect();
+  return rect.bottom > headerH && rect.top < window.innerHeight;
+}
+
+function getTopVisibleIndex() {
+  const headerH = document.getElementById("headerBar").offsetHeight;
+  for (let i = 0; i < flatOrder.length; i++) {
+    const rowEl = document.querySelector(`.row[data-url="${CSS.escape(flatOrder[i].post_url)}"]`);
+    if (!rowEl) continue;
+    const rect = rowEl.getBoundingClientRect();
+    if (rect.bottom > headerH + 4) return i;
+  }
+  return flatOrder.length > 0 ? flatOrder.length - 1 : -1;
+}
+
+function resyncToVisible() {
+  // If the stored active card has been scrolled out of view (user browsed
+  // manually without clicking a row), snap to whichever card is actually
+  // visible instead of moving further away from it. Returns true if resynced.
+  if (activeUrl && isActiveRowVisible()) return false;
+  const topIdx = getTopVisibleIndex();
+  if (topIdx === -1) return false;
+  activeUrl = flatOrder[topIdx].post_url;
+  return true;
+}
+
 function groupInfoForIndex(idx) {
   let start = 0;
   for (const b of authorBoundaries) {
@@ -294,6 +325,11 @@ function updatePlayButton() {
 
 function moveCard(delta) {
   if (flatOrder.length === 0) return;
+  if (resyncToVisible()) {
+    highlightActiveRow(true);
+    if (isPlaying) speakCurrent();
+    return;
+  }
   let idx = flatOrder.findIndex((p) => p.post_url === activeUrl);
   if (idx === -1) idx = delta > 0 ? -1 : 0;
   idx = Math.min(Math.max(idx + delta, 0), flatOrder.length - 1);
@@ -304,6 +340,11 @@ function moveCard(delta) {
 
 function moveAuthor(delta) {
   if (flatOrder.length === 0 || authorBoundaries.length === 0) return;
+  if (resyncToVisible()) {
+    highlightActiveRow(true);
+    if (isPlaying) speakCurrent();
+    return;
+  }
   let idx = flatOrder.findIndex((p) => p.post_url === activeUrl);
   if (idx === -1) idx = 0;
   let newIdx;
@@ -536,6 +577,8 @@ document.getElementById("btnPlayPause").addEventListener("click", () => {
     isPlaying = false;
     window.speechSynthesis.cancel();
   } else {
+    resyncToVisible();
+    highlightActiveRow(true);
     isPlaying = true;
     speakCurrent();
   }
