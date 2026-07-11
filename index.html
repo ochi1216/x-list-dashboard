@@ -112,6 +112,7 @@
     <button id="reload">再読込</button>
     <button id="toggleAll" class="primary">すべて閉じる</button>
     <button id="markAllRead">すべて既読</button>
+    <button id="mark24hRead">24H以内既読</button>
   </div>
 </div>
 <div id="status">読み込み中...</div>
@@ -169,6 +170,12 @@ function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 }
 
+function within24h(p) {
+  const t = p.posted_at || p.fetched_at;
+  if (!t) return false;
+  return (Date.now() - new Date(t).getTime()) <= 24 * 60 * 60 * 1000;
+}
+
 async function markAsRead(postUrls) {
   return setReadState(postUrls, true);
 }
@@ -207,7 +214,15 @@ function highlightActiveRow(scroll) {
   const rowEl = document.querySelector(`.row[data-url="${CSS.escape(activeUrl)}"]`);
   if (rowEl) {
     rowEl.classList.add("active-read");
-    if (scroll) rowEl.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (scroll) {
+      // Scroll so the card lands just below the sticky header (not centered,
+      // and not hidden underneath it). Header height is measured live so this
+      // adapts automatically whether the filter accordion is open or closed.
+      const headerH = document.getElementById("headerBar").offsetHeight;
+      const rect = rowEl.getBoundingClientRect();
+      const targetTop = window.pageYOffset + rect.top - headerH - 10;
+      window.scrollTo({ top: targetTop, behavior: "smooth" });
+    }
   }
 }
 
@@ -407,6 +422,10 @@ function render() {
   document.getElementById("pageTitle").textContent = `Xリスト ダイジェスト（未読 ${unreadCount}件）`;
   document.getElementById("markAllRead").textContent = (posts.length > 0 && unreadCount === 0) ? "すべて未読に戻す" : "すべて既読";
 
+  const scoped24h = posts.filter(within24h);
+  const scoped24hAllRead = scoped24h.length > 0 && scoped24h.every((p) => p.is_read);
+  document.getElementById("mark24hRead").textContent = scoped24hAllRead ? "24H以内を未読に戻す" : `24H以内既読(${scoped24h.filter((p) => !p.is_read).length}件)`;
+
   document.getElementById("groupSort").disabled = !grouped;
 
   const filtered = posts.filter(p => {
@@ -482,6 +501,11 @@ document.getElementById("reload").addEventListener("click", load);
 document.getElementById("markAllRead").addEventListener("click", () => {
   const allRead = posts.length > 0 && posts.every((p) => p.is_read);
   setReadState(posts.map((p) => p.post_url), !allRead);
+});
+document.getElementById("mark24hRead").addEventListener("click", () => {
+  const scoped = posts.filter(within24h);
+  const allRead = scoped.length > 0 && scoped.every((p) => p.is_read);
+  setReadState(scoped.map((p) => p.post_url), !allRead);
 });
 
 let allExpanded = true; // matches the default (empty collapsedUrls = all expanded)
