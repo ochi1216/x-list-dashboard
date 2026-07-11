@@ -307,11 +307,15 @@ function speakCurrent() {
     activeUrl = flatOrder[idx].post_url;
     highlightActiveRow(true);
   }
-  markAsRead([flatOrder[idx].post_url]);
+  const spokenUrl = flatOrder[idx].post_url;
   const utter = new SpeechSynthesisUtterance(speechText(idx));
   utter.lang = "ja-JP";
   utter.rate = currentSpeedRate;
   utter.onend = () => {
+    // Mark read only after the card has actually finished being read aloud —
+    // marking it up front would make it vanish from an "unread only" filtered
+    // view before playback even starts.
+    markAsRead([spokenUrl]);
     if (!isPlaying) return;
     const curIdx = flatOrder.findIndex((pp) => pp.post_url === activeUrl);
     const nextIdx = curIdx + 1;
