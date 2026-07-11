@@ -208,6 +208,16 @@ function updateHeaderHeightVar() {
   document.documentElement.style.setProperty("--header-h", `${h}px`);
 }
 
+// A row can sit under two stacked sticky elements: the page header-bar, and
+// (in grouped mode) its own group's author header, which sticks right below
+// the header-bar. Any scroll target for a row must clear both, or the row's
+// top ends up hidden underneath the author header.
+function getStickyOffset(rowEl) {
+  const headerH = document.getElementById("headerBar").offsetHeight;
+  const groupHeader = rowEl.closest(".group")?.querySelector(".group-header");
+  return groupHeader ? headerH + groupHeader.offsetHeight : headerH;
+}
+
 function highlightActiveRow(scroll) {
   document.querySelectorAll(".row.active-read").forEach((el) => el.classList.remove("active-read"));
   if (!activeUrl) return;
@@ -215,12 +225,12 @@ function highlightActiveRow(scroll) {
   if (rowEl) {
     rowEl.classList.add("active-read");
     if (scroll) {
-      // Scroll so the card lands just below the sticky header (not centered,
-      // and not hidden underneath it). Header height is measured live so this
-      // adapts automatically whether the filter accordion is open or closed.
-      const headerH = document.getElementById("headerBar").offsetHeight;
+      // Scroll so the card lands just below the sticky header(s) (not
+      // centered, and not hidden underneath them). Heights are measured live
+      // so this adapts to the filter accordion state and grouped/ungrouped mode.
+      const offset = getStickyOffset(rowEl);
       const rect = rowEl.getBoundingClientRect();
-      const targetTop = window.pageYOffset + rect.top - headerH - 10;
+      const targetTop = window.pageYOffset + rect.top - offset - 10;
       window.scrollTo({ top: targetTop, behavior: "smooth" });
     }
   }
@@ -230,18 +240,18 @@ function isActiveRowVisible() {
   if (!activeUrl) return false;
   const rowEl = document.querySelector(`.row[data-url="${CSS.escape(activeUrl)}"]`);
   if (!rowEl) return false;
-  const headerH = document.getElementById("headerBar").offsetHeight;
+  const offset = getStickyOffset(rowEl);
   const rect = rowEl.getBoundingClientRect();
-  return rect.bottom > headerH && rect.top < window.innerHeight;
+  return rect.bottom > offset && rect.top < window.innerHeight;
 }
 
 function getTopVisibleIndex() {
-  const headerH = document.getElementById("headerBar").offsetHeight;
   for (let i = 0; i < flatOrder.length; i++) {
     const rowEl = document.querySelector(`.row[data-url="${CSS.escape(flatOrder[i].post_url)}"]`);
     if (!rowEl) continue;
+    const offset = getStickyOffset(rowEl);
     const rect = rowEl.getBoundingClientRect();
-    if (rect.bottom > headerH + 4) return i;
+    if (rect.bottom > offset + 4) return i;
   }
   return flatOrder.length > 0 ? flatOrder.length - 1 : -1;
 }
