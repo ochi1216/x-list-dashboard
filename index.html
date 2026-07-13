@@ -218,6 +218,13 @@ function getStickyOffset(rowEl) {
   return groupHeader ? headerH + groupHeader.offsetHeight : headerH;
 }
 
+function scrollRowIntoPlace(rowEl, instant) {
+  const offset = getStickyOffset(rowEl);
+  const rect = rowEl.getBoundingClientRect();
+  const targetTop = window.pageYOffset + rect.top - offset - 10;
+  window.scrollTo({ top: targetTop, behavior: instant ? "auto" : "smooth" });
+}
+
 function highlightActiveRow(scroll) {
   document.querySelectorAll(".row.active-read").forEach((el) => el.classList.remove("active-read"));
   if (!activeUrl) return;
@@ -228,10 +235,21 @@ function highlightActiveRow(scroll) {
       // Scroll so the card lands just below the sticky header(s) (not
       // centered, and not hidden underneath them). Heights are measured live
       // so this adapts to the filter accordion state and grouped/ungrouped mode.
-      const offset = getStickyOffset(rowEl);
-      const rect = rowEl.getBoundingClientRect();
-      const targetTop = window.pageYOffset + rect.top - offset - 10;
-      window.scrollTo({ top: targetTop, behavior: "smooth" });
+      scrollRowIntoPlace(rowEl, false);
+      // The smooth-scroll target above is a snapshot; if the layout shifts again
+      // right after (a lazy-loading image reflowing, a stray render() from
+      // elsewhere) the animation can still finish with the card under the
+      // header. Re-check once it's had time to settle and snap straight there
+      // if so, instead of trusting a single animated scroll to land correctly.
+      const checkUrl = activeUrl;
+      setTimeout(() => {
+        if (activeUrl !== checkUrl) return;
+        const el = document.querySelector(`.row[data-url="${CSS.escape(checkUrl)}"]`);
+        if (!el) return;
+        const off = getStickyOffset(el);
+        const r = el.getBoundingClientRect();
+        if (r.top < off - 1) scrollRowIntoPlace(el, true);
+      }, 500);
     }
   }
 }
@@ -311,16 +329,21 @@ function speakCurrent() {
   const utter = new SpeechSynthesisUtterance(speechText(idx));
   utter.lang = "ja-JP";
   utter.rate = currentSpeedRate;
-  utter.onend = () => {
-    // Mark read only after the card has actually finished being read aloud —
-    // marking it up front would make it vanish from an "unread only" filtered
-    // view before playback even starts.
-    markAsRead([spokenUrl]);
-    if (!isPlaying) return;
+  utter.onend = async () => {
     const curIdx = flatOrder.findIndex((pp) => pp.post_url === activeUrl);
     const nextIdx = curIdx + 1;
-    if (nextIdx < flatOrder.length) {
-      activeUrl = flatOrder[nextIdx].post_url;
+    const nextUrl = isPlaying && nextIdx < flatOrder.length ? flatOrder[nextIdx].post_url : null;
+    // Mark read only after the card has actually finished being read aloud —
+    // marking it up front would make it vanish from an "unread only" filtered
+    // view before playback even starts. Wait for the render() this triggers
+    // to settle before scrolling to the next card: that render() can drop
+    // the just-finished card from an "unread only" view, shrinking the list,
+    // so scrolling before it settles can leave the next card shifted up
+    // underneath the sticky header.
+    await markAsRead([spokenUrl]);
+    if (!isPlaying) return;
+    if (nextUrl) {
+      activeUrl = nextUrl;
       highlightActiveRow(true);
       speakCurrent();
     } else {
@@ -483,12 +506,25 @@ function render() {
 
   document.getElementById("groupSort").disabled = !grouped;
 
-  const filtered = posts.filter(p => {
+  const baseFiltered = posts.filter(p => {
     if (starOnly && !p.is_starred) return false;
-    if (unreadOnly && p.is_read) return false;
     if (q && !((p.content||"").toLowerCase().includes(q) || (p.author_handle||"").toLowerCase().includes(q) || (p.author_name||"").toLowerCase().includes(q))) return false;
     return true;
   });
+
+  let filtered;
+  if (unreadOnly && grouped) {
+    // Keep a whole author group on screen (including cards already marked read)
+    // until every post in it is read. Otherwise a card vanishes the instant it's
+    // read mid-group, shifting the rest of the group up and making it impossible
+    // to scroll back to something you just passed.
+    const unreadAuthors = new Set(baseFiltered.filter(p => !p.is_read).map(p => p.author_handle || "(unknown)"));
+    filtered = baseFiltered.filter(p => unreadAuthors.has(p.author_handle || "(unknown)"));
+  } else if (unreadOnly) {
+    filtered = baseFiltered.filter(p => !p.is_read);
+  } else {
+    filtered = baseFiltered;
+  }
 
   if (!grouped) {
     for (const p of filtered) {
