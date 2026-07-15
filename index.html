@@ -331,8 +331,16 @@ function speakCurrent() {
   utter.rate = currentSpeedRate;
   utter.onend = async () => {
     const curIdx = flatOrder.findIndex((pp) => pp.post_url === activeUrl);
-    const nextIdx = curIdx + 1;
-    const nextUrl = isPlaying && nextIdx < flatOrder.length ? flatOrder[nextIdx].post_url : null;
+    // Auto-advance skips over already-read cards instead of stopping on each one:
+    // grouped "unread only" view keeps read cards on screen (so you can scroll back
+    // to them), but there's no reason to read them aloud again. Manual ▲▼ navigation
+    // is unaffected — it still moves one card at a time regardless of read state.
+    let nextUrl = null;
+    if (isPlaying) {
+      for (let i = curIdx + 1; i < flatOrder.length; i++) {
+        if (!flatOrder[i].is_read) { nextUrl = flatOrder[i].post_url; break; }
+      }
+    }
     // Mark read only after the card has actually finished being read aloud —
     // marking it up front would make it vanish from an "unread only" filtered
     // view before playback even starts. Wait for the render() this triggers
