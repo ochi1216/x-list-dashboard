@@ -70,6 +70,7 @@
   .fab.primary { border: 2px solid #6cb8ff; }
   .fab.primary.playing { background: rgba(229,62,62,0.8); color: #fff; border-color: transparent; }
   .fab.auto-moving { background: rgba(49,130,206,0.55); color: #fff; border-color: rgba(49,130,206,0.9); }
+  .fab.title-only { background: rgba(72,187,120,0.55); color: #fff; border-color: rgba(72,187,120,0.9); }
   .fab.speed { font-size: 13px; font-weight: bold; overflow: visible; }
 
   .speed-hover-group { position: absolute; right: 58px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: row; gap: 5px; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; white-space: nowrap; }
@@ -123,6 +124,7 @@
   <div class="fab speed" id="btnSpeed">1.5x<div class="speed-hover-group" id="speedHoverGroup"></div></div>
   <div class="fab author-nav" id="btnAuthorPrev" title="前の投稿者へ">⏫</div>
   <div class="fab" id="btnCardPrev" title="前のカードへ">▲</div>
+  <div class="fab" id="btnReadMode" title="読み上げモード切替(▶:タイトル+要約 / ▶▶:タイトルのみ)">▶</div>
   <div class="fab" id="btnCardNext" title="次のカードへ">▼</div>
   <div class="fab author-nav" id="btnAuthorNext" title="次の投稿者へ">⏬</div>
   <div class="fab primary" id="btnPlayPause" title="読み上げ開始/停止">▶️</div>
@@ -158,6 +160,7 @@ let flatOrder = [];        // 現在の表示順で並んだpostsのフラット
 let authorBoundaries = []; // flatOrder中で「投稿者が変わる/新グループが始まる」インデックス
 let activeUrl = null;      // 現在ハイライト＆読み上げ対象のpost_url
 let isPlaying = false;
+let readMode = 0; // 0=mode0(タイトル+要約) 1=mode1(タイトルのみ)
 let currentSpeedRate = 1.5;
 const speedOptions = [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
@@ -310,10 +313,11 @@ function speechText(idx) {
   const p = flatOrder[idx];
   const theme = p.gist || (p.content || "").replace(/\s+/g, " ").slice(0, 60);
   const body = p.summary || "要約はまだありません。";
+  const bodyPart = readMode === 1 ? "" : `${body}`;
 
   if (!grouped) {
     const who = p.author_name || p.author_handle || "";
-    return `${who}。${theme}。${body}`;
+    return `${who}。${theme}。${bodyPart}`;
   }
 
   const info = groupInfoForIndex(idx);
@@ -322,7 +326,7 @@ function speechText(idx) {
     const who = p.author_name || p.author_handle || "";
     prefix = `${who} ${info.total}件の投稿です。`;
   }
-  return `${prefix}${info.position}. ${theme}。${body}`;
+  return `${prefix}${info.position}. ${theme}。${bodyPart}`;
 }
 
 function speakCurrent() {
@@ -638,7 +642,11 @@ function render() {
       flatOrder.push(p);
     }
     updateHeaderHeightVar();
-    highlightActiveRow(false);
+    // 自動移動中は、既読で消えたカードの分だけ現在地がスクロール位置とずれて
+    // isActiveRowVisible()を誤らせ、resyncToVisible()が的外れな位置へ飛ばして
+    // moveCard()を「進んでいない」と誤認させる(=自動移動が止まる)ことがある。
+    // 自動移動中の再描画だけは都度スクロールして位置を補正する。
+    highlightActiveRow(autoMoveDirection !== 0);
     return;
   }
 
@@ -681,7 +689,7 @@ function render() {
   }
 
   updateHeaderHeightVar();
-  highlightActiveRow(false);
+  highlightActiveRow(autoMoveDirection !== 0);
 }
 
 document.getElementById("starOnly").addEventListener("change", render);
@@ -737,6 +745,13 @@ document.getElementById("btnPlayPause").addEventListener("click", () => {
     speakCurrent();
   }
   updatePlayButton();
+});
+
+document.getElementById("btnReadMode").addEventListener("click", () => {
+  readMode = readMode === 0 ? 1 : 0;
+  const btn = document.getElementById("btnReadMode");
+  btn.textContent = readMode === 0 ? "▶" : "▶▶";
+  btn.classList.toggle("title-only", readMode === 1);
 });
 
 setupCardLongPress(document.getElementById("btnCardPrev"), -1);
