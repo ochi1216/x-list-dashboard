@@ -396,7 +396,17 @@ function moveCard(delta) {
   highlightActiveRow(true);
   // 課題4: 前進移動は常に離脱カードを既読化(クリック/キーボード/自動送り共通)
   // 課題5: 読み上げ中は方向を問わず離脱(＝読み上げ中断)カードを既読化
-  if (prevUrl && (delta > 0 || isPlaying)) markAsRead([prevUrl]);
+  if (prevUrl && (delta > 0 || isPlaying)) {
+    const movedToUrl = activeUrl;
+    // markAsRead()が引き起こすrender()は、既読で消えた投稿者グループの分だけ
+    // スクロール位置と実際の表示がずれる(render()自体はscroll:falseで呼ばれるため)。
+    // このズレがisActiveRowVisible()を誤らせ、次の1クリックがresyncToVisible()に
+    // 食われて「反応しない」ように見える原因だった。render()確定後にもう一度だけ
+    // 現在地へスクロールし直して補正する(その間に別のカードへ移動済みなら何もしない)。
+    markAsRead([prevUrl]).then(() => {
+      if (activeUrl === movedToUrl) highlightActiveRow(true);
+    });
+  }
   if (isPlaying) speakCurrent();
 }
 
@@ -642,11 +652,7 @@ function render() {
       flatOrder.push(p);
     }
     updateHeaderHeightVar();
-    // 自動移動中は、既読で消えたカードの分だけ現在地がスクロール位置とずれて
-    // isActiveRowVisible()を誤らせ、resyncToVisible()が的外れな位置へ飛ばして
-    // moveCard()を「進んでいない」と誤認させる(=自動移動が止まる)ことがある。
-    // 自動移動中の再描画だけは都度スクロールして位置を補正する。
-    highlightActiveRow(autoMoveDirection !== 0);
+    highlightActiveRow(false);
     return;
   }
 
@@ -689,7 +695,7 @@ function render() {
   }
 
   updateHeaderHeightVar();
-  highlightActiveRow(autoMoveDirection !== 0);
+  highlightActiveRow(false);
 }
 
 document.getElementById("starOnly").addEventListener("change", render);
