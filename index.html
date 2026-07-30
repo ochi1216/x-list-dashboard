@@ -58,6 +58,9 @@
   .detail { padding: 10px 14px 16px; background: #15171d; font-size: 15px; line-height: 1.6; }
   .detail a { color: #6cb8ff; display: inline-block; margin-top: 4px; }
   .detail .tldr { font-size: 15px; color: #ddd; margin-bottom: 6px; }
+  .detail-images { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 8px; }
+  .detail-images .detail-img-link { margin: 0; }
+  .detail-img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); display: block; }
   .hidden { display: none; }
 
   .row.active-read { background: rgba(229,62,62,0.12); box-shadow: inset 0 0 0 2px rgba(229,62,62,0.6); }
@@ -180,6 +183,19 @@ function fmtDate(iso) {
 
 function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+// Xの画像CDN URLの`name=`パラメータを差し替えてサイズ違いを出し分ける
+// (一覧では軽量なsmall、クリックで開く元画像はorig)。
+function xImageVariant(url, size) {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.endsWith("twimg.com")) return url; // X以外のホストではパラメータをいじらない
+    u.searchParams.set("name", size);
+    return u.toString();
+  } catch {
+    return url;
+  }
 }
 
 function olderThan24h(p) {
@@ -564,8 +580,15 @@ function buildRow(p) {
   `;
   const detail = document.createElement("div");
   detail.className = "detail" + (collapsedUrls.has(p.post_url) ? " hidden" : "");
+  const images = Array.isArray(p.image_urls) ? p.image_urls : [];
+  const imagesHtml = images.length > 0 ? `
+    <div class="detail-images">
+      ${images.map(u => `<a class="detail-img-link" href="${escapeHtml(xImageVariant(u, "orig"))}" target="_blank" rel="noopener"><img class="detail-img" src="${escapeHtml(xImageVariant(u, "small"))}" loading="lazy" alt=""></a>`).join("")}
+    </div>
+  ` : "";
   detail.innerHTML = `
     <div class="tldr">${p.summary ? escapeHtml(p.summary) : "まだ要約がありません。チャットで「この投稿要約して」と頼んでください。"}</div>
+    ${imagesHtml}
     <a href="${escapeHtml(p.post_url)}" target="_blank" rel="noopener">元投稿を開く</a>
   `;
   row.addEventListener("click", (e) => {
