@@ -246,11 +246,13 @@ function getStickyOffset(rowEl) {
   return groupHeader ? headerH + groupHeader.offsetHeight : headerH;
 }
 
-function scrollRowIntoPlace(rowEl, instant) {
+function scrollRowIntoPlace(rowEl) {
   const offset = getStickyOffset(rowEl);
   const rect = rowEl.getBoundingClientRect();
   const targetTop = window.pageYOffset + rect.top - offset - 10;
-  window.scrollTo({ top: targetTop, behavior: instant ? "auto" : "smooth" });
+  // アニメーション("smooth")は、遷移の途中でカードがヘッダーの下に隠れたり
+  // 別の位置を経由したりして見え、視認性を損なうため使わない。常に瞬時移動。
+  window.scrollTo({ top: targetTop, behavior: "auto" });
 }
 
 function highlightActiveRow(scroll) {
@@ -263,12 +265,11 @@ function highlightActiveRow(scroll) {
       // Scroll so the card lands just below the sticky header(s) (not
       // centered, and not hidden underneath them). Heights are measured live
       // so this adapts to the filter accordion state and grouped/ungrouped mode.
-      scrollRowIntoPlace(rowEl, false);
-      // The smooth-scroll target above is a snapshot; if the layout shifts again
-      // right after (a lazy-loading image reflowing, a stray render() from
-      // elsewhere) the animation can still finish with the card under the
-      // header. Re-check once it's had time to settle and snap straight there
-      // if so, instead of trusting a single animated scroll to land correctly.
+      scrollRowIntoPlace(rowEl);
+      // If the layout shifts again right after (a lazy-loading image
+      // reflowing, a stray render() from elsewhere), the target computed
+      // above can go stale. Re-check once it's had time to settle and
+      // snap again (also instant) if so.
       const checkUrl = activeUrl;
       setTimeout(() => {
         if (activeUrl !== checkUrl) return;
@@ -276,7 +277,7 @@ function highlightActiveRow(scroll) {
         if (!el) return;
         const off = getStickyOffset(el);
         const r = el.getBoundingClientRect();
-        if (r.top < off - 1) scrollRowIntoPlace(el, true);
+        if (r.top < off - 1) scrollRowIntoPlace(el);
       }, 500);
     }
   }
@@ -402,7 +403,7 @@ function moveCard(delta) {
   if (resyncToVisible()) {
     highlightActiveRow(true);
     if (isPlaying) speakCurrent();
-    return;
+    return "resynced";
   }
   const prevUrl = activeUrl;
   let idx = flatOrder.findIndex((p) => p.post_url === activeUrl);
@@ -464,11 +465,18 @@ function dwellMs(speed) {
   return 2000 - 500 * (speed - 1);
 }
 
+// resyncToVisible()がスクロール位置の一時的なズレのせいで「たまたま同じカードに
+// 巻き戻す」ことがあり、これを本当にリスト末尾に到達したのと区別できないと
+// 自動移動が途中で誤って止まってしまう。数回だけ様子を見てから諦める。
+let autoMoveStallCount = 0;
+const AUTO_MOVE_MAX_STALLS = 3;
+
 function stopAutoMove() {
   if (autoMoveTimerHandle) { clearTimeout(autoMoveTimerHandle); autoMoveTimerHandle = null; }
   document.getElementById("btnCardPrev").classList.remove("auto-moving");
   document.getElementById("btnCardNext").classList.remove("auto-moving");
   autoMoveDirection = 0;
+  autoMoveStallCount = 0;
 }
 
 function scheduleAutoMoveStep() {
@@ -478,8 +486,19 @@ function scheduleAutoMoveStep() {
 function autoMoveStep() {
   if (autoMoveDirection === 0 || flatOrder.length === 0) { stopAutoMove(); return; }
   const before = activeUrl;
-  moveCard(autoMoveDirection);
-  if (activeUrl === before) { stopAutoMove(); return; } // 端に到達、これ以上動かない
+  const result = moveCard(autoMoveDirection);
+  if (activeUrl === before) {
+    // resyncToVisible()由来の「進んでいない」は、スクロールのズレが原因の誤検知
+    // かもしれないので即座には諦めない。次のtickで解消されることが多い。
+    if (result === "resynced" && autoMoveStallCount < AUTO_MOVE_MAX_STALLS) {
+      autoMoveStallCount++;
+      scheduleAutoMoveStep();
+      return;
+    }
+    stopAutoMove(); // 本当に端に到達、これ以上動かない
+    return;
+  }
+  autoMoveStallCount = 0;
   if (autoMoveDirection > 0) {
     const cur = flatOrder.find((p) => p.post_url === activeUrl);
     if (cur && cur.is_read) { autoMoveStep(); return; } // 既読カードは待たずスキップ
