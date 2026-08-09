@@ -23,6 +23,59 @@
   .controls button:hover { background: #2c313b; }
   .controls button.primary { background: #b8860b; border-color: #b8860b; color: #111; font-weight: 600; }
   .controls button.primary:hover { background: #cc9a1c; }
+
+  /* ---- 更新ダイジェスト（前回取得分／24H／週間の3タイル、headerBar内側）---- */
+  #digest { background: #1a1d24; border: 1px solid #2c313b; border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+  #digest .digest-titlebar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; cursor: pointer; user-select: none; }
+  #digest .digest-titlebar h2 { font-size: 12.5px; font-weight: 600; margin: 0; color: #9aa0a8; letter-spacing: 0.02em; }
+  #digest .digest-titlebar .caret { font-size: 11px; color: #6b7078; border: 1px solid #333; border-radius: 6px; padding: 3px 8px; transition: transform 0.15s ease; }
+  #digest.collapsed .digest-body { display: none; }
+  #digest.collapsed .digest-titlebar .caret { transform: rotate(-90deg); }
+  #digest .digest-tiles { display: flex; flex-direction: column; gap: 1px; background: #2c313b; border-top: 1px solid #2c313b; }
+  #digest .tile { background: #1a1d24; padding: 0 12px; height: 34px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; overflow: hidden; }
+  #digest .tile:hover, #digest .tile.open { background: #23272f; }
+  #digest .tile .t-label { font-size: 12px; color: #6b7078; white-space: nowrap; flex-shrink: 0; }
+  #digest .tile .t-count { font-size: 14px; font-weight: 700; color: #e8e8e8; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #digest .tile .t-count small { font-size: 11px; font-weight: 500; color: #6b7078; margin-left: 1px; }
+  #digest .tile .t-unread { font-size: 11px; color: #9aa0a8; font-variant-numeric: tabular-nums; white-space: nowrap; margin-left: auto; }
+  #digest .tile .chev { font-size: 9px; color: #6b7078; flex-shrink: 0; transition: transform 0.15s ease; }
+  #digest .tile.open .chev { transform: rotate(180deg); }
+  #digest .drawer { border-top: 1px solid #2c313b; padding: 12px 14px 14px; display: none; background: #15171d; }
+  #digest .drawer.show { display: block; }
+  #digest .drawer-section { margin-bottom: 11px; }
+  #digest .drawer-section:last-child { margin-bottom: 0; }
+  #digest .drawer-eyebrow { font-size: 10.5px; color: #6b7078; letter-spacing: 0.06em; text-transform: uppercase; margin: 0 0 5px; }
+  #digest .drawer-runs { display: flex; flex-direction: column; gap: 4px; }
+  #digest .run-row { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; color: #9aa0a8; font-variant-numeric: tabular-nums; }
+  #digest .run-row .run-time { color: #6cb8ff; width: 46px; flex-shrink: 0; }
+  #digest .run-row .run-count { color: #e8e8e8; font-weight: 600; }
+  #digest .drawer-text { font-size: 13px; line-height: 1.7; color: #e8e8e8; margin: 0; }
+  #digest .drawer-empty { font-size: 12.5px; color: #6b7078; margin: 0; }
+  #digest .advice-box { background: rgba(184,134,11,0.09); border: 1px solid rgba(184,134,11,0.28); border-radius: 8px; padding: 9px 11px; display: flex; gap: 8px; align-items: flex-start; }
+  #digest .advice-box .advice-mark { color: #d9a521; font-size: 13px; line-height: 1.7; flex-shrink: 0; }
+  #digest .advice-box p { margin: 0; font-size: 13px; line-height: 1.7; color: #e8e8e8; }
+  #digest .highlight-list { display: flex; flex-direction: column; gap: 5px; }
+  #digest .highlight-item { display: flex; gap: 6px; align-items: baseline; font-size: 12.5px; line-height: 1.5; color: #e8e8e8; }
+  #digest .highlight-item .hi-bullet { color: #6cb8ff; flex-shrink: 0; }
+  #digest .highlight-item .hi-who { color: #6b7078; flex-shrink: 0; }
+  #digest .tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  #digest .tag-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #6cb8ff; background: rgba(108,184,255,0.1); border: 1px solid rgba(108,184,255,0.28); border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
+  #digest .tag-chip .tag-new { font-size: 9px; opacity: 0.85; }
+  #digest .chart { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; height: 96px; margin-bottom: 6px; }
+  #digest .bar-col { display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; height: 100%; }
+  #digest .bar-stack { display: flex; flex-direction: column-reverse; border-radius: 4px 4px 2px 2px; overflow: hidden; width: 100%; }
+  #digest .seg-read { background: #3d84c9; }
+  #digest .seg-unread { background: #7fa3c4; }
+  #digest .bar-total { text-align: center; font-size: 10px; color: #6b7078; font-variant-numeric: tabular-nums; margin-bottom: 3px; }
+  #digest .chart-axis { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 2px; }
+  #digest .axis-label { text-align: center; font-size: 10.5px; color: #9aa0a8; }
+  #digest .axis-label .dow { display: block; color: #6b7078; font-size: 9.5px; }
+  #digest .axis-label.today { color: #6cb8ff; font-weight: 700; }
+  #digest .chart-legend { display: flex; gap: 14px; margin-top: 9px; font-size: 11px; color: #9aa0a8; }
+  #digest .chart-legend span { display: flex; align-items: center; gap: 5px; }
+  #digest .legend-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  #digest .drawer-generated { font-size: 10.5px; color: #4d525a; margin: 10px 0 0; text-align: right; }
+
   #status { font-size: 12px; color: #888; margin-bottom: 8px; }
   /* Each author's header+rows are wrapped in .group so position:sticky's
      containing block is just that group — the header stays pinned for
@@ -94,11 +147,44 @@
     .row .gist { flex: 1; font-size: 14px; }
     .detail { padding-left: 96px; font-size: 13px; }
     .detail .tldr { font-size: 14px; }
+    #digest .digest-tiles { flex-direction: row; }
+    #digest .tile { flex: 1; }
   }
 </style>
 </head>
 <body>
 <div class="header-bar" id="headerBar">
+  <div id="digest">
+    <div class="digest-titlebar" id="digestTitlebar">
+      <h2>📊 更新ダイジェスト</h2>
+      <span class="caret" id="digestCaret">▲ 閉じる</span>
+    </div>
+    <div class="digest-body">
+      <div class="digest-tiles">
+        <div class="tile" data-tile="last_run">
+          <span class="t-label">前回取得分</span>
+          <span class="t-count">–</span>
+          <span class="t-unread"></span>
+          <span class="chev">▼</span>
+        </div>
+        <div class="tile" data-tile="24h">
+          <span class="t-label">直近24時間</span>
+          <span class="t-count">–</span>
+          <span class="t-unread"></span>
+          <span class="chev">▼</span>
+        </div>
+        <div class="tile" data-tile="7d">
+          <span class="t-label">直近7日間</span>
+          <span class="t-count">–</span>
+          <span class="t-unread"></span>
+          <span class="chev">▼</span>
+        </div>
+      </div>
+      <div class="drawer" data-drawer="last_run"></div>
+      <div class="drawer" data-drawer="24h"></div>
+      <div class="drawer" data-drawer="7d"></div>
+    </div>
+  </div>
   <div class="header-title-row">
     <h1 id="pageTitle">Xリスト ダイジェスト（未読 0件）</h1>
     <button id="accordionToggle" aria-expanded="true">▲ 閉じる</button>
@@ -112,6 +198,10 @@
       <option value="count_asc">投稿数が少ない順</option>
       <option value="name_asc">投稿者名 A→Z</option>
       <option value="name_desc">投稿者名 Z→A</option>
+    </select>
+    <select id="postSort">
+      <option value="posted_desc">投稿日時が新しい順</option>
+      <option value="posted_asc">投稿日時が古い順</option>
     </select>
     <input type="text" id="search" placeholder="投稿者・本文で検索">
     <button id="reload">再読込</button>
@@ -155,7 +245,30 @@ async function sbFetch(path, options = {}) {
   return res.json();
 }
 
+// 件数だけが欲しい問い合わせ用（本文は取得しない）。PostgRESTは既定で1000行
+// 上限があるため、`posts`配列の長さから件数を数えるのは30日超・大量投稿時に
+// 不正確になる（実測: 直近7日だけで上限を超えるケースを確認済み）。
+// count=exact + Range: 0-0 でContent-Rangeヘッダーの総件数だけ読む。
+async function sbCount(path) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      Prefer: "count=exact",
+      Range: "0-0",
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${text}`);
+  }
+  const range = res.headers.get("content-range") || "";
+  const total = parseInt(range.split("/")[1], 10);
+  return Number.isFinite(total) ? total : 0;
+}
+
 let posts = [];
+let digestData = null; // 更新ダイジェスト（fetch_runs/digest_summaries/集計件数）のキャッシュ
 let collapsedUrls = new Set(); // post_urls whose detail is manually hidden — empty means all expanded (default)
 
 // 読み上げ（TTS）関連の状態
@@ -163,6 +276,14 @@ let flatOrder = [];        // 現在の表示順で並んだpostsのフラット
 let authorBoundaries = []; // flatOrder中で「投稿者が変わる/新グループが始まる」インデックス
 let activeUrl = null;      // 現在ハイライト＆読み上げ対象のpost_url
 let isPlaying = false;
+
+// カードの「戻る/進む」ナビゲーション履歴（ブラウザのhistoryスタックと同じ発想）。
+// 未読のみ表示＋グループ化で、投稿者グループが全既読になり画面から消えた後でも、
+// ▲で実際に訪れたカードへ戻れるようにするための機構。
+let navHistory = [];                    // 実際に訪問したactiveUrlの時系列
+let navHistoryIndex = -1;               // navHistory中の現在位置。-1=未確立
+let historyBrowsing = false;            // ▲で隠れたカードを見せるため「未読のみ表示」を一時OFFにしている間true
+let historyBrowsingSavedUnread = null;  // 復元用の元のチェックボックス値
 let readMode = 0; // 0=mode0(タイトル+要約) 1=mode1(タイトルのみ)
 let currentSpeedRate = 1.5;
 const speedOptions = [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
@@ -174,6 +295,12 @@ let autoMoveTimerHandle = null; // 次のステップ用setTimeoutハンドル
 // 課題1・2: フィルター状態の永続化キー
 const LS_KEY_UNREAD_ONLY = "xdash_unreadOnly";
 const LS_KEY_GROUP_SORT  = "xdash_groupSort";
+const LS_KEY_POST_SORT   = "xdash_postSort";
+
+// 更新ダイジェスト（前回取得分／24H／週間）の開閉状態の永続化キー
+const LS_KEY_DIGEST_OPEN = "xdash_digestOpen";
+const LS_KEY_DIGEST_TILE = "xdash_digestTileOpen"; // JSON: {last_run,24h,7d}のbool
+let digestTileOpen = { last_run: false, "24h": false, "7d": false };
 
 function fmtDate(iso) {
   if (!iso) return "----/--/--";
@@ -311,7 +438,80 @@ function resyncToVisible() {
   const topIdx = getTopVisibleIndex();
   if (topIdx === -1) return false;
   activeUrl = flatOrder[topIdx].post_url;
+  // セッションで最初にactiveUrlが確立される瞬間だけ履歴に記録する。以降の
+  // resync（スクロール補正）は毎回起きるノイズなので記録しない —
+  // navHistoryが空かどうかで「最初の1回」だけを見分ける。
+  if (navHistory.length === 0) recordVisit(activeUrl);
   return true;
+}
+
+// --- カードナビゲーション履歴（▲▼の「戻る/進む」） ---------------------
+
+function recordVisit(url) {
+  if (!url) return;
+  if (navHistory[navHistoryIndex] === url) return; // 同じ場所への再記録は無視
+  // 戻った後に新しい場所へ進んだ場合、古い「進む」側の履歴は捨てる
+  // （ブラウザのhistoryスタックと同じ挙動）。
+  if (navHistoryIndex < navHistory.length - 1) {
+    navHistory = navHistory.slice(0, navHistoryIndex + 1);
+  }
+  navHistory.push(url);
+  navHistoryIndex = navHistory.length - 1;
+  restoreUnreadOnlyIfAtFrontier();
+}
+
+// 履歴を遡って「未読のみ表示」を一時OFFにしていた場合、進んで最先端
+// （フロンティア）まで追いついたら自動的に元へ戻す。
+function restoreUnreadOnlyIfAtFrontier() {
+  if (!historyBrowsing) return;
+  if (navHistoryIndex !== navHistory.length - 1) return;
+  const checkbox = document.getElementById("unreadOnly");
+  checkbox.checked = historyBrowsingSavedUnread;
+  historyBrowsing = false;
+  historyBrowsingSavedUnread = null;
+  render();
+}
+
+// 対象URLの行が今のフィルタ済みDOMに存在しない場合、「未読のみ表示」を
+// 一時的に解除して出現させる（検索語や★のみ表示が原因で見つからない場合は
+// 何もしない — highlightActiveRowが今まで通り黙って何もしない挙動に委ねる）。
+function revealForHistoryIfNeeded(url) {
+  if (document.querySelector(`.row[data-url="${CSS.escape(url)}"]`)) return;
+  const checkbox = document.getElementById("unreadOnly");
+  if (!checkbox.checked) return;
+  if (!historyBrowsing) historyBrowsingSavedUnread = checkbox.checked;
+  checkbox.checked = false;
+  historyBrowsing = true;
+  render();
+}
+
+// navHistory配列自体は書き換えず、postsにまだ存在するURLが見つかるまで
+// カーソルだけを動かす（保持期間切れ等でpostsから消えたURLは自動的に
+// 読み飛ばす）。見つからなければnullを返し、呼び出し側は既存の空間的な
+// フォールバックに委ねる。
+function historyStepBack() {
+  let i = navHistoryIndex;
+  while (i > 0) {
+    i--;
+    if (posts.some((p) => p.post_url === navHistory[i])) {
+      navHistoryIndex = i;
+      return navHistory[i];
+    }
+  }
+  return null;
+}
+
+function historyStepForward() {
+  let i = navHistoryIndex;
+  while (i < navHistory.length - 1) {
+    i++;
+    if (posts.some((p) => p.post_url === navHistory[i])) {
+      navHistoryIndex = i;
+      restoreUnreadOnlyIfAtFrontier(); // フロンティアに追いついたら自動復元
+      return navHistory[i];
+    }
+  }
+  return null;
 }
 
 function groupInfoForIndex(idx) {
@@ -354,6 +554,7 @@ function speakCurrent() {
     idx = 0;
     activeUrl = flatOrder[idx].post_url;
     highlightActiveRow(true);
+    recordVisit(activeUrl);
   }
   const spokenUrl = flatOrder[idx].post_url;
   const utter = new SpeechSynthesisUtterance(speechText(idx));
@@ -383,6 +584,7 @@ function speakCurrent() {
     if (nextUrl) {
       activeUrl = nextUrl;
       highlightActiveRow(true);
+      recordVisit(activeUrl);
       speakCurrent();
     } else {
       isPlaying = false;
@@ -406,6 +608,37 @@ function moveCard(delta) {
     return "resynced";
   }
   const prevUrl = activeUrl;
+
+  // 履歴を遡る: 未読のみ表示＋グループ化で投稿者グループが全既読になり
+  // 画面から消えていても、実際に訪れたカードへ▲で戻れるようにする。
+  if (delta < 0 && navHistoryIndex > 0) {
+    const url = historyStepBack();
+    if (url) {
+      revealForHistoryIfNeeded(url);
+      activeUrl = url;
+      highlightActiveRow(true);
+      // 履歴の閲覧は「読み直し」ではないので既読化しない。ただし読み上げ中の
+      // 離脱は既存仕様通り既読化する(課題5の不変条件を壊さない)。
+      if (prevUrl && isPlaying) markAsRead([prevUrl]);
+      if (isPlaying) speakCurrent();
+      return;
+    }
+    // 履歴が尽きている(purge済み含む)場合は下の空間的フォールバックへ。
+  }
+
+  // 履歴を辿って進む: まだフロンティアに追いついていない間は記録済みの
+  // 順路をそのまま再生する。
+  if (delta > 0 && navHistoryIndex < navHistory.length - 1) {
+    const url = historyStepForward();
+    if (url) {
+      activeUrl = url;
+      highlightActiveRow(true);
+      if (prevUrl) markAsRead([prevUrl]); // 既読済みなら実質no-op
+      if (isPlaying) speakCurrent();
+      return;
+    }
+  }
+
   let idx = flatOrder.findIndex((p) => p.post_url === activeUrl);
   if (idx === -1) idx = delta > 0 ? -1 : 0;
   idx = Math.min(Math.max(idx + delta, 0), flatOrder.length - 1);
@@ -424,6 +657,10 @@ function moveCard(delta) {
       if (activeUrl === movedToUrl) highlightActiveRow(true);
     });
   }
+  // 前進で新しい場所へ着いた場合のみ履歴に記録する(戻る側のフォールバックは
+  // 記録しない — navHistoryIndexが現在地とズレたまま進んだ扱いになると、
+  // 次の「進む」操作が全く違うカードへ飛ぶ不具合になるため)。
+  if (delta > 0) recordVisit(activeUrl);
   if (isPlaying) speakCurrent();
 }
 
@@ -447,6 +684,7 @@ function moveAuthor(delta) {
   }
   activeUrl = flatOrder[newIdx].post_url;
   highlightActiveRow(true);
+  recordVisit(activeUrl);
   if (isPlaying) speakCurrent();
 }
 
@@ -558,6 +796,9 @@ function restoreFilterState() {
     const sort = localStorage.getItem(LS_KEY_GROUP_SORT);
     const validSorts = ["count_desc", "count_asc", "name_asc", "name_desc"];
     if (sort !== null && validSorts.includes(sort)) document.getElementById("groupSort").value = sort;
+    const postSort = localStorage.getItem(LS_KEY_POST_SORT);
+    const validPostSorts = ["posted_desc", "posted_asc"];
+    if (postSort !== null && validPostSorts.includes(postSort)) document.getElementById("postSort").value = postSort;
   } catch (err) { /* localStorage不可(プライベートモード等) — デフォルト値のまま続行 */ }
 }
 
@@ -565,10 +806,248 @@ function saveFilterState() {
   try {
     localStorage.setItem(LS_KEY_UNREAD_ONLY, String(document.getElementById("unreadOnly").checked));
     localStorage.setItem(LS_KEY_GROUP_SORT, document.getElementById("groupSort").value);
+    localStorage.setItem(LS_KEY_POST_SORT, document.getElementById("postSort").value);
   } catch (err) { /* ignore */ }
 }
 
+// 更新ダイジェスト（前回取得分／24H／週間）の開閉状態は、投稿データの
+// 再読込とは無関係な純粋なUI状態なので、restoreFilterStateには混ぜず
+// 独立させてスクリプト初期化時に一度だけ適用する。
+function restoreDigestState() {
+  try {
+    const open = localStorage.getItem(LS_KEY_DIGEST_OPEN);
+    if (open !== null) {
+      document.getElementById("digest").classList.toggle("collapsed", open === "false");
+      document.getElementById("digestCaret").textContent = open === "false" ? "▼ 開く" : "▲ 閉じる";
+    }
+    const tileRaw = localStorage.getItem(LS_KEY_DIGEST_TILE);
+    if (tileRaw) {
+      const parsed = JSON.parse(tileRaw);
+      for (const key of ["last_run", "24h", "7d"]) {
+        if (typeof parsed[key] === "boolean") digestTileOpen[key] = parsed[key];
+      }
+    }
+  } catch (err) { /* localStorage不可(プライベートモード等) — デフォルト値のまま続行 */ }
+  applyDigestTileState();
+}
+
+function saveDigestState() {
+  try {
+    const collapsed = document.getElementById("digest").classList.contains("collapsed");
+    localStorage.setItem(LS_KEY_DIGEST_OPEN, String(!collapsed));
+    localStorage.setItem(LS_KEY_DIGEST_TILE, JSON.stringify(digestTileOpen));
+  } catch (err) { /* ignore */ }
+}
+
+function applyDigestTileState() {
+  document.querySelectorAll("#digest .tile").forEach((tile) => {
+    const key = tile.dataset.tile;
+    const open = digestTileOpen[key];
+    tile.classList.toggle("open", open);
+    document.querySelector(`.drawer[data-drawer="${key}"]`).classList.toggle("show", open);
+  });
+}
+
+function fmtTimeHHMM(iso) {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// タイルの件数・未読数は`posts`配列から数えない。load()の投稿取得クエリは
+// PostgRESTの既定行数上限(実測1000行)に達しており、7日窓だけで実件数の
+// 約半分しかメモリに載っていないケースを確認済み。件数はsbCountで都度
+// 個別に問い合わせる。
+async function loadDigest() {
+  try {
+    const [runsData, summariesData] = await Promise.all([
+      sbFetch(`fetch_runs?select=*&order=finished_at.desc&limit=20`),
+      sbFetch(`digest_summaries?select=*`),
+    ]);
+    const runs = runsData || [];
+    const summaries = {};
+    for (const s of summariesData || []) summaries[s.period_type] = s;
+    const lastRun = runs[0] || null;
+
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const filter24h = `or=(posted_at.gte.${since24h},and(posted_at.is.null,fetched_at.gte.${since24h}))`;
+    const filter7d = `or=(posted_at.gte.${since7d},and(posted_at.is.null,fetched_at.gte.${since7d}))`;
+
+    const keys = ["count24h", "unread24h", "count7d", "unread7d", "unreadLastRun"];
+    const promises = [
+      sbCount(`x_posts?select=id&${filter24h}`),
+      sbCount(`x_posts?select=id&${filter24h}&is_read=eq.false`),
+      sbCount(`x_posts?select=id&${filter7d}`),
+      sbCount(`x_posts?select=id&${filter7d}&is_read=eq.false`),
+      lastRun
+        ? sbCount(`x_posts?select=id&fetched_at=gte.${lastRun.started_at}&fetched_at=lte.${lastRun.finished_at}&is_read=eq.false`)
+        : Promise.resolve(0),
+    ];
+    const values = await Promise.all(promises);
+    const counts = {};
+    keys.forEach((k, i) => { counts[k] = values[i]; });
+
+    digestData = { runs, summaries, lastRun, counts, since24h };
+    renderDigest();
+  } catch (err) {
+    console.error("digest load failed", err);
+  }
+}
+
+function renderDigest() {
+  if (!digestData) return;
+  const { runs, summaries, lastRun, counts } = digestData;
+
+  const tileLast = document.querySelector('.tile[data-tile="last_run"]');
+  if (lastRun) {
+    tileLast.querySelector(".t-count").innerHTML = `${lastRun.new_post_count}<small>件</small>`;
+    tileLast.querySelector(".t-unread").textContent = lastRun.new_post_count > 0 ? `未読${counts.unreadLastRun}` : "";
+  } else {
+    tileLast.querySelector(".t-count").textContent = "–";
+    tileLast.querySelector(".t-unread").textContent = "";
+  }
+
+  const tile24h = document.querySelector('.tile[data-tile="24h"]');
+  tile24h.querySelector(".t-count").innerHTML = `${counts.count24h}<small>件</small>`;
+  tile24h.querySelector(".t-unread").textContent = `未読${counts.unread24h}`;
+
+  const tile7d = document.querySelector('.tile[data-tile="7d"]');
+  tile7d.querySelector(".t-count").innerHTML = `${counts.count7d}<small>件</small>`;
+  tile7d.querySelector(".t-unread").textContent = `未読${counts.unread7d}`;
+
+  renderLastRunDrawer(lastRun, summaries.last_run, counts.unreadLastRun);
+  render24hDrawer(runs, summaries["24h"]);
+  render7dDrawer(summaries["7d"]);
+}
+
+function renderLastRunDrawer(lastRun, summaryRow, unreadCount) {
+  const el = document.querySelector('.drawer[data-drawer="last_run"]');
+  if (!lastRun) {
+    el.innerHTML = `<p class="drawer-empty">まだ取得実行の記録がありません。</p>`;
+    return;
+  }
+  const runLine = `<div class="run-row"><span class="run-time">${fmtTimeHHMM(lastRun.finished_at)}</span>${lastRun.source === "scheduled" ? "自動実行（定期）" : "手動実行"} <span class="run-count">${lastRun.new_post_count}件取得</span></div>`;
+
+  if (lastRun.new_post_count === 0) {
+    el.innerHTML = `
+      <div class="drawer-section"><p class="drawer-eyebrow">実行ログ</p><div class="drawer-runs">${runLine}</div></div>
+      <p class="drawer-empty">今回は新着投稿がありませんでした。</p>
+    `;
+    return;
+  }
+
+  const body = summaryRow?.body;
+  if (!body) {
+    el.innerHTML = `
+      <div class="drawer-section"><p class="drawer-eyebrow">実行ログ</p><div class="drawer-runs">${runLine}</div></div>
+      <p class="drawer-empty">ダイジェストを生成中です…</p>
+    `;
+    return;
+  }
+
+  const highlightsHtml = (body.highlights || []).slice(0, 5).map((h) => `
+    <div class="highlight-item"><span class="hi-bullet">・</span><span class="hi-who">${escapeHtml(h.author_handle || "")}</span>${escapeHtml(h.text || "")}</div>
+  `).join("");
+  const tagsHtml = (body.new_terms || []).map((t) => `<span class="tag-chip"><span class="tag-new">NEW</span>${escapeHtml(t)}</span>`).join("");
+
+  el.innerHTML = `
+    <div class="drawer-section"><p class="drawer-eyebrow">実行ログ</p><div class="drawer-runs">${runLine}</div></div>
+    <div class="drawer-section">
+      <p class="drawer-eyebrow">新着ハイライト（この回だけ）</p>
+      <div class="highlight-list">${highlightsHtml || '<p class="drawer-empty">なし</p>'}</div>
+    </div>
+    ${tagsHtml ? `<div class="drawer-section"><p class="drawer-eyebrow">初出ワード</p><div class="tag-row">${tagsHtml}</div></div>` : ""}
+  `;
+}
+
+function render24hDrawer(runs, summaryRow) {
+  const el = document.querySelector('.drawer[data-drawer="24h"]');
+  const since = digestData.since24h;
+  const runsIn24h = (runs || []).filter((r) => r.finished_at >= since).slice(0, 8);
+  const runsHtml = runsIn24h.map((r) => `
+    <div class="run-row"><span class="run-time">${fmtTimeHHMM(r.finished_at)}</span>${r.source === "scheduled" ? "自動実行（定期）" : "手動実行"} <span class="run-count">${r.new_post_count}件取得</span></div>
+  `).join("") || `<p class="drawer-empty">実行記録がありません。</p>`;
+
+  const body = summaryRow?.body;
+  let contentHtml;
+  if (!body) {
+    contentHtml = `<p class="drawer-empty">ダイジェストを生成中です…</p>`;
+  } else if (body.empty) {
+    contentHtml = `<p class="drawer-empty">直近24時間の投稿がありませんでした。</p>`;
+  } else {
+    contentHtml = `
+      <div class="drawer-section"><p class="drawer-eyebrow">今日の傾向</p><p class="drawer-text">${escapeHtml(body.summary || "")}</p></div>
+      <div class="drawer-section"><p class="drawer-eyebrow">深掘りアドバイス</p><div class="advice-box"><span class="advice-mark">💡</span><p>${escapeHtml(body.advice || "")}</p></div></div>
+    `;
+  }
+
+  el.innerHTML = `
+    <div class="drawer-section"><p class="drawer-eyebrow">実行ログ（直近24時間）</p><div class="drawer-runs">${runsHtml}</div></div>
+    ${contentHtml}
+    ${summaryRow ? `<p class="drawer-generated">生成: ${fmtDate(summaryRow.generated_at)}</p>` : ""}
+  `;
+}
+
+function render7dDrawer(summaryRow) {
+  const el = document.querySelector('.drawer[data-drawer="7d"]');
+  const body = summaryRow?.body;
+  if (!body) {
+    el.innerHTML = `<p class="drawer-empty">ダイジェストを生成中です…</p>`;
+    return;
+  }
+  const daily = body.daily || [];
+  const maxTotal = Math.max(1, ...daily.map((d) => d.total));
+  const todayStr = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+
+  const barsHtml = daily.map((d) => {
+    const readPct = d.total > 0 ? ((d.total - d.unread) / d.total) * 100 : 0;
+    const unreadPct = d.total > 0 ? (d.unread / d.total) * 100 : 0;
+    const heightPx = Math.round((d.total / maxTotal) * 96);
+    return `
+      <div class="bar-col">
+        <div class="bar-total">${d.total}</div>
+        <div class="bar-stack" style="height:${Math.max(heightPx, d.total > 0 ? 4 : 0)}px">
+          <div class="seg-read" style="height:${readPct}%"></div>
+          <div class="seg-unread" style="height:${unreadPct}%"></div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const axisHtml = daily.map((d) => {
+    const [, m, dd] = d.date.split("-");
+    const isToday = d.date === todayStr;
+    return `<div class="axis-label${isToday ? " today" : ""}">${parseInt(m, 10)}/${parseInt(dd, 10)}<span class="dow">${escapeHtml(d.weekday)}</span></div>`;
+  }).join("");
+
+  const bodyContent = body.empty ? `<p class="drawer-empty">直近7日間の投稿がありませんでした。</p>` : `
+    <div class="drawer-section"><p class="drawer-eyebrow">今週の傾向</p><p class="drawer-text">${escapeHtml(body.trend || "")}</p></div>
+    <div class="drawer-section"><p class="drawer-eyebrow">シニアライフアドバイザーより</p><div class="advice-box"><span class="advice-mark">🌱</span><p>${escapeHtml(body.advice || "")}</p></div></div>
+  `;
+
+  el.innerHTML = `
+    <div class="drawer-section">
+      <p class="drawer-eyebrow">週間の取得・既読状況</p>
+      <div class="chart-wrap">
+        <div class="chart">${barsHtml}</div>
+        <div class="chart-axis">${axisHtml}</div>
+        <div class="chart-legend">
+          <span><i class="legend-swatch" style="background:#3d84c9"></i>既読</span>
+          <span><i class="legend-swatch" style="background:#7fa3c4"></i>未読</span>
+        </div>
+      </div>
+    </div>
+    ${bodyContent}
+    <p class="drawer-generated">生成: ${fmtDate(summaryRow.generated_at)}</p>
+  `;
+}
+
 async function load() {
+  // 再読込でpostsが総入れ替えされた後に古いナビゲーション履歴が残らないように。
+  navHistory = [];
+  navHistoryIndex = -1;
+  historyBrowsing = false;
+  historyBrowsingSavedUnread = null;
   restoreFilterState();
   document.getElementById("status").textContent = "読み込み中...";
   const oneMonthAgo = new Date(Date.now() - 30*24*60*60*1000).toISOString();
@@ -578,6 +1057,7 @@ async function load() {
     posts = data || [];
     document.getElementById("status").textContent = `${posts.length}件`;
     render();
+    loadDigest(); // 独自にtry/catchを持つ非同期処理。失敗してもメイン一覧の表示は巻き込まない。
   } catch (err) {
     document.getElementById("status").textContent = "読み込みエラー: " + err.message;
   }
@@ -645,6 +1125,7 @@ function render() {
   const unreadOnly = document.getElementById("unreadOnly").checked;
   const grouped = document.getElementById("groupByAuthor").checked;
   const groupSort = document.getElementById("groupSort").value;
+  const postSort = document.getElementById("postSort").value;
   const q = document.getElementById("search").value.trim().toLowerCase();
   const listEl = document.getElementById("list");
   listEl.innerHTML = "";
@@ -682,6 +1163,14 @@ function render() {
   } else {
     filtered = baseFiltered;
   }
+
+  // 投稿の並び順は常にposted_at基準(取得順のfetched_atではない)。
+  // グループ化時もグループ内の並びに同じ基準を使う。
+  filtered = filtered.slice().sort((a, b) => {
+    const ta = a.posted_at ? new Date(a.posted_at).getTime() : -Infinity;
+    const tb = b.posted_at ? new Date(b.posted_at).getTime() : -Infinity;
+    return postSort === "posted_asc" ? ta - tb : tb - ta;
+  });
 
   if (!grouped) {
     for (const p of filtered) {
@@ -741,11 +1230,19 @@ function render() {
 }
 
 document.getElementById("starOnly").addEventListener("change", render);
+document.getElementById("unreadOnly").addEventListener("change", () => {
+  // ユーザーが自分でチェックボックスを操作した場合、履歴閲覧による自動復元が
+  // 後から横から割り込んでその意思を上書きしないようにする。
+  historyBrowsing = false;
+  historyBrowsingSavedUnread = null;
+});
 document.getElementById("unreadOnly").addEventListener("change", render);
 document.getElementById("unreadOnly").addEventListener("change", saveFilterState);
 document.getElementById("groupByAuthor").addEventListener("change", render);
 document.getElementById("groupSort").addEventListener("change", render);
 document.getElementById("groupSort").addEventListener("change", saveFilterState);
+document.getElementById("postSort").addEventListener("change", render);
+document.getElementById("postSort").addEventListener("change", saveFilterState);
 document.getElementById("search").addEventListener("input", render);
 document.getElementById("reload").addEventListener("click", load);
 document.getElementById("markAllRead").addEventListener("click", () => {
@@ -777,6 +1274,26 @@ document.getElementById("accordionToggle").addEventListener("click", () => {
   btn.setAttribute("aria-expanded", String(!collapsed));
   btn.textContent = collapsed ? "▼ フィルター" : "▲ 閉じる";
   updateHeaderHeightVar();
+});
+
+document.getElementById("digestTitlebar").addEventListener("click", () => {
+  const digestEl = document.getElementById("digest");
+  const collapsed = digestEl.classList.toggle("collapsed");
+  document.getElementById("digestCaret").textContent = collapsed ? "▼ 開く" : "▲ 閉じる";
+  saveDigestState();
+  updateHeaderHeightVar();
+});
+
+document.querySelectorAll("#digest .tile").forEach((tile) => {
+  tile.addEventListener("click", () => {
+    const key = tile.dataset.tile;
+    const nowOpen = !tile.classList.contains("open");
+    tile.classList.toggle("open", nowOpen);
+    document.querySelector(`.drawer[data-drawer="${key}"]`).classList.toggle("show", nowOpen);
+    digestTileOpen[key] = nowOpen;
+    saveDigestState();
+    updateHeaderHeightVar();
+  });
 });
 
 window.addEventListener("resize", updateHeaderHeightVar);
@@ -849,6 +1366,7 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest("#btnSpeed")) speedHoverGroup.classList.remove("visible");
 });
 
+restoreDigestState(); // 開閉状態はデータ再読込と無関係なUI初期化なので、load()の外で一度だけ適用
 load();
 </script>
 </body>
