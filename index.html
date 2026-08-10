@@ -33,14 +33,19 @@
 
   /* ---- 更新ダイジェスト（前回取得分／24H／週間の3タイル、headerBar内側）---- */
   #digest { background: #1a1d24; border: 1px solid #2c313b; border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+  /* クリック判定は行全体(#digestTitlebar / .tile)に付いており矢印だけが対象では
+     ないが、見た目上は境界線付きの矢印ピルだけが「押せそう」に見えて伝わりにくい
+     との指摘(2026-08-09)を受け、行全体にホバー/タップの背景ハイライトを付けて
+     押せる範囲を可視化する。:activeも付けてタッチ端末でも即座に反応が見えるように。 */
   #digest .digest-titlebar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; cursor: pointer; user-select: none; }
+  #digest .digest-titlebar:hover, #digest .digest-titlebar:active { background: #23272f; }
   #digest .digest-titlebar h2 { font-size: 12.5px; font-weight: 600; margin: 0; color: #9aa0a8; letter-spacing: 0.02em; }
   #digest .digest-titlebar .caret { font-size: 11px; color: #6b7078; border: 1px solid #333; border-radius: 6px; padding: 3px 8px; transition: transform 0.15s ease; }
   #digest.collapsed .digest-body { display: none; }
   #digest.collapsed .digest-titlebar .caret { transform: rotate(-90deg); }
   #digest .digest-tiles { display: flex; flex-direction: column; gap: 1px; background: #2c313b; border-top: 1px solid #2c313b; }
-  #digest .tile { background: #1a1d24; padding: 0 12px; height: 34px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; overflow: hidden; }
-  #digest .tile:hover, #digest .tile.open { background: #23272f; }
+  #digest .tile { background: #1a1d24; padding: 0 12px; height: 38px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; overflow: hidden; }
+  #digest .tile:hover, #digest .tile.open, #digest .tile:active { background: #23272f; }
   #digest .tile .t-label { font-size: 12px; color: #6b7078; white-space: nowrap; flex-shrink: 0; }
   #digest .tile .t-count { font-size: 14px; font-weight: 700; color: #e8e8e8; font-variant-numeric: tabular-nums; white-space: nowrap; }
   #digest .tile .t-count small { font-size: 11px; font-weight: 500; color: #6b7078; margin-left: 1px; }
