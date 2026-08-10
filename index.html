@@ -8,7 +8,14 @@
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body { font-family: -apple-system, "Segoe UI", "Hiragino Sans", sans-serif; max-width: 960px; margin: 0 auto; padding: 12px; background: #0f1115; color: #e8e8e8; font-size: 16px; }
-  .header-bar { position: sticky; top: 0; z-index: 20; background: #0f1115; padding-top: 2px; margin: 0 -12px; padding-left: 12px; padding-right: 12px; }
+  /* headerBarはsticky(常時画面上部に固定)なので高さに上限を設けないと、フィルター
+     パネル＋更新ダイジェストのドロワー(特に実行ログ)を開いた状態でビューポートより
+     高くなり得る。そうなるとカード一覧側へスクロールできなくなるだけでなく、
+     getStickyOffset()がheaderBar.offsetHeightを基準にスクロール先を補正している
+     ため、その計算自体が破綻し、カード送り(矢印キー等)がどこにスクロールしても
+     カードがヘッダーの下に隠れ続けて「戻ってこない」ように見える事故になる
+     (2026-08-09発生)。max-height+内部スクロールでheaderBarの高さを常に有限に保つ。 */
+  .header-bar { position: sticky; top: 0; z-index: 20; background: #0f1115; padding-top: 2px; margin: 0 -12px; padding-left: 12px; padding-right: 12px; max-height: min(75vh, 640px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
   .header-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; }
   h1 { font-size: 17px; margin: 0; }
   #accordionToggle { background: none; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 14px; cursor: pointer; padding: 4px 10px; line-height: 1; flex-shrink: 0; }
