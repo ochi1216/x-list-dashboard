@@ -870,8 +870,13 @@ async function loadDigest() {
 
     const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
-    const filter24h = `or=(posted_at.gte.${since24h},and(posted_at.is.null,fetched_at.gte.${since24h}))`;
-    const filter7d = `or=(posted_at.gte.${since7d},and(posted_at.is.null,fetched_at.gte.${since7d}))`;
+    // Postgresが返すタイムスタンプ文字列は"+00:00"のようなオフセットを含む。
+    // encodeURIComponentせずクエリ文字列に埋め込むと"+"が(application/x-www-form-urlencoded
+    // の慣習で)スペースとして解釈され、PostgREST側で日時パースエラー(400)になる
+    // （実際にこれで前回/24H/週間の全タイルが巻き込まれて空になる事故が発生した）。
+    const enc = encodeURIComponent;
+    const filter24h = `or=(posted_at.gte.${enc(since24h)},and(posted_at.is.null,fetched_at.gte.${enc(since24h)}))`;
+    const filter7d = `or=(posted_at.gte.${enc(since7d)},and(posted_at.is.null,fetched_at.gte.${enc(since7d)}))`;
 
     const keys = ["count24h", "unread24h", "count7d", "unread7d", "unreadLastRun"];
     const promises = [
@@ -880,12 +885,18 @@ async function loadDigest() {
       sbCount(`x_posts?select=id&${filter7d}`),
       sbCount(`x_posts?select=id&${filter7d}&is_read=eq.false`),
       lastRun
-        ? sbCount(`x_posts?select=id&fetched_at=gte.${lastRun.started_at}&fetched_at=lte.${lastRun.finished_at}&is_read=eq.false`)
+        ? sbCount(`x_posts?select=id&fetched_at=gte.${enc(lastRun.started_at)}&fetched_at=lte.${enc(lastRun.finished_at)}&is_read=eq.false`)
         : Promise.resolve(0),
     ];
-    const values = await Promise.all(promises);
+    // allSettledで個別に失敗を吸収する — 1つのクエリが失敗しても、他のタイルまで
+    // 巻き込んで空表示になることがないようにする（今回の事故の再発防止）。
+    const settled = await Promise.allSettled(promises);
     const counts = {};
-    keys.forEach((k, i) => { counts[k] = values[i]; });
+    keys.forEach((k, i) => {
+      const r = settled[i];
+      if (r.status === "rejected") console.error(`digest count failed (${k})`, r.reason);
+      counts[k] = r.status === "fulfilled" ? r.value : 0;
+    });
 
     digestData = { runs, summaries, lastRun, counts, since24h };
     renderDigest();
