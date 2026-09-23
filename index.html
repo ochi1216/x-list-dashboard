@@ -129,6 +129,10 @@
   .detail-images { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 8px; }
   .detail-images .detail-img-link { margin: 0; }
   .detail-img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); display: block; }
+  /* サムネイルサイズ: S=現行(96px) / M=2倍(192px) / L=カード幅いっぱい(端末幅に応じて可変、iPhoneでは約3倍相当) */
+  body[data-thumb-size="m"] .detail-img { width: 192px; height: 192px; }
+  body[data-thumb-size="l"] .detail-images .detail-img-link { flex: 1 1 100%; }
+  body[data-thumb-size="l"] .detail-img { width: 100%; height: auto; aspect-ratio: 1 / 1; }
   .hidden { display: none; }
 
   .row.active-read { background: rgba(229,62,62,0.12); box-shadow: inset 0 0 0 2px rgba(229,62,62,0.6); }
@@ -213,6 +217,13 @@
     <label><input type="checkbox" id="starOnly"> ★のみ表示</label>
     <label><input type="checkbox" id="unreadOnly"> 未読のみ表示</label>
     <label><input type="checkbox" id="showSummary"> 要約文表示</label>
+    <label>サムネイル
+      <select id="thumbSize">
+        <option value="s">S</option>
+        <option value="m">M</option>
+        <option value="l" selected>L</option>
+      </select>
+    </label>
     <label><input type="checkbox" id="groupByAuthor" checked> 投稿者でグループ化</label>
     <select id="groupSort">
       <option value="count_desc">投稿数が多い順</option>
@@ -322,6 +333,7 @@ const LS_KEY_UNREAD_ONLY = "xdash_unreadOnly";
 const LS_KEY_SHOW_SUMMARY = "xdash_showSummary"; // 音声で聞く運用が基本のため、デフォルトはOFF(=非表示)
 const LS_KEY_GROUP_SORT  = "xdash_groupSort";
 const LS_KEY_POST_SORT   = "xdash_postSort";
+const LS_KEY_THUMB_SIZE  = "xdash_thumbSize"; // サムネイルサイズ S/M/L。デフォルトはL(音声運用でも画像は大きく見たいという要望)
 
 // 更新ダイジェスト（前回取得分／24H／週間）の開閉状態の永続化キー
 const LS_KEY_DIGEST_OPEN = "xdash_digestOpen";
@@ -829,6 +841,10 @@ function restoreFilterState() {
     const postSort = localStorage.getItem(LS_KEY_POST_SORT);
     const validPostSorts = ["posted_desc", "posted_asc"];
     if (postSort !== null && validPostSorts.includes(postSort)) document.getElementById("postSort").value = postSort;
+    const thumbSize = localStorage.getItem(LS_KEY_THUMB_SIZE);
+    const validThumbSizes = ["s", "m", "l"];
+    if (thumbSize !== null && validThumbSizes.includes(thumbSize)) document.getElementById("thumbSize").value = thumbSize;
+    document.body.dataset.thumbSize = document.getElementById("thumbSize").value;
   } catch (err) { /* localStorage不可(プライベートモード等) — デフォルト値のまま続行 */ }
 }
 
@@ -838,6 +854,7 @@ function saveFilterState() {
     localStorage.setItem(LS_KEY_SHOW_SUMMARY, String(document.getElementById("showSummary").checked));
     localStorage.setItem(LS_KEY_GROUP_SORT, document.getElementById("groupSort").value);
     localStorage.setItem(LS_KEY_POST_SORT, document.getElementById("postSort").value);
+    localStorage.setItem(LS_KEY_THUMB_SIZE, document.getElementById("thumbSize").value);
   } catch (err) { /* ignore */ }
 }
 
@@ -1289,6 +1306,10 @@ document.getElementById("groupSort").addEventListener("change", render);
 document.getElementById("groupSort").addEventListener("change", saveFilterState);
 document.getElementById("postSort").addEventListener("change", render);
 document.getElementById("postSort").addEventListener("change", saveFilterState);
+document.getElementById("thumbSize").addEventListener("change", () => {
+  document.body.dataset.thumbSize = document.getElementById("thumbSize").value;
+  saveFilterState();
+});
 document.getElementById("search").addEventListener("input", render);
 document.getElementById("reload").addEventListener("click", load);
 document.getElementById("markAllRead").addEventListener("click", () => {
