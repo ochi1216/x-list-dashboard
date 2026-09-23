@@ -109,7 +109,7 @@
      bar appearing doesn't shift layout. */
   .row { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px 10px 9px; border-bottom: 1px solid #22252c; border-left: 3px solid transparent; cursor: pointer; font-size: 16px; }
   .row.read { border-left-color: #55595f; }
-  .row.read .gist { color: #8a8f96; }
+  .row.read .gist { color: #fff; }
   .row:hover { background: #1a1d24; }
   .row-main { display: flex; align-items: center; gap: 8px; }
   .row .date { color: #888; font-size: 13px; white-space: nowrap; }
@@ -123,6 +123,8 @@
   .detail { padding: 10px 14px 16px; background: #15171d; font-size: 15px; line-height: 1.6; }
   .detail a { color: #6cb8ff; display: inline-block; margin-top: 4px; }
   .detail .tldr { font-size: 15px; color: #ddd; margin-bottom: 6px; }
+  /* 音声で聞く運用が基本のため、要約文はデフォルト非表示（チェックボックスで表示切替） */
+  body.summary-hidden .detail .tldr { display: none; }
   .detail-images { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 8px; }
   .detail-images .detail-img-link { margin: 0; }
   .detail-img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); display: block; }
@@ -145,6 +147,11 @@
   .speed-hover-group.visible { opacity: 1; pointer-events: auto; }
   .speed-hover-btn { width: 38px; height: 38px; border-radius: 19px; background: rgba(15,17,21,0.95); color: #6cb8ff; border: 1px solid rgba(108,184,255,0.45); box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; justify-content: center; align-items: center; cursor: pointer; font-size: 11px; font-weight: bold; touch-action: manipulation; }
   .speed-hover-btn.active-speed { background: #3182ce; color: #fff; border-color: #3182ce; }
+
+  /* 「その他」ボタン（読み上げ速度・投稿者送りをここに格納し、常時表示のFAB列を短くする） */
+  .fab.more { font-size: 22px; overflow: visible; }
+  .more-menu { position: absolute; right: 58px; bottom: 0; display: flex; flex-direction: row; gap: 5px; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; white-space: nowrap; }
+  .more-menu.visible { opacity: 1; pointer-events: auto; }
 
   @media (min-width: 640px) {
     body { font-size: 14px; padding: 16px; }
@@ -204,6 +211,7 @@
   <div class="controls" id="controlsPanel">
     <label><input type="checkbox" id="starOnly"> ★のみ表示</label>
     <label><input type="checkbox" id="unreadOnly"> 未読のみ表示</label>
+    <label><input type="checkbox" id="showSummary"> 要約文表示</label>
     <label><input type="checkbox" id="groupByAuthor" checked> 投稿者でグループ化</label>
     <select id="groupSort">
       <option value="count_desc">投稿数が多い順</option>
@@ -226,13 +234,17 @@
 <div id="list"></div>
 
 <div class="fab-container" id="fabContainer">
-  <div class="fab speed" id="btnSpeed">1.5x<div class="speed-hover-group" id="speedHoverGroup"></div></div>
-  <div class="fab author-nav" id="btnAuthorPrev" title="前の投稿者へ">⏫</div>
   <div class="fab" id="btnCardPrev" title="前のカードへ">▲</div>
   <div class="fab" id="btnReadMode" title="読み上げモード切替(▶:タイトル+要約 / ▶▶:タイトルのみ)">▶</div>
   <div class="fab" id="btnCardNext" title="次のカードへ">▼</div>
-  <div class="fab author-nav" id="btnAuthorNext" title="次の投稿者へ">⏬</div>
   <div class="fab primary" id="btnPlayPause" title="読み上げ開始/停止">▶️</div>
+  <div class="fab more" id="btnMore" title="その他の操作（読み上げ速度・投稿者送り）">⋯
+    <div class="more-menu" id="moreMenu">
+      <div class="fab speed" id="btnSpeed">1.5x<div class="speed-hover-group" id="speedHoverGroup"></div></div>
+      <div class="fab author-nav" id="btnAuthorPrev" title="前の投稿者へ">⏫</div>
+      <div class="fab author-nav" id="btnAuthorNext" title="次の投稿者へ">⏬</div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -306,6 +318,7 @@ let autoMoveTimerHandle = null; // 次のステップ用setTimeoutハンドル
 
 // 課題1・2: フィルター状態の永続化キー
 const LS_KEY_UNREAD_ONLY = "xdash_unreadOnly";
+const LS_KEY_SHOW_SUMMARY = "xdash_showSummary"; // 音声で聞く運用が基本のため、デフォルトはOFF(=非表示)
 const LS_KEY_GROUP_SORT  = "xdash_groupSort";
 const LS_KEY_POST_SORT   = "xdash_postSort";
 
@@ -805,6 +818,10 @@ function restoreFilterState() {
   try {
     const unread = localStorage.getItem(LS_KEY_UNREAD_ONLY);
     if (unread !== null) document.getElementById("unreadOnly").checked = unread === "true";
+    // 未設定(初回訪問)ならチェックボックスの初期値どおりOFF=非表示のまま
+    const showSummary = localStorage.getItem(LS_KEY_SHOW_SUMMARY);
+    if (showSummary !== null) document.getElementById("showSummary").checked = showSummary === "true";
+    document.body.classList.toggle("summary-hidden", !document.getElementById("showSummary").checked);
     const sort = localStorage.getItem(LS_KEY_GROUP_SORT);
     const validSorts = ["count_desc", "count_asc", "name_asc", "name_desc"];
     if (sort !== null && validSorts.includes(sort)) document.getElementById("groupSort").value = sort;
@@ -817,6 +834,7 @@ function restoreFilterState() {
 function saveFilterState() {
   try {
     localStorage.setItem(LS_KEY_UNREAD_ONLY, String(document.getElementById("unreadOnly").checked));
+    localStorage.setItem(LS_KEY_SHOW_SUMMARY, String(document.getElementById("showSummary").checked));
     localStorage.setItem(LS_KEY_GROUP_SORT, document.getElementById("groupSort").value);
     localStorage.setItem(LS_KEY_POST_SORT, document.getElementById("postSort").value);
   } catch (err) { /* ignore */ }
@@ -1261,6 +1279,10 @@ document.getElementById("unreadOnly").addEventListener("change", () => {
 });
 document.getElementById("unreadOnly").addEventListener("change", render);
 document.getElementById("unreadOnly").addEventListener("change", saveFilterState);
+document.getElementById("showSummary").addEventListener("change", () => {
+  document.body.classList.toggle("summary-hidden", !document.getElementById("showSummary").checked);
+  saveFilterState();
+});
 document.getElementById("groupByAuthor").addEventListener("change", render);
 document.getElementById("groupSort").addEventListener("change", render);
 document.getElementById("groupSort").addEventListener("change", saveFilterState);
@@ -1387,6 +1409,17 @@ speedBtn.addEventListener("pointerup", (e) => {
 speedBtn.addEventListener("pointerleave", () => clearTimeout(speedPressTimer));
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#btnSpeed")) speedHoverGroup.classList.remove("visible");
+});
+
+// 「その他」ボタン: 読み上げ速度・投稿者送りをここに格納し、常時表示のFAB列を短くする
+const moreBtn = document.getElementById("btnMore");
+const moreMenu = document.getElementById("moreMenu");
+moreBtn.addEventListener("click", (e) => {
+  if (e.target.closest(".more-menu")) return; // メニュー内のボタン操作は各ボタン自身のリスナーに任せる
+  moreMenu.classList.toggle("visible");
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#btnMore")) moreMenu.classList.remove("visible");
 });
 
 restoreDigestState(); // 開閉状態はデータ再読込と無関係なUI初期化なので、load()の外で一度だけ適用
