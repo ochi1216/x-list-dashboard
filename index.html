@@ -117,7 +117,8 @@
   .row .star.on { color: gold; }
   .row .star.off { color: #444; }
   .row .handle { color: #6cb8ff; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
-  .row .gist { color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+  .row .gist { color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; text-decoration: none; }
+  .row .gist:hover { text-decoration: underline; }
   .row .nogist { color: #666; font-style: italic; }
 
   .detail { padding: 10px 14px 16px; background: #15171d; font-size: 15px; line-height: 1.6; }
@@ -1116,7 +1117,7 @@ function buildRow(p) {
       <span class="star ${p.is_starred ? "on" : "off"}">★</span>
       <span class="handle">${escapeHtml(p.author_handle)}</span>
     </div>
-    <span class="gist ${hasGist ? "" : "nogist"}">${escapeHtml(gistText)}</span>
+    <a class="gist ${hasGist ? "" : "nogist"}" href="${escapeHtml(p.post_url)}" target="_blank" rel="noopener">${escapeHtml(gistText)}</a>
   `;
   const detail = document.createElement("div");
   detail.className = "detail" + (collapsedUrls.has(p.post_url) ? " hidden" : "");
@@ -1129,7 +1130,6 @@ function buildRow(p) {
   detail.innerHTML = `
     <div class="tldr">${p.summary ? escapeHtml(p.summary) : "まだ要約がありません。チャットで「この投稿要約して」と頼んでください。"}</div>
     ${imagesHtml}
-    <a href="${escapeHtml(p.post_url)}" target="_blank" rel="noopener">元投稿を開く</a>
   `;
   row.addEventListener("click", (e) => {
     if (e.target.classList.contains("star")) return;
@@ -1155,7 +1155,8 @@ function buildRow(p) {
       console.error("star update failed", err);
     }
   });
-  detail.querySelector("a").addEventListener("click", () => {
+  row.querySelector(".gist").addEventListener("click", (e) => {
+    e.stopPropagation();
     markAsRead([p.post_url]);
   });
   return { row, detail };
