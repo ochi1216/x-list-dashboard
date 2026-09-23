@@ -128,11 +128,13 @@
   body.summary-hidden .detail .tldr { display: none; }
   .detail-images { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 8px; }
   .detail-images .detail-img-link { margin: 0; }
-  .detail-img { width: 96px; height: 96px; object-fit: cover; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); display: block; }
-  /* サムネイルサイズ: S=現行(96px) / M=2倍(192px) / L=カード幅いっぱい(端末幅に応じて可変、iPhoneでは約3倍相当) */
-  body[data-thumb-size="m"] .detail-img { width: 192px; height: 192px; }
+  /* 元画像の縦横比を保ったまま、長い方の辺をサイズ上限に合わせて縮小する
+     (object-fit:coverでの正方形切り抜きだと構図が失われるため使わない)。 */
+  .detail-img { max-width: 96px; max-height: 96px; width: auto; height: auto; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); display: block; }
+  /* サムネイルサイズ: S=現行(長辺96px) / M=2倍(長辺192px) / L=カード幅いっぱい(端末幅に応じて可変、iPhoneでは約3倍相当) */
+  body[data-thumb-size="m"] .detail-img { max-width: 192px; max-height: 192px; }
   body[data-thumb-size="l"] .detail-images .detail-img-link { flex: 1 1 100%; }
-  body[data-thumb-size="l"] .detail-img { width: 100%; height: auto; aspect-ratio: 1 / 1; }
+  body[data-thumb-size="l"] .detail-img { max-width: 100%; max-height: none; }
   .hidden { display: none; }
 
   .row.active-read { background: rgba(229,62,62,0.12); box-shadow: inset 0 0 0 2px rgba(229,62,62,0.6); }
