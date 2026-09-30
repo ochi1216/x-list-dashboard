@@ -1317,7 +1317,7 @@ function buildRow(p) {
       <span class="star ${p.is_starred ? "on" : "off"}">★</span>
       <span class="handle">${escapeHtml(p.author_handle)}</span>${lowValueBadgeHtml(p)}
     </div>
-    <a class="gist${hasGist ? "" : "nogist"}" href="${escapeHtml(p.post_url)}" target="_blank" rel="noopener">${escapeHtml(gistText)}</a>
+    <a class="gist ${hasGist ? "" : "nogist"}" href="${escapeHtml(p.post_url)}" target="_blank" rel="noopener">${escapeHtml(gistText)}</a>
   `;
   const detail = document.createElement("div");
   detail.className = "detail" + (collapsedUrls.has(p.post_url) ? " hidden" : "");
