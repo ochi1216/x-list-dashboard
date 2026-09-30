@@ -89,6 +89,9 @@
   #digest .drawer-generated { font-size: 10.5px; color: #4d525a; margin: 10px 0 0; text-align: right; }
 
   #status { font-size: 12px; color: #888; margin-bottom: 8px; }
+  #lowValueNote { font-size: 12px; color: #6cb8ff; margin: -4px 0 8px; cursor: pointer; line-height: 1.5; }
+  #lowValueNote.warn { color: #ff6b6b; cursor: default; }
+  .lv-badge { flex: 0 0 auto; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #3a2f12; color: #e0b34a; white-space: nowrap; }
   /* Each author's header+rows are wrapped in .group so position:sticky's
      containing block is just that group — the header stays pinned for
      exactly its own group's scroll range, then hands off to the next.
@@ -231,6 +234,13 @@
         <option value="l" selected>L</option>
       </select>
     </label>
+    <label>低情報
+      <select id="lowValueMode">
+        <option value="hide" selected>隠す</option>
+        <option value="include">含める</option>
+        <option value="only">低情報のみ</option>
+      </select>
+    </label>
     <label><input type="checkbox" id="groupByAuthor" checked> 投稿者でグループ化</label>
     <select id="groupSort">
       <option value="count_desc">投稿数が多い順</option>
@@ -250,6 +260,7 @@
   </div>
 </div>
 <div id="status">読み込み中...</div>
+<div id="lowValueNote" hidden></div>
 <div id="list"></div>
 
 <div class="fab-container" id="fabContainer">
@@ -310,6 +321,7 @@ async function sbCount(path) {
   return Number.isFinite(total) ? total : 0;
 }
 
+let allPosts = []; // 取得した生データ。postsは低情報フィルタ適用後の表示対象(recomputeVisiblePosts参照)
 let posts = [];
 let digestData = null; // 更新ダイジェスト（fetch_runs/digest_summaries/集計件数）のキャッシュ
 let collapsedUrls = new Set(); // post_urls whose detail is manually hidden — empty means all expanded (default)
@@ -341,6 +353,7 @@ const LS_KEY_SHOW_SUMMARY = "xdash_showSummary"; // 音声で聞く運用が基�
 const LS_KEY_GROUP_SORT  = "xdash_groupSort";
 const LS_KEY_POST_SORT   = "xdash_postSort";
 const LS_KEY_THUMB_SIZE  = "xdash_thumbSize"; // サムネイルサイズ S/M/L。デフォルトはL(音声運用でも画像は大きく見たいという要望)
+const LS_KEY_LOW_VALUE   = "xdash_lowValueMode"; // 低情報投稿の扱い hide/include/only。デフォルトはhide
 
 // 更新ダイジェスト（前回取得分／24H／週間）の開閉状態の永続化キー
 const LS_KEY_DIGEST_OPEN = "xdash_digestOpen";
@@ -381,8 +394,9 @@ async function markAsRead(postUrls) {
 }
 
 async function setReadState(postUrls, markRead) {
+  // 低情報フィルタで非表示の投稿も既読化できるよう、生データ(allPosts)から探す。
   const targets = postUrls.filter((u) => {
-    const p = posts.find((p) => p.post_url === u);
+    const p = allPosts.find((p) => p.post_url === u);
     return p && p.is_read !== markRead;
   });
   if (targets.length === 0) return;
@@ -394,7 +408,7 @@ async function setReadState(postUrls, markRead) {
       body: JSON.stringify({ is_read: markRead }),
     });
     for (const u of targets) {
-      const p = posts.find((p) => p.post_url === u);
+      const p = allPosts.find((p) => p.post_url === u);
       if (p) p.is_read = markRead;
     }
     render();
@@ -872,6 +886,9 @@ function restoreFilterState() {
     const validThumbSizes = ["s", "m", "l"];
     if (thumbSize !== null && validThumbSizes.includes(thumbSize)) document.getElementById("thumbSize").value = thumbSize;
     document.body.dataset.thumbSize = document.getElementById("thumbSize").value;
+    const lowValueMode = localStorage.getItem(LS_KEY_LOW_VALUE);
+    const validLowValueModes = ["hide", "include", "only"];
+    if (lowValueMode !== null && validLowValueModes.includes(lowValueMode)) document.getElementById("lowValueMode").value = lowValueMode;
   } catch (err) { /* localStorage不可(プライベートモード等) — デフォルト値のまま続行 */ }
 }
 
@@ -882,6 +899,7 @@ function saveFilterState() {
     localStorage.setItem(LS_KEY_GROUP_SORT, document.getElementById("groupSort").value);
     localStorage.setItem(LS_KEY_POST_SORT, document.getElementById("postSort").value);
     localStorage.setItem(LS_KEY_THUMB_SIZE, document.getElementById("thumbSize").value);
+    localStorage.setItem(LS_KEY_LOW_VALUE, document.getElementById("lowValueMode").value);
   } catch (err) { /* ignore */ }
 }
 
@@ -1128,6 +1146,136 @@ function render7dDrawer(summaryRow) {
   `;
 }
 
+// --- 低情報投稿(意味のない極短文・本文なし)の表示フィルタ -------------------
+// DB・要約側は変更せず、表示側だけで判定する(物理削除はしない)。理由コードは将来DBに
+// 列 low_value_reason(案B)を足すときと同じ文字列にしてあり、列があればそれを優先する。
+// 保守的なルール(誤って隠すと情報が静かに消え、誤って残しても読み上げが約2秒延びるだけ):
+//   empty        本文が空で画像もない
+//   short_ref    URL除去後14字以内・画像なし・要約=原文コピーで、参照語(こちら/詳細/リンク等)だけ
+//   short_repeat 同上で、同一投稿者の同一本文が3件以上
+//   short_tiny   同上で、4字以内かつ英数字を含まない(「草」「おおー」など)
+// 画像付き・スター付きは常に残す。判定でエラーが出た投稿も残す(fail-open)。
+// LV-BEGIN
+const LV_VERSION = 1;
+const LV_SHORT_MAX = 14;
+const LV_AUTO_DISABLE_RATE = 0.2;    // 非表示率がこれを超えたら取得側の異常とみなしフィルタを自動停止
+const LV_AUTO_DISABLE_MIN_POSTS = 50;
+const LV_REF_ONLY = /^(こちら|詳細|詳しく|参照|参考|元|リンク|続き|記事|note|ノート|あとで|後で|読む|読み|チェック|前回|話|まで|から|ぜひ|是非|活用|よろしく|ご|お|は|を|も|で|に|が|の|です|ます|ください|下さい)+$/i;
+const LV_LABELS = { empty: "本文なし", short_ref: "参照のみ", short_repeat: "同文の繰り返し", short_tiny: "極短文" };
+
+function lvNormalize(s) { return String(s ?? "").normalize("NFKC").replace(/\s+/g, " ").trim(); }
+function lvText(p) { return lvNormalize(String(p.content ?? "").replace(/https?:\/\/\S+/g, "")); }
+function lvHasImages(p) { return Array.isArray(p.image_urls) && p.image_urls.length > 0; }
+function lvIsShortEcho(p) {
+  const len = [...lvText(p)].length;
+  return len >= 1 && len <= LV_SHORT_MAX && lvNormalize(p.summary) === lvNormalize(p.content);
+}
+function lvRepeatKey(p) { return lvNormalize(p.author_handle) + "\u0000" + lvText(p); }
+
+function classifyLowValue(p, repeatCounts) {
+  if (p.low_value_reason) return { rule: p.low_value_reason, version: LV_VERSION };
+  if (p.is_starred || lvHasImages(p)) return null;
+  if (String(p.content ?? "").trim() === "") return { rule: "empty", version: LV_VERSION };
+  if (!lvIsShortEcho(p)) return null;
+  const text = lvText(p);
+  const compact = text.replace(/[\p{P}\p{S}\s]/gu, "");
+  if (compact && LV_REF_ONLY.test(compact)) return { rule: "short_ref", version: LV_VERSION };
+  if ((repeatCounts.get(lvRepeatKey(p)) || 0) >= 3) return { rule: "short_repeat", version: LV_VERSION };
+  if ([...text].length <= 4 && !/[A-Za-z0-9]/.test(text)) return { rule: "short_tiny", version: LV_VERSION };
+  return null;
+}
+
+// 生データ全体を判定し、{info: post_url→rule, stats} を返す。
+function computeLowValue(rawPosts) {
+  const info = new Map();
+  const stats = { total: rawPosts.length, hidden: 0, byRule: {}, autoDisabled: false, rate: 0 };
+  const counts = new Map();
+  for (const p of rawPosts) {
+    try {
+      if (!p.is_starred && !lvHasImages(p) && lvIsShortEcho(p)) {
+        const k = lvRepeatKey(p);
+        counts.set(k, (counts.get(k) || 0) + 1);
+      }
+    } catch (err) { /* fail-open */ }
+  }
+  for (const p of rawPosts) {
+    try {
+      const r = classifyLowValue(p, counts);
+      if (r) {
+        info.set(p.post_url, r.rule);
+        stats.byRule[r.rule] = (stats.byRule[r.rule] || 0) + 1;
+        stats.hidden++;
+      }
+    } catch (err) { /* fail-open: 判定できない投稿は残す */ }
+  }
+  stats.rate = stats.total ? stats.hidden / stats.total : 0;
+  if (stats.total >= LV_AUTO_DISABLE_MIN_POSTS && stats.rate > LV_AUTO_DISABLE_RATE) {
+    stats.autoDisabled = true;
+    info.clear();
+  }
+  return { info, stats };
+}
+// LV-END
+
+const LV_DISABLED = (() => { try { return new URLSearchParams(location.search).get("lv") === "off"; } catch { return false; } })();
+let lowValueInfo = new Map(); // post_url -> rule(判定は読み込み時と切替時のみ。星を外しても再読込まで再判定しない)
+let lowValueStats = { total: 0, hidden: 0, byRule: {}, autoDisabled: false, rate: 0 };
+
+function lvMode() {
+  const el = document.getElementById("lowValueMode");
+  return el ? el.value : "hide";
+}
+
+function recomputeVisiblePosts() {
+  let result = { info: new Map(), stats: { total: allPosts.length, hidden: 0, byRule: {}, autoDisabled: false, rate: 0 } };
+  if (!LV_DISABLED) {
+    try { result = computeLowValue(allPosts); } catch (err) { console.warn("low-value filter failed; showing everything", err); }
+  }
+  lowValueInfo = result.info;
+  lowValueStats = result.stats;
+  const mode = lvMode();
+  if (mode === "only") posts = allPosts.filter((p) => lowValueInfo.has(p.post_url));
+  else if (mode === "hide" && lowValueInfo.size > 0) posts = allPosts.filter((p) => !lowValueInfo.has(p.post_url));
+  else posts = allPosts;
+  updateLowValueNote();
+}
+
+function updateLowValueNote() {
+  const el = document.getElementById("lowValueNote");
+  if (!el) return;
+  const s = lowValueStats;
+  const mode = lvMode();
+  const detail = Object.entries(s.byRule).map(([r, n]) => `${LV_LABELS[r] || r}${n}`).join("・");
+  el.className = "";
+  if (LV_DISABLED) {
+    el.className = "warn";
+    el.textContent = "低情報フィルタ: 停止中（?lv=off）";
+    el.hidden = false;
+  } else if (s.autoDisabled) {
+    el.className = "warn";
+    el.textContent = `低情報が${Math.round(s.rate * 100)}%（${s.hidden}件）と多すぎるため、フィルタを自動停止しました（取得側の異常の可能性）`;
+    el.hidden = false;
+  } else if (s.hidden === 0) {
+    el.hidden = true;
+  } else if (mode === "hide") {
+    el.textContent = `低情報${s.hidden}件を非表示（${detail}）・タップで確認　※上部ダイジェストの件数には含まれます`;
+    el.hidden = false;
+  } else if (mode === "only") {
+    el.textContent = `低情報のみ表示中（${s.hidden}件：${detail}）・タップで隠す`;
+    el.hidden = false;
+  } else {
+    el.textContent = `低情報${s.hidden}件を含めて表示中（理由バッジ付き）・タップで隠す`;
+    el.hidden = false;
+  }
+}
+
+function applyLowValueMode() {
+  recomputeVisiblePosts();
+  document.getElementById("status").textContent = `${posts.length}件`;
+  saveFilterState();
+  render();
+}
+
 async function load() {
   // 再読込でpostsが総入れ替えされた後に古いナビゲーション履歴が残らないように。
   navHistory = [];
@@ -1140,13 +1288,21 @@ async function load() {
   const filter = `or=(posted_at.gte.${oneMonthAgo},posted_at.is.null)`;
   try {
     const data = await sbFetch(`x_posts?select=*&${filter}&order=fetched_at.desc`);
-    posts = data || [];
+    allPosts = data || [];
+    recomputeVisiblePosts();
     document.getElementById("status").textContent = `${posts.length}件`;
     render();
     loadDigest(); // 独自にtry/catchを持つ非同期処理。失敗してもメイン一覧の表示は巻き込まない。
   } catch (err) {
     document.getElementById("status").textContent = "読み込みエラー: " + err.message;
   }
+}
+
+// 低情報を表示している間(含める/低情報のみ)だけ、なぜ低情報と判定されたかをバッジで示す。
+function lowValueBadgeHtml(p) {
+  const rule = lowValueInfo.get(p.post_url);
+  if (!rule || lvMode() === "hide") return "";
+  return ` <span class="lv-badge">${escapeHtml(LV_LABELS[rule] || rule)}</span>`;
 }
 
 function buildRow(p) {
@@ -1159,9 +1315,9 @@ function buildRow(p) {
     <div class="row-main">
       <span class="date">${fmtDate(p.posted_at || p.fetched_at)}</span>
       <span class="star ${p.is_starred ? "on" : "off"}">★</span>
-      <span class="handle">${escapeHtml(p.author_handle)}</span>
+      <span class="handle">${escapeHtml(p.author_handle)}</span>${lowValueBadgeHtml(p)}
     </div>
-    <a class="gist ${hasGist ? "" : "nogist"}" href="${escapeHtml(p.post_url)}" target="_blank" rel="noopener">${escapeHtml(gistText)}</a>
+    <a class="gist${hasGist ? "" : "nogist"}" href="${escapeHtml(p.post_url)}" target="_blank" rel="noopener">${escapeHtml(gistText)}</a>
   `;
   const detail = document.createElement("div");
   detail.className = "detail" + (collapsedUrls.has(p.post_url) ? " hidden" : "");
@@ -1337,16 +1493,27 @@ document.getElementById("thumbSize").addEventListener("change", () => {
   document.body.dataset.thumbSize = document.getElementById("thumbSize").value;
   saveFilterState();
 });
+document.getElementById("lowValueMode").addEventListener("change", applyLowValueMode);
+document.getElementById("lowValueNote").addEventListener("click", () => {
+  if (LV_DISABLED || lowValueStats.autoDisabled) return;
+  const sel = document.getElementById("lowValueMode");
+  sel.value = sel.value === "hide" ? "only" : "hide";
+  applyLowValueMode();
+});
 document.getElementById("search").addEventListener("input", render);
 document.getElementById("reload").addEventListener("click", load);
 document.getElementById("markAllRead").addEventListener("click", () => {
   const allRead = posts.length > 0 && posts.every((p) => p.is_read);
-  setReadState(posts.map((p) => p.post_url), !allRead);
+  // 既読にする場合は、非表示の低情報分も既読にする(ダイジェストのDB集計に未読を残さないため)。
+  // 未読に戻すのと、隠す以外のモードでは、表示中のものだけを対象にする。
+  const targets = (allRead || lvMode() !== "hide") ? posts : allPosts;
+  setReadState(targets.map((p) => p.post_url), !allRead);
 });
 document.getElementById("mark24hRead").addEventListener("click", () => {
   const scoped = posts.filter(olderThan24h);
   const allRead = scoped.length > 0 && scoped.every((p) => p.is_read);
-  setReadState(scoped.map((p) => p.post_url), !allRead);
+  const targets = (allRead || lvMode() !== "hide") ? scoped : allPosts.filter(olderThan24h);
+  setReadState(targets.map((p) => p.post_url), !allRead);
 });
 
 let allExpanded = true; // matches the default (empty collapsedUrls = all expanded)
