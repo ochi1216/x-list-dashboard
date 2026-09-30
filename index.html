@@ -1298,6 +1298,31 @@ async function load() {
   }
 }
 
+// render()は毎回リスト全体を作り直すため、新品の<img>は読み込み直しが終わるまで表示されず、
+// カード移動のたびに画面が一瞬ちらつく(Lサイズではページ高さも縮んで別カードの画像が映る)。
+// 作り直す直前に読み込み済みの<img>を退避し、同じ画像(data-kとsrcが一致)なら新品と入れ替えて
+// 使い回す。処理の流れ(render()が唯一の描画元)は変えないので、表示と状態がズレる心配はない。
+// ?fullrender=1 で従来どおり全て作り直す(iPhone実機で問題が出た場合の切り分け用)。
+const FULL_RENDER = (() => { try { return new URLSearchParams(location.search).get("fullrender") === "1"; } catch { return false; } })();
+let imgReuse = null; // render()中だけ有効: data-k -> 読み込み済みの<img>
+
+function collectLoadedImages(listEl) {
+  const map = new Map();
+  if (FULL_RENDER) return map;
+  for (const img of listEl.querySelectorAll("img.detail-img[data-k]")) {
+    if (img.complete && img.naturalWidth > 0) map.set(img.dataset.k, img); // 読み込み失敗・途中のものは再利用しない
+  }
+  return map;
+}
+
+function reuseLoadedImages(detail) {
+  if (!imgReuse || imgReuse.size === 0) return;
+  for (const fresh of detail.querySelectorAll("img.detail-img[data-k]")) {
+    const old = imgReuse.get(fresh.dataset.k);
+    if (old && old.getAttribute("src") === fresh.getAttribute("src")) fresh.replaceWith(old);
+  }
+}
+
 // 低情報を表示している間(含める/低情報のみ)だけ、なぜ低情報と判定されたかをバッジで示す。
 function lowValueBadgeHtml(p) {
   const rule = lowValueInfo.get(p.post_url);
@@ -1324,13 +1349,14 @@ function buildRow(p) {
   const images = Array.isArray(p.image_urls) ? p.image_urls : [];
   const imagesHtml = images.length > 0 ? `
     <div class="detail-images${images.length > 1 ? " multi" : ""}">
-      ${images.map(u => `<a class="detail-img-link" href="${escapeHtml(xImageVariant(u, "orig"))}" target="_blank" rel="noopener"><img class="detail-img" src="${escapeHtml(xImageVariant(u, "small"))}" loading="lazy" alt=""></a>`).join("")}
+      ${images.map((u, idx) => `<a class="detail-img-link" href="${escapeHtml(xImageVariant(u, "orig"))}" target="_blank" rel="noopener"><img class="detail-img" data-k="${escapeHtml(p.post_url)}#${idx}" src="${escapeHtml(xImageVariant(u, "small"))}" loading="lazy" alt=""></a>`).join("")}
     </div>
   ` : "";
   detail.innerHTML = `
     <div class="tldr">${p.summary ? escapeHtml(p.summary) : "まだ要約がありません。チャットで「この投稿要約して」と頼んでください。"}</div>
     ${imagesHtml}
   `;
+  reuseLoadedImages(detail);
   row.addEventListener("click", (e) => {
     if (e.target.classList.contains("star")) return;
     if (autoMoveDirection !== 0) stopAutoMove();
@@ -1370,6 +1396,7 @@ function render() {
   const postSort = document.getElementById("postSort").value;
   const q = document.getElementById("search").value.trim().toLowerCase();
   const listEl = document.getElementById("list");
+  imgReuse = collectLoadedImages(listEl); // 全消去の前に、読み込み済みの画像を退避
   listEl.innerHTML = "";
   flatOrder = [];
   authorBoundaries = [];
@@ -1424,6 +1451,7 @@ function render() {
       }
       flatOrder.push(p);
     }
+    imgReuse = null;
     updateHeaderHeightVar();
     highlightActiveRow(false);
     return;
@@ -1467,6 +1495,7 @@ function render() {
     listEl.appendChild(groupEl);
   }
 
+  imgReuse = null;
   updateHeaderHeightVar();
   highlightActiveRow(false);
 }
