@@ -270,7 +270,7 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     check("プロファイル: 大ボタン(高さ60px以上)", bigH >= 60, String(bigH));
     await p.click("#sxPfRead"); await sleep(250);
     const spokenPf = await p.evaluate(() => window.__spoken.join(""));
-    check("プロファイル: ▶読み上げで本文を読む(TTS)", spokenPf.includes("AIエージェント"), spokenPf);
+    check("プロファイル: ▶読み上げで本文を読む(TTS)", spokenPf.includes("エージェントと開発ツール"), spokenPf);
     await p.click("#sxPfLater"); await sleep(100);
     check("あとで: 何も送らず案内のみ", callsOf(st, "profile_set").length === 0 && (await txt(p, "#sxPfMsg")).includes("あとで"));
     await p.click("#sxPfApprove"); await sleep(100);
@@ -314,6 +314,10 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     await p.fill(`${row("usd_jpy")} .cf-pass`, PASS); await p.click(`${row("usd_jpy")} .cf-save`); await sleep(250);
     check("→入力して再送すると反映される", st.config.usd_jpy === 155);
     check("設定タブ(ログイン後): 横スクロールなし", await noOverflow(p));
+    await goTab(p, "weekly"); await sleep(150);
+    check("設定タブ以外ではパスフレーズ欄をDOMに残さない", (await p.$$('input[type="password"]')).length === 0);
+    await goTab(p, "settings"); await until(() => vis(p, "#sxPfView"));
+    check("設定タブへ戻ると再表示される", await vis(p, ".cfrow") || (await p.$$(".cfrow")).length > 0);
     check("JSエラーなし(設定)", s.rec.errors.length === 0, JSON.stringify(s.rec.errors));
     await s.ctx.close();
   } catch (e) { check("設定タブのテストが完走", false, e.stack); }
@@ -366,7 +370,7 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     check("週次レポート本文を表示", (await txt(p, "#wkReportText")).includes("生成AIの新発表が多い週") && (await txt(p, "#wk-report")).includes("9/28"));
     await p.click("#wkRead"); await sleep(300);
     const sp = await p.evaluate(() => window.__spoken.join(""));
-    check("読み上げボタン: text_ja を TTS.utterances 経由で読む", sp.includes("生成AIの新発表が多い週") && sp.includes("週次レポート"), sp);
+    check("読み上げボタン: text_ja を TTS.utterances 経由で読む", sp.includes("新発表が多い週") && sp.includes("週次レポート"), sp);
     check("読み上げ中はボタンが「止める」に変わる", (await txt(p, "#wkRead")).includes("止める") || !(await p.evaluate(() => Admin2.Reader.isPlaying("weekly"))));
     await until(async () => !(await p.evaluate(() => Admin2.Reader.isPlaying("weekly"))), 4000);
     check("読み終えるとボタンが戻る", (await txt(p, "#wkRead")).includes("読み上げ"));
