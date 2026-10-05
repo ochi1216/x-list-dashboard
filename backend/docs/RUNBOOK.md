@@ -22,3 +22,35 @@ xd_pipeline_secret_cron(cron→各関数)、xd_pipeline_secret_win(Windows→sum
 ## Windows側の取得スキル(文書のみ・今回は未配備)
 - 認証必須化の準備: summarize-x-post を呼ぶ箇所に `x-pipeline-secret: <xd_pipeline_secret_win の値>` ヘッダを追加(値はSQLで取得して越智さんが貼る)。未付与の呼び出し件数は ops_events(kind=unauth_call)で確認できる。付与後に管理APIで `pipeline_auth_mode` を `enforce` へ。
 - Phase 5(参照先要約)の取得拡張: 外部リンクURL・カード題名/説明・引用元本文を x_posts.ref_url/ref_title/ref_desc/quoted_text へ保存する固定JS抽出を追加(抽出失敗でも従来どおり動くこと)。サーバー側は `ref_enabled=false` の列のみ。有効化は別途検証。
+
+## デプロイ順(本番反映)
+1. DB: `20261005_005_summary_attempts.sql` → `20261005_006_review_fixes.sql`(加算のみ・冪等。001〜004が未適用なら番号順に先に適用。004(cron)は最後)。
+2. 新関数: score-x-posts → model-health → admin-api。
+3. summarize-x-post(005の `summary_attempts` を使う版)。
+4. generate-digest-summary(今日の要点の試行開始時に `tuning_config.digest_last_attempt_at` を書く版)。
+5. TI系3関数(summarize-ti-news / -headline / -lesson)。
+6. `20261005_004_cron.sql`(定期実行の登録。x_hourlyは毎時3分)。
+7. ヘルス確認: ops_events に error が無いこと、`select public.x_tick();` が例外なく返ること、cron.job に6本あること、管理画面の費用・通知タブが開くこと。
+
+### 本番適用前チェック(006の直後・必須)
+anon / authenticated が x_posts へ書ける列は `is_read` と `is_starred` だけであること。
+```sql
+select grantee, privilege_type, column_name from information_schema.column_privileges
+ where table_name='x_posts' and grantee in ('anon','authenticated') and privilege_type='UPDATE'
+ order by grantee, column_name;
+-- 期待: anon / authenticated それぞれ is_read, is_starred の2行ずつ(計4行)だけ
+select grantee, privilege_type from information_schema.role_table_grants
+ where table_schema='public' and table_name='x_posts' and grantee in ('anon','authenticated');
+-- 期待: SELECT のみ(INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER が無い)
+```
+
+### 要約の試行回数のリセット
+要約が3回失敗した投稿(`summary_attempts >= 3`)は自動では再試行されない。原因(キー・モデル・入力)を直した後に再開する:
+```sql
+update public.x_posts set summary_attempts = 0 where gist is null;
+```
+(要約不能の投稿は区分確定の「未採点待ち」からも外れるため、バッチの確定は遅れない。)
+
+### 備考
+- `xd_anon_jwt` は Vault に設定済み。`ops_bootstrap` は作らない(新たに秘密を設定する手順は無い)。
+- `digest_due()` は `tuning_config.digest_last_attempt_at`(ISO文字列)から30分以内は false を返す(失敗の連打防止)。キーが無ければ制限なし。

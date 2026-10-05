@@ -64,8 +64,22 @@ export function classifyForScoring(post: PostLike, isDuplicate = false): Scoring
 
 // ---------- 採点入力・プロンプト ----------
 
+// <post> タグの除去(脱出対策)。`</post >`・`< / post >`・全角 `＜/post＞`・全角英字も無害化する。
+// `<postal>` のような別のタグは残す。
+const POST_TAG_RE = /[<＜]\s*[\/／]?\s*[pｐＰ]\s*[oｏＯ]\s*[sｓＳ]\s*[tｔＴ](?![A-Za-z0-9_\-ａ-ｚＡ-Ｚ０-９])[^>＞]*[>＞]/gi;
+export function stripPostTags(t: string): string {
+  let s = String(t ?? "");
+  // タグを消した結果また別のタグが現れる入れ子(`<po<post>st>`)に備え、変化しなくなるまで繰り返す
+  for (let i = 0; i < 5; i++) {
+    const n = s.replace(POST_TAG_RE, "");
+    if (n === s) break;
+    s = n;
+  }
+  return s.trim();
+}
+
 export function buildScoreInput(post: PostLike): string {
-  const clean = (t: string) => t.replace(/<\/?post>/gi, "").trim();
+  const clean = stripPostTags;
   const body = clean(String(post.content ?? ""));
   const imgs = imageCount(post);
   if (imgs > 0) {
@@ -168,21 +182,47 @@ export function parseScoreResult(json: unknown): ScoreOutput | null {
 
 // ---------- キャップ ----------
 
+// 注入検出は「採点・出力への働きかけ(命令形・出力指示)」だけを対象にする。
+// 「system prompt」「developer prompt」「ignore previous instructions」という語が単独で出ただけでは
+// 注入扱いにしない(AI関連の正当な投稿・攻撃手法の解説が2点になってしまうため)。
+// 検査は原文とNFKC正規化後の両方に対して行う(全角数字・全角記号・全角英字の回避を防ぐ)。
+const JP_END = "(?:して|しろ|せよ|してください|しなさい|してね|にして|にしろ|にせよ|にしてください|付けて|つけて|つけろ|ください)";
+const JP_SCORE_WORD = "(?:スコア|点数|採点|評価|満点|最高点|最高評価|高評価|score|rating)";
+const JP_TARGET = "(?:スコア|点数|採点|評価|満点|最高点|高評価|出力|回答|返答|JSON|json|score|rating|[1-5]\\s*(?:点|つ星|☆|★))";
+const EN_NUM = "(?:[1-5]|five|perfect|full|max(?:imum)?|highest|top|high)";
 const INJECTION_PATTERNS: RegExp[] = [
-  /ignore\s+(all\s+|any\s+|the\s+)?(previous|prior|above|earlier)\s+(instructions?|prompts?|rules?)/i,
-  /disregard\s+(all\s+|any\s+|the\s+)?(previous|prior|above|earlier)/i,
-  /forget\s+(all\s+|everything\s+)?(previous|prior|above|your)\s+(instructions?|rules?)/i,
-  /(system|developer)\s+prompt/i,
-  /give\s+(this|it|me)\s+(post\s+)?(a\s+|an\s+)?(score|rating|5|five|high)/i,
-  /(score|rate)\s+(this|it)\s+(post\s+)?(as\s+|a\s+)?[1-5]\b/i,
-  /<\/?(profile|system|instructions?)>/i,
-  /(以前|これまで|上記|前|先)の(指示|命令|ルール|プロンプト)を?(すべて|全て)?(無視|忘れ|破棄)/,
-  /(指示|命令)(に従わず|を無視)/,
-  /(スコア|点数|採点|評価)を?\s*[1-5１-５5]\s*(点|に)?\s*(に|と)?\s*(して|しろ|せよ|してください|付けて|つけて)/,
-  /(5|５|五)点(を|で)?\s*(付けて|つけて|にして|を出力)/,
-  /(AI|LLM|アシスタント|採点者|あなた)(への|に対する|は)?\s*(命令|指示|依頼)\s*[:：]/,
-  /あなたは.{0,30}(として振る舞|になりきっ|のふりを)/,
-  /出力(形式)?を(変更|無視)/,
+  // 英語: 「以前の指示を無視」+ 続く命令形(採点・出力への働きかけ)
+  new RegExp(
+    "(?:ignore|disregard|forget)\\s+(?:all\\s+|any\\s+|the\\s+|your\\s+|every\\s+)?(?:previous|prior|above|earlier|preceding|former)\\s+(?:instructions?|prompts?|rules?|directions?|context)" +
+      "\\s*[,.:;!\\-]?\\s*(?:and\\s+|then\\s+|now\\s+|instead\\s+)?(?:please\\s+)?(?:give|set|assign|award|rate|score|mark|output|respond|reply|return|print|write|answer|say)\\b",
+    "i",
+  ),
+  // 英語: 点数の指定(give this 5 stars / give this post a score of 5 / give this a perfect score)
+  new RegExp(
+    "\\b(?:give|assign|award|grant)\\s+(?:this|it|the\\s+post|me|us)\\s+(?:post\\s+)?(?:a\\s+|an\\s+)?(?:score\\s+of\\s+|rating\\s+of\\s+)?" + EN_NUM + "\\b",
+    "i",
+  ),
+  /\b(?:set|make|change|put)\s+(?:the\s+|this\s+|its\s+)?(?:post'?s?\s+)?(?:score|rating)\s+(?:to|as|=|at)\s*(?:[1-5]|five)\b/i,
+  /\b(?:score|rate|rating)\s+(?:this|it)\s+(?:post\s+)?(?:as\s+|a\s+|at\s+)?(?:[1-5]|five)\b/i,
+  /\b(?:output|respond\s+with|reply\s+with|return|print|answer)\b[^\n]{0,24}\{\s*["'“”‘’]?score["'“”‘’]?\s*[:=]\s*[1-5]/i,
+  // 構造の偽装(プロンプトの区切りタグ)
+  /<\/?(?:profile|system|instructions?)>/i,
+  // 日本語: 「以前の指示を無視して」+ 採点・出力への働きかけ(引用符で囲んだ言及は除く)
+  new RegExp(
+    "(?:以前|これまで|今まで|上記|前|先|これまで)の(?:指示|命令|ルール|プロンプト|設定)(?:を|は)?\\s*(?:すべて|全て|全部)?\\s*(?:無視|忘れ|破棄|リセット)" +
+      "(?:して|しろ|せよ|してください|しなさい|し)(?![」』”\"])[^\\n」』]{0,60}?" + JP_TARGET,
+  ),
+  // 日本語: 「スコアを5にして」「score を 5 にしろ」「評価を5点にしてください」
+  new RegExp(JP_SCORE_WORD + "(?:を|は)?\\s*[1-5]\\s*(?:点|つ星)?\\s*(?:に|と)?\\s*" + JP_END, "i"),
+  // 日本語: 「満点をつけて」「最高評価にして」「5点をつけて」
+  new RegExp("(?:満点|最高点|最高評価|最高スコア|高評価)(?:を|に|で)?\\s*(?:付け|つけ|出|与え|にし|を出力|ください)"),
+  /[1-5]\s*点(?:を|で)?\s*(?:付けて|つけて|にして|を出力|を付与)/,
+  // 日本語: 出力の指定(出力は{"score":5}にせよ)
+  /(?:出力|返答|回答|返して|返せ)[^\n]{0,24}\{\s*["'“”‘’]?score["'“”‘’]?\s*[:=]\s*[1-5]/i,
+  // 日本語: 出力形式の変更命令
+  /出力(?:形式)?を(?:変更|無視)(?:して|しろ|せよ|してください)/,
+  // 「AIへの指示:」の後に採点の指定が続くもの(プロンプト解説の「AIへの指示: 出力はJSONで」などは除く)
+  new RegExp("(?:AI|LLM|アシスタント|採点者|あなた)(?:への|に対する|は)?\\s*(?:命令|指示|依頼)\\s*[:：][^\\n]{0,60}" + JP_SCORE_WORD, "i"),
 ];
 
 export function hasInjection(text: string): boolean {
@@ -197,7 +237,8 @@ function matchNorm(t: string): string {
 
 export function evidenceInInput(evidence: string, input: string): boolean {
   let e = matchNorm(evidence).replace(/^[「『"'“‘]+|[」』"'”’]+$/g, "").replace(/(…|\.{2,}|・{2,})+$/, "");
-  if (!e || e === "具体情報なし") return false;
+  // 3字未満は偶然一致しやすい(「5G」「AI」など)ので根拠として認めない
+  if (!e || e === "具体情報なし" || [...e].length < 3) return false;
   return matchNorm(input).includes(e);
 }
 
@@ -240,7 +281,7 @@ export function median3(a: number, b: number, c: number): number {
 // ---------- 読み下し ----------
 
 export function buildSpeechPrompt(post: PostLike): string {
-  const clean = (t: string) => t.replace(/<\/?post>/gi, "").trim();
+  const clean = stripPostTags;
   const body = clean(String(post.content ?? ""));
   const summary = clean(String(post.summary ?? ""));
   return `あなたは音声読み上げ用の原稿を作る編集者です。出力は指定スキーマのJSONだけです。

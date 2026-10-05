@@ -36,6 +36,9 @@ export type GeminiResult =
     model: string;
     usageId: number | null;
     usage: { prompt: number; output: number; thoughts: number; costUsd: number | null };
+    // finishReason が MAX_TOKENS で本文が途中で切れている。text は返すが、保存・採用してはならない(呼び出し側で判定)。
+    // schema 有りで JSON として読めなければ json は null。
+    truncated?: boolean;
   }
   | {
     ok: false;
@@ -43,7 +46,7 @@ export type GeminiResult =
     error: string;
     status?: number;
     model?: string;
-    level?: string;
+    level?: string; // guard のとき: cost_guard の level、または "state_error"(モデル状態・費用ガードの取得失敗。gone とは別物)
   };
 
 const DEFAULT_ORIGIN = "https://generativelanguage.googleapis.com";
@@ -52,6 +55,14 @@ const STATE_TTL_MS = 30_000;
 const RETRY_DELAY_MS = 1500;
 const DEFAULT_TIMEOUT_MS = 40_000;
 const GONE_BODY_RE = /not found|no longer|deprecated|retired|decommission|discontinued/i;
+const MODEL_WORD_RE = /model/i;
+
+// 「提供終了」判定: 404 は常に。400/410 は本文が提供終了を示し、かつ本文に "model" を含むときだけ
+// (認証・入力の不備など別原因の400/410でモデルを切り替えないため)。
+export function isGoneResponse(status: number, bodyText: string): boolean {
+  if (status === 404) return true;
+  return (status === 400 || status === 410) && MODEL_WORD_RE.test(bodyText) && GONE_BODY_RE.test(bodyText);
+}
 
 // 環境変数 GEMINI_BASE_URL(例 "http://127.0.0.1:8788")から v1beta/models のURLを作る。
 // 未設定・不正なら本番URL。キーを平文で外部に送らないよう、http は loopback のみ許可する。
@@ -154,8 +165,10 @@ function buildGenerationConfig(state: ModelState, model: string, req: GeminiRequ
     out.responseSchema = req.schema;
   }
   out.maxOutputTokens = req.maxOutputTokens;
-  if (req.temperature !== undefined) out.temperature = req.temperature;
-  if (req.seed !== undefined) out.seed = req.seed;
+  // モデル設定(gen_config の default / 用途別)に temperature・seed があればそれが正。
+  // リクエストの値は、モデル設定に無いときの既定値としてだけ使う。
+  if (req.temperature !== undefined && out.temperature === undefined) out.temperature = req.temperature;
+  if (req.seed !== undefined && out.seed === undefined) out.seed = req.seed;
   return out;
 }
 
@@ -238,9 +251,15 @@ export async function callGemini(ctx: GeminiCtx, req: GeminiRequest): Promise<Ge
 
   if (!ctx.apiKey) return { ok: false, kind: "network", error: "api key is not set" };
 
-  // ① モデル状態
+  // maxOutputTokens は必須(契約・費用ガードの前提)。未指定・0以下はプログラミングエラーなので早期に例外にする
+  // (実行時の結果として返すと、ガード停止などと混同され、静かに処理が止まる)。
+  if (typeof req.maxOutputTokens !== "number" || !Number.isFinite(req.maxOutputTokens) || req.maxOutputTokens <= 0) {
+    throw new Error(`callGemini: maxOutputTokens must be a positive number (purpose=${String(req?.purpose)})`);
+  }
+
+  // ① モデル状態(取得失敗は「提供終了」ではない。安全側に止める=guard/state_error)
   let state = await getState(ctx, now);
-  if (!state) return { ok: false, kind: "gone", error: "model state unavailable" };
+  if (!state) return { ok: false, kind: "guard", error: "model state unavailable", level: "state_error" };
 
   // ② 費用ガード(取得失敗は安全側=拒否)
   let guard: Record<string, unknown> | null = null;
@@ -250,7 +269,7 @@ export async function callGemini(ctx: GeminiCtx, req: GeminiRequest): Promise<Ge
   } catch {
     guard = null;
   }
-  if (!guard) return { ok: false, kind: "guard", error: "cost_guard unavailable", level: "unknown" };
+  if (!guard) return { ok: false, kind: "guard", error: "cost_guard unavailable", level: "state_error" };
   if (guard.allowed !== true) {
     return {
       ok: false,
@@ -262,8 +281,9 @@ export async function callGemini(ctx: GeminiCtx, req: GeminiRequest): Promise<Ge
 
   let model = state.current_model;
   let attempt = 0;
-  let retried = false;
-  let switched = false;
+  // 再実行(429等の再試行・提供終了後の新モデル再実行)は合計1回まで。
+  // 1回の呼び出しの最悪時間を 要求timeout×2+待ち1.5秒 に抑え、関数全体の時間予算の計算を成り立たせる。
+  let reruns = 0;
 
   for (;;) {
     attempt++;
@@ -310,15 +330,14 @@ export async function callGemini(ctx: GeminiCtx, req: GeminiRequest): Promise<Ge
       row.error = msg;
       await recordUsage(ctx, row);
 
-      const gone = out.status === 404 ||
-        ((out.status === 400 || out.status === 410) && GONE_BODY_RE.test(out.bodyText));
+      const gone = isGoneResponse(out.status, out.bodyText);
       if (gone) {
         const rep = await safeRpc(ctx, "model_report_gone", { p_model: model, p_reason: msg });
         const repObj = isPlainObject(rep) ? rep : {};
         const newModel = typeof repObj.current_model === "string" ? repObj.current_model : "";
         // 切替が起きた(または他の呼び出しが既に切替済み)なら、新モデルで同じ要求を1回だけ再実行
-        if ((repObj.switched === true || repObj.stale === true) && newModel && newModel !== model && !switched) {
-          switched = true;
+        if ((repObj.switched === true || repObj.stale === true) && newModel && newModel !== model && reruns < 1) {
+          reruns++;
           const fresh = await getState(ctx, now, true);
           if (fresh) {
             state = fresh;
@@ -329,8 +348,8 @@ export async function callGemini(ctx: GeminiCtx, req: GeminiRequest): Promise<Ge
         return { ok: false, kind: "gone", error: msg, status: out.status, model };
       }
 
-      if ((out.status === 429 || out.status === 500 || out.status === 503) && !retried) {
-        retried = true;
+      if ((out.status === 429 || out.status === 500 || out.status === 503) && reruns < 1) {
+        reruns++;
         await sleep(RETRY_DELAY_MS);
         continue;
       }
@@ -370,8 +389,8 @@ export async function callGemini(ctx: GeminiCtx, req: GeminiRequest): Promise<Ge
     }
 
     let result: GeminiResult;
+    const fr = cand && typeof cand.finishReason === "string" ? cand.finishReason : "none";
     if (!text.trim()) {
-      const fr = cand && typeof cand.finishReason === "string" ? cand.finishReason : "none";
       const pf = isPlainObject(j.promptFeedback) && typeof j.promptFeedback.blockReason === "string"
         ? ` blockReason=${j.promptFeedback.blockReason}`
         : "";
@@ -388,7 +407,15 @@ export async function callGemini(ctx: GeminiCtx, req: GeminiRequest): Promise<Ge
           parseErr = "response is not valid JSON";
         }
       }
-      if (parseErr) {
+      if (fr === "MAX_TOKENS") {
+        // 出力が上限で途中切れ。失敗(parse)にはせず text を返し、truncated で知らせる
+        // (呼び出し側が、途中で切れた本文を成功として保存しないために判定する)。
+        row.error = "truncated (finishReason=MAX_TOKENS)";
+        result = {
+          ok: true, text, json: parseErr ? null : parsed, model, usageId: null,
+          usage: { prompt, output, thoughts, costUsd }, truncated: true,
+        };
+      } else if (parseErr) {
         row.error = parseErr;
         result = { ok: false, kind: "parse", error: parseErr, status: out.status, model };
       } else {
@@ -412,10 +439,18 @@ export async function callGemini(ctx: GeminiCtx, req: GeminiRequest): Promise<Ge
   }
 }
 
+// llm_usage への記録。失敗しても呼び出し結果は返すが、記録漏れ(=費用ガードの集計漏れ)に気づけるよう
+// console.error に残す(キーは伏せる)。
 async function recordUsage(ctx: GeminiCtx, row: Record<string, unknown>): Promise<number | null> {
   try {
-    return await ctx.db.insertUsage(row);
-  } catch {
+    const id = await ctx.db.insertUsage(row);
+    if (id === null || id === undefined) {
+      console.error(`llm_usage insert returned no id (fn=${ctx.fn} purpose=${String(row.purpose)} model=${String(row.model)})`);
+      return null;
+    }
+    return id;
+  } catch (e) {
+    console.error(`llm_usage insert failed (fn=${ctx.fn} purpose=${String(row.purpose)}): ${sanitize(e, [ctx.apiKey])}`);
     return null;
   }
 }
@@ -435,6 +470,7 @@ export function makeGeminiDb(client: {
     },
     async insertUsage(row) {
       const r = await client.from("llm_usage").insert(row).select("id").single();
+      if (r?.error) throw new Error(`llm_usage insert: ${r.error.message ?? "error"}`);
       const id = r?.data?.id;
       return typeof id === "number" ? id : (id != null ? Number(id) : null);
     },

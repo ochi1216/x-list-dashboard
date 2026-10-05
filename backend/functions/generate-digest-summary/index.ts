@@ -17,7 +17,8 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
-  const geminiKey = Deno.env.get("GEMINI_API_KEY");
+  // X専用キーがあればそれを使う(TI系と費用・上限を分けるため)
+  const geminiKey = Deno.env.get("GEMINI_API_KEY_X") || Deno.env.get("GEMINI_API_KEY");
 
   let body: { period_type?: string; list_name?: string };
   try {
@@ -39,6 +40,16 @@ Deno.serve(async (req: Request) => {
   if (isNew) {
     const auth = await checkPipelineAuth(req, { db, mode: "enforce", allow: ["cron"], fn: "generate-digest-summary" });
     if (!auth.ok) return json({ ok: false, error: "unauthorized" }, 401);
+  }
+
+  // 旧3モード: log中は秘密なしでも可(ただし制限付き)、enforce なら秘密必須
+  let legacyLimited = false;
+  if (!isNew) {
+    const modeRes = await db.rpc("cfg", { p_key: "pipeline_auth_mode", p_default: "log" });
+    const mode = !modeRes.error && modeRes.data === "log" ? "log" : "enforce"; // 取得失敗・不明な値は安全側
+    const auth = await checkPipelineAuth(req, { db, mode, allow: ["cron", "none"], fn: "generate-digest-summary" });
+    if (!auth.ok) return json({ ok: false, error: "unauthorized" }, 401);
+    legacyLimited = auth.limited;
   }
 
   if (!geminiKey) {
@@ -112,6 +123,11 @@ Deno.serve(async (req: Request) => {
         opsEvent: async (level, kind, message, data, dedupe) => {
           await db.rpc("ops_event", { p_level: level, p_kind: kind, p_message: message, p_data: data, p_dedupe_minutes: dedupe });
         },
+        touchAttempt: async (iso) => {
+          const { error } = await supabase.from("tuning_config")
+            .upsert({ key: "digest_last_attempt_at", value: iso, updated_at: iso }, { onConflict: "key" });
+          if (error) throw new Error(`attempt record failed: ${error.message}`);
+        },
       };
       const result = periodType === "today" ? await runToday(deps) : await runWeek(deps);
       return json(result, result.ok ? 200 : 500);
@@ -123,6 +139,13 @@ Deno.serve(async (req: Request) => {
         await db.rpc("lock_release", { p_name: lockName, p_owner: batchId });
       } catch (_e) { /* 期限(170秒)で自然に解放される */ }
     }
+  }
+
+  // 秘密なし(log中)の旧モードは10分に1回だけ。ロックは解放しない(期限で自然に解放)。取れなければ何もしない。
+  if (legacyLimited) {
+    const lk = await db.rpc("lock_acquire", { p_name: `digest-legacy-${periodType}`, p_seconds: 600, p_owner: batchId });
+    if (lk.error) return json({ ok: false, error: "lock_error" }, 500);
+    if (lk.data !== true) return json({ ok: true, skipped: "busy" });
   }
 
   const listName = body.list_name ?? "FollowList-AI";
