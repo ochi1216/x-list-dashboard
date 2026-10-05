@@ -44,8 +44,29 @@ export function norm(s: string): string {
 }
 
 const UNIT: Record<string, number> = { "百": 1e2, "千": 1e3, "万": 1e4, "億": 1e8, "兆": 1e12 };
-// 算用数字+単位(千万・百万などの連なりは掛け合わせる: 3千万=3×1000×10000)
-const NUM_RE = /(\d+(?:\.\d+)?)\s*([百千万億兆]+)?\s*(%|パーセント|percent)?/gi;
+// 英語の桁(ui/tts.js の MAGS と同等): k/thousand=千, M/million=百万, B/billion=十億, T/trillion=兆。指数で持つ。
+const MAGS: Record<string, number> = { k: 3, thousand: 3, m: 6, million: 6, b: 9, billion: 9, t: 12, trillion: 12 };
+function ci(w: string): string {
+  return [...w].map((ch) => `[${ch.toLowerCase()}${ch.toUpperCase()}]`).join("");
+}
+// 算用数字(通貨記号つきも可)+英語の桁(million 等/1字の k K M B、通貨つきなら m b t T も)+日本語の単位
+// (千万・百万などの連なりは掛け合わせる: 3千万=3×1000×10000)。
+//  1字の英字は「消費」だけして桁と認めるのは許可した字のみ("5m"=5メートルは桁にしない。"5G" "3D" は数だけ残る)。
+const NUM_RE = new RegExp(
+  "([$¥€£₩₹]\\s?)?(\\d+(?:\\.\\d+)?)(?:\\s?(" + ["million", "billion", "trillion", "thousand"].map(ci).join("|") + ")\\b|([A-Za-z])(?![A-Za-z]))?" +
+    "\\s*([百千万億兆]+)?\\s*(%|パーセント|" + ci("percent") + ")?",
+  "g",
+);
+// 数の直後に英字の桁が付いていたときの指数(無ければ null)
+function engMagExp(word: string | undefined, letter: string | undefined, currency: boolean): number | null {
+  if (word) return MAGS[word.toLowerCase()] ?? null;
+  if (!letter) return null;
+  if ("kKMB".includes(letter)) return MAGS[letter.toLowerCase()];
+  if (currency && "mbtT".includes(letter)) return MAGS[letter.toLowerCase()];
+  return null;
+}
+// 数値として取り除いた跡に残す印(直前・直後の英字が数字と隣り合っていたことを英字照合へ伝える)
+const NUM_MARK = "\u0001";
 
 export interface NumTok { v: number; pct: boolean }
 function numKey(v: number, pct: boolean): string {
@@ -98,12 +119,13 @@ export function numberTokens(text: string, merged = false): { toks: NumTok[]; re
   interface Item { v: number; pct: boolean; big: number; start: number; end: number }
   const items: Item[] = [];
   for (const m of t0.matchAll(NUM_RE)) {
-    const base = parseFloat(m[1]);
+    const exp = engMagExp(m[3], m[4], !!m[1]);
+    const base = exp === null ? parseFloat(m[2]) : Number(`${m[2]}e${exp}`);
     if (!Number.isFinite(base)) continue;
-    const units = m[2] ?? "";
+    const units = m[5] ?? "";
     const lastUnit = units.length > 0 ? units[units.length - 1] : "";
     const start = m.index ?? 0;
-    items.push({ v: base * unitProduct(units), pct: !!m[3], big: KNUM_BIG[lastUnit] ?? 0, start, end: start + m[0].length });
+    items.push({ v: base * unitProduct(units), pct: !!m[6], big: KNUM_BIG[lastUnit] ?? 0, start, end: start + m[0].length });
   }
   const toks: NumTok[] = [];
   for (let i = 0; i < items.length; i++) {
@@ -117,7 +139,7 @@ export function numberTokens(text: string, merged = false): { toks: NumTok[]; re
     }
     toks.push({ v: acc.v, pct: acc.pct });
   }
-  let t = t0.replace(NUM_RE, " ");
+  let t = t0.replace(NUM_RE, NUM_MARK);
   t = t.replace(KNUM_RE, (...args) => {
     const m0 = args[0] as string;
     const off = args[args.length - 2] as number;
@@ -135,22 +157,42 @@ export function extractNumbers(text: string): NumTok[] {
 }
 
 export interface DateTok { y?: number; m?: number; d?: number; kind: "ymd" | "md" | "m" | "d" }
-// 日付表現を抽出し、抽出した部分を取り除いた残りも返す(残りは数値検査へ)
+// 英語の月名(Jan..Dec・フルスペル)。
+const MON_ALT = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+const MON_ABBR = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+function monNum(w: string): number {
+  return MON_ABBR.indexOf(w.slice(0, 3).toLowerCase()) + 1;
+}
+// 助動詞の may / 動詞の march と区別できないので、小文字の may は月として読まない("9 may" "may 5" など)。
+const isModalMay = (w: string) => w === "may";
+// 日付表現を抽出し、抽出した部分を取り除いた残りも返す(残りは数値検査へ)。数字は数字境界で読む(12月を2月、15日を5日と誤認しない)。
 export function extractDates(text: string): { dates: DateTok[]; rest: string } {
   let t = norm(text);
   const dates: DateTok[] = [];
-  const take = (re: RegExp, f: (m: RegExpMatchArray) => DateTok) => {
+  const take = (re: RegExp, f: (m: RegExpMatchArray) => DateTok | null) => {
     t = t.replace(re, (...args) => {
       const m = args.slice(0, args.length - 2) as unknown as RegExpMatchArray;
-      dates.push(f(m));
+      const d = f(m);
+      if (!d) return m[0];
+      dates.push(d);
       return " ";
     });
   };
-  take(/(\d{4})年(\d{1,2})月(\d{1,2})日/g, (m) => ({ y: +m[1], m: +m[2], d: +m[3], kind: "ymd" }));
-  take(/(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})(?!\d)/g, (m) => ({ y: +m[1], m: +m[2], d: +m[3], kind: "ymd" }));
-  take(/(\d{1,2})月(\d{1,2})日/g, (m) => ({ m: +m[1], d: +m[2], kind: "md" }));
+  // 英語: Oct 9, 2026 / October 9th / 9 October 2026 / 9th of Oct
+  take(new RegExp(`(?<![A-Za-z])${MON_ALT}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})(?!\\d)`, "gi"),
+    (m) => isModalMay(m[1]) ? null : { y: +m[3], m: monNum(m[1]), d: +m[2], kind: "ymd" });
+  take(new RegExp(`(?<![A-Za-z])${MON_ALT}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?(?![A-Za-z\\d])`, "gi"),
+    (m) => isModalMay(m[1]) ? null : { m: monNum(m[1]), d: +m[2], kind: "md" });
+  take(new RegExp(`(?<![\\d.])(\\d{1,2})(?:st|nd|rd|th)?\\s+(?:of\\s+)?${MON_ALT}(?![A-Za-z])\\.?(?:,?\\s+(\\d{4})(?!\\d))?`, "gi"),
+    (m) => isModalMay(m[2]) ? null : (m[3] ? { y: +m[3], m: monNum(m[2]), d: +m[1], kind: "ymd" } : { m: monNum(m[2]), d: +m[1], kind: "md" }));
+  take(/(?<![A-Za-z])(January|February|March|April|June|July|August|September|October|November|December)(?![A-Za-z])/g,
+    (m) => ({ m: monNum(m[1]), kind: "m" }));
+  // 日本語・数字表記
+  take(/(?<!\d)(\d{4})年(\d{1,2})月(\d{1,2})日/g, (m) => ({ y: +m[1], m: +m[2], d: +m[3], kind: "ymd" }));
+  take(/(?<!\d)(\d{4})[\/.\-](\d{1,2})[\/.\-](\d{1,2})(?!\d)/g, (m) => ({ y: +m[1], m: +m[2], d: +m[3], kind: "ymd" }));
+  take(/(?<!\d)(\d{1,2})月(\d{1,2})日/g, (m) => ({ m: +m[1], d: +m[2], kind: "md" }));
   take(/(?<![\d\/])(\d{1,2})\/(\d{1,2})(?![\d\/])/g, (m) => ({ m: +m[1], d: +m[2], kind: "md" }));
-  take(/(\d{1,2})月/g, (m) => ({ m: +m[1], kind: "m" }));
+  take(/(?<!\d)(\d{1,2})月/g, (m) => ({ m: +m[1], kind: "m" }));
   take(/(?<![\d.])(\d{1,2})日(?!間)/g, (m) => ({ d: +m[1], kind: "d" }));
   return { dates, rest: t };
 }
@@ -196,18 +238,49 @@ const KANA_ENTRIES = Object.entries(KANA_DICT)
   .sort((a, b) => b.kana.length - a.kana.length);
 const KANA_BY_LATIN = new Map(KANA_ENTRIES.map((e) => [e.latin, e.kana]));
 
-function hasLatinWord(hay: string, w: string): boolean {
+// 英字語が hay に「単語として」在るか。前後が英数字でないこと(artificial intelligence の intel、metadata の meta、
+// pineapple の apple、farm の arm、same の sam を根拠にしない)。
+// digitBefore/digitAfter: 主張側で数字と隣り合っていた語(5GB の GB、GPT4 の GPT)は、本文でも数字と隣り合うのを許す。
+function hasLatinWord(hay: string, w: string, digitBefore = false, digitAfter = false): boolean {
+  const okSide = (ch: string, digitOk: boolean) => ch === "" || !(/[a-z]/.test(ch) || (!digitOk && /[0-9]/.test(ch)));
   let i = hay.indexOf(w);
   while (i >= 0) {
     const b = i > 0 ? hay[i - 1] : "", a = hay[i + w.length] ?? "";
-    if (!/[a-z0-9]/.test(b) && !/[a-z0-9]/.test(a)) return true;
+    if (okSide(b, digitBefore) && okSide(a, digitAfter)) return true;
     i = hay.indexOf(w, i + 1);
+  }
+  return false;
+}
+// 片仮名語が hay に「語として」在るか(前後が片仮名でない: インテル の中の「テル」、メタデータ の「メタ」を根拠にしない)
+function hasKanaWord(hay: string, k: string): boolean {
+  let i = hay.indexOf(k);
+  while (i >= 0) {
+    const b = i > 0 ? hay[i - 1] : "", a = hay[i + k.length] ?? "";
+    if (!/[ァ-ヶー]/.test(b) && !/[ァ-ヶー]/.test(a)) return true;
+    i = hay.indexOf(k, i + 1);
   }
   return false;
 }
 
 export function extractLatin(text: string): string[] {
   return (norm(text).toLowerCase().match(LATIN_RE) ?? []).filter((w) => w.length >= 2);
+}
+interface LatinTok { w: string; digitBefore: boolean; digitAfter: boolean }
+// 英字語と、その前後が(取り除いた)数字と隣り合っていたか。text は numberTokens().rest(数字の跡に NUM_MARK)。
+function latinTokens(text: string): LatinTok[] {
+  const t = norm(text).toLowerCase();
+  const out: LatinTok[] = [];
+  for (const m of t.matchAll(LATIN_RE)) {
+    const w = m[0];
+    if (w.length < 2) continue;
+    const i = m.index ?? 0, e = i + w.length;
+    out.push({
+      w,
+      digitBefore: i > 0 && t[i - 1] === NUM_MARK,
+      digitAfter: t[e] === NUM_MARK || (t[e] === "-" && t[e + 1] === NUM_MARK), // GPT-4 と GPT4 を同じ語として扱う
+    });
+  }
+  return out;
 }
 export function extractKatakana(text: string): string[] {
   return (norm(text).match(KATA_RE) ?? []).filter((w) => w.length >= 2 && !KATAKANA_STOP.has(w));
@@ -235,10 +308,12 @@ function hayOf(c: Corpus): string {
 }
 
 // 英字語が本文で裏付けられるか(本文に在る、またはその片仮名表記が本文にある)
-function latinOk(w: string, c: Corpus): boolean {
-  if (c.text.includes(w)) return true;
+function latinOk(t: LatinTok, c: Corpus): boolean {
+  const { w, digitBefore, digitAfter } = t;
+  if (hasLatinWord(c.text, w, digitBefore, digitAfter)) return true;
+  if (w.length > 3 && w.endsWith("'s") && hasLatinWord(c.text, w.slice(0, -2), digitBefore, digitAfter)) return true; // Intel's → Intel
   const kana = KANA_BY_LATIN.get(w);
-  return !!kana && c.text.includes(kana);
+  return !!kana && hasKanaWord(c.text, kana);
 }
 // 片仮名語が根拠ありか。本文・要旨・要約に在る、または辞書の片仮名表記(対応する英字が本文等にある)で分割できる。
 function katakanaOk(w: string, c: Corpus): boolean {
@@ -257,8 +332,9 @@ function katakanaOk(w: string, c: Corpus): boolean {
 }
 
 function dateOk(dt: DateTok, c: Corpus): boolean {
-  if (dt.kind === "m") return c.text.includes(`${dt.m}月`);
-  if (dt.kind === "d") return c.text.includes(`${dt.d}日`);
+  // 月・日だけの主張は、本文の日付表現(月日・年月日・月だけ・日だけ)の月または日と一致するときだけ(部分文字列では照合しない)
+  if (dt.kind === "m") return c.dates.some((cd) => cd.m === dt.m);
+  if (dt.kind === "d") return c.dates.some((cd) => cd.d === dt.d);
   return c.dates.some((cd) =>
     cd.m === dt.m && cd.d === dt.d && (dt.y === undefined || cd.y === undefined || cd.y === dt.y)
   );
@@ -328,7 +404,7 @@ export function checkClaim(claim: string, c: Corpus, opts: ClaimOpts = {}): { ok
   for (const dt of dates) if (!dateOk(dt, c)) return { ok: false, reason: "date" };
   const nt = numberTokens(rest, true);
   for (const n of nt.toks) if (!numOk(n, c)) return { ok: false, reason: "number" };
-  for (const w of extractLatin(rest)) if (!latinOk(w, c)) return { ok: false, reason: "latin" };
+  for (const lt of latinTokens(nt.rest)) if (!latinOk(lt, c)) return { ok: false, reason: "latin" };
   for (const w of extractKatakana(nt.rest)) if (!katakanaOk(w, c)) return { ok: false, reason: "katakana" };
   const kmin = opts.kanjiMin ?? 0;
   if (kmin > 0) {
@@ -469,22 +545,28 @@ export const KANJI_MIN_FACT = 2;
 export const KANJI_MIN_TEXT = 3;
 
 // 続報の照合: 前日の見出しのどれかと共通する語(英字・固有の片仮名・ストップ語以外の漢字語)があるか。
-function followupTerms(text: string): string[] {
+// 英字は短い語(2〜3字: AI, GPT, new など)を除き、単語境界で照合する(偶然の一致で続報扱いにしない)。
+const FOLLOWUP_LATIN_MIN = 4;
+interface FollowTerm { w: string; latin: boolean }
+function followupTerms(text: string): FollowTerm[] {
   const t = norm(text);
   return [
-    ...extractLatin(t),
-    ...extractKatakana(t).map((w) => w.toLowerCase()),
-    ...extractKanjiRuns(t, 2).filter((w) => !KANJI_STOP.has(w)),
+    ...extractLatin(t).filter((w) => w.length >= FOLLOWUP_LATIN_MIN).map((w) => ({ w, latin: true })),
+    ...extractKatakana(t).map((w) => ({ w: w.toLowerCase(), latin: false })),
+    ...extractKanjiRuns(t, 2).filter((w) => !KANJI_STOP.has(w)).map((w) => ({ w: w.toLowerCase(), latin: false })),
   ];
+}
+function hasTerm(hay: string, t: FollowTerm): boolean {
+  return t.latin ? hasLatinWord(hay, t.w) : hay.includes(t.w);
 }
 export function followupSupported(topicText: string, prevHeadlines: string[]): boolean {
   if (prevHeadlines.length === 0) return false;
   const topicLow = norm(topicText).toLowerCase();
-  const topicTerms = new Set(followupTerms(topicText));
+  const topicTerms = followupTerms(topicText);
   for (const h of prevHeadlines) {
     const hLow = norm(h).toLowerCase();
-    for (const w of followupTerms(h)) if (topicLow.includes(w.toLowerCase())) return true;
-    for (const w of topicTerms) if (hLow.includes(w.toLowerCase())) return true;
+    for (const t of followupTerms(h)) if (hasTerm(topicLow, t)) return true;
+    for (const t of topicTerms) if (hasTerm(hLow, t)) return true;
   }
   return false;
 }
@@ -785,8 +867,8 @@ export function validateThemes(raw: unknown, days: { day: string; topics: Topic[
     total += units;
     if (!title || refs.length === 0) { dropped += units; continue; }
     const corpus = buildCorpus(refs.flatMap((d) => dayTexts.get(d)!));
-    if (!checkClaim(title, corpus).ok) { dropped += units; continue; }
-    const kept = sentences.filter((s) => checkClaim(s, corpus).ok);
+    if (!checkClaim(title, corpus, { kanjiMin: KANJI_MIN_TEXT }).ok) { dropped += units; continue; }
+    const kept = sentences.filter((s) => checkClaim(s, corpus, { kanjiMin: KANJI_MIN_TEXT }).ok);
     dropped += sentences.length - kept.length;
     if (kept.length === 0) { dropped += 1; continue; }
     out.push({ title, summary: kept.slice(0, 2).join(""), day_refs: refs });

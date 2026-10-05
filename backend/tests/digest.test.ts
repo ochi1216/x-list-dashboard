@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  addDays, buildCorpus, checkClaim, digestDay, digestDayStartMs, parseKanjiNumeral, prevHeadlinesOf, runToday, runWeek,
-  todayMaxTokens, validateTopics, weekStartOf,
+  addDays, buildCorpus, checkClaim, digestDay, digestDayStartMs, followupSupported, parseKanjiNumeral, prevHeadlinesOf, runToday, runWeek,
+  todayMaxTokens, validateThemes, validateTopics, weekStartOf,
 } from "../functions/_shared/digest.ts";
 import type { Card, DailyRow, DigestDeps, GenReq, GenRes, WeekRow } from "../functions/_shared/digest.ts";
 import { jstDateStr, runLegacy, toLine } from "../functions/generate-digest-summary/logic.ts";
@@ -424,6 +424,119 @@ test("validateTopics: 英語カードの日本語要点(ドル・パーセント
   })], cs, []);
   assert.equal(v.topics.length, 1);
   assert.deepEqual(v.topics[0].new_facts, ["月20ドルで提供", "3.5パーセント増"]);
+});
+
+test("英字の照合は単語境界: 部分一致の幻覚(Intel/Meta/Apple/Arm/Sam)は落ち、境界を満たす正当例は残る", () => {
+  const k = { kanjiMin: 2 };
+  const ng = (claim: string, body: string) => assert.equal(checkClaim(claim, buildCorpus([body]), k).ok, false, `${claim} / ${body}`);
+  const ok2 = (claim: string, body: string) => assert.ok(checkClaim(claim, buildCorpus([body]), k).ok, `${claim} / ${body}`);
+  ng("Intelが発表", "artificial intelligence is advancing");
+  ng("Metaが発表", "metadata was updated");
+  ng("Appleが発表", "pineapple prices rose");
+  ng("Armが発表", "the farm is open");
+  ng("Samが発表", "the same model");
+  ng("インテルが発表", "artificial intelligence is advancing"); // 片仮名表記(辞書)も部分一致では通さない
+  ng("メタが発表", "metadata was updated");
+  ok2("Intelが発表", "Intel announced a chip");
+  ok2("Intelが発表", "Intel's new chip");
+  ok2("Metaが発表", "Meta (formerly Facebook) said");
+  ok2("Appleが発表", "Apple, Google and Amazon");
+  ok2("Armが発表", "chips by Arm.");
+  ok2("インテルが発表", "Intel announced a chip"); // 辞書の片仮名表記は英字が語として在れば通る
+  ok2("インテルが発表", "インテルが新製品");
+  // 数字と隣り合う語(5GB・GPT4)は本文でも数字と隣り合ってよい
+  ok2("5GBのメモリ", "It has 5GB of RAM");
+  ok2("GPT-4を発表", "launching GPT4 today");
+});
+test("日付・数値は数字境界: 12月→2月、15日→5日は落ち、同じ月日は残る", () => {
+  const k = { kanjiMin: 2 };
+  const body = (t: string) => buildCorpus([t]);
+  assert.equal(checkClaim("2月に発売", body("12月に発売します"), k).ok, false);
+  assert.equal(checkClaim("5日に発売", body("15日に発売します"), k).ok, false);
+  assert.equal(checkClaim("1月に発売", body("11月に発売"), k).ok, false);
+  assert.ok(checkClaim("12月に発売", body("12月に発売します"), k).ok);
+  assert.ok(checkClaim("15日に発売", body("15日に発売します"), k).ok);
+  assert.ok(checkClaim("5日に発売", body("5日に発売します"), k).ok);
+  assert.ok(checkClaim("12月に発売", body("2026年12月15日に発売"), k).ok); // 年月日の月
+  assert.ok(checkClaim("15日に発売", body("12月15日に発売"), k).ok); // 月日の日
+  assert.equal(checkClaim("5日に発売", body("12月15日に発売"), k).ok, false);
+  assert.equal(checkClaim("5個", body("15個"), k).ok, false);
+  assert.equal(checkClaim("2.5倍", body("12.5倍"), k).ok, false);
+  assert.equal(checkClaim("May 5", body("May 15"), k).ok, false);
+});
+test("英語カード由来の数値・日付: $5 billion=50億ドル、$20M=2000万ドル、70B=700億、1.2 million=120万、Oct 9=10月9日、5K=5000。桁違いは落とす", () => {
+  const k = { kanjiMin: 2 };
+  const body = (t: string) => buildCorpus([t]);
+  const pass = (claim: string, t: string) => assert.ok(checkClaim(claim, body(t), k).ok, `${claim} / ${t}`);
+  const fail = (claim: string, t: string) => assert.equal(checkClaim(claim, body(t), k).ok, false, `${claim} / ${t}`);
+  pass("50億ドルを調達", "The startup raised $5 billion in funding");
+  fail("5億ドルを調達", "The startup raised $5 billion in funding");
+  fail("500億ドルを調達", "The startup raised $5 billion in funding");
+  pass("2000万ドルを調達", "Raised $20M in seed funding");
+  pass("2000万ドルを調達", "Raised $20 million in seed funding");
+  fail("200万ドルを調達", "Raised $20M in seed funding");
+  pass("700億パラメータ", "A 70B parameter model");
+  fail("70億パラメータ", "A 70B parameter model");
+  pass("120万人が利用", "used by 1.2 million people");
+  pass("120万人が利用", "used by 1.2M people");
+  fail("12万人が利用", "used by 1.2 million people");
+  pass("5000人が参加", "5K people joined");
+  pass("5000人が参加", "5k people joined");
+  fail("500人が参加", "5K people joined");
+  pass("3兆ドル規模", "a $3T market");
+  pass("3兆ドル規模", "a 3 trillion dollar market");
+  pass("2千円", "2 thousand yen");
+  // 逆向き(本文が日本語・主張が日本語)の既存表記
+  pass("12000円", "価格は1万2,000円");
+  // 5m は5メートル(百万にしない)
+  pass("5メートル", "a 5m pole");
+  fail("500万メートル", "a 5m pole");
+  // 英語の月名
+  pass("10月9日に発売", "Launching on Oct 9");
+  pass("10月9日に発売", "Launching on October 9th, 2026");
+  pass("10月9日に発売", "Launching on 9 October");
+  pass("10月に発売", "Launching in October");
+  pass("10月9日に発売", "Launching on Oct. 9");
+  fail("10月8日に発売", "Launching on Oct 9");
+  fail("9月9日に発売", "Launching on Oct 9");
+  fail("11月に発売", "Launching in October");
+  // 助動詞の may は月として読まない
+  fail("5月5日に発売", "it may 5 times");
+  pass("5月5日に発売", "Launching May 5");
+  // 英語の月日でも日の境界(Oct 19 に対し 9日 は落とす)
+  fail("9日に発売", "Launching Oct 19");
+  // 主張側が英語
+  assert.ok(checkClaim("Launching Oct 9", body("10月9日に発売"), k).ok);
+  assert.equal(checkClaim("Launching Oct 8", body("10月9日に発売"), k).ok, false);
+  assert.ok(checkClaim("raised $5 billion", body("50億ドルを調達"), k).ok);
+});
+test("validateThemes(今週の流れ)にも漢字検査: 日次要点に無い漢字の固有名は落ち、あるものは残る", () => {
+  const days = [
+    { day: "2026-10-02", topics: [{ headline: "OpenAIがGPT-5発表", summary: "OpenAIがGPT-5を発表した。", new_facts: [], card_urls: [], is_followup: false }] },
+    { day: "2026-10-03", topics: [{ headline: "半導体の供給", summary: "半導体の供給が改善した。", new_facts: [], card_urls: [], is_followup: false }] },
+  ];
+  const v = validateThemes([
+    { title: "OpenAIの発表", summary: "OpenAIがGPT-5を発表した。", day_refs: ["2026-10-02"] },
+    { title: "半導体の供給", summary: "半導体の供給が改善した。田中社長が発言した。", day_refs: ["2026-10-03"] },
+    { title: "李克強氏が来日", summary: "OpenAIが発表した。", day_refs: ["2026-10-02"] },
+  ], days);
+  assert.equal(v.themes.length, 2);
+  assert.equal(v.themes[1].summary, "半導体の供給が改善した。"); // 「田中社長」を含む文だけ落ちる
+  assert.equal(v.dropped, 1 + 2); // 文1つ + 話題(題+文)
+});
+test("followupSupported: 英字は4字以上の語を単語境界で照合(AI・GPT・部分一致では続報にしない)", () => {
+  // 共通語が短い英字(AI)だけ → 続報にしない
+  assert.equal(followupSupported("AIが新機能を公開", ["AIで画像を生成"]), false);
+  assert.equal(followupSupported("GPTを更新", ["GPTの価格改定"]), false);
+  // 部分一致(intelligence に intel)では続報にしない
+  assert.equal(followupSupported("artificial intelligence の進展", ["Intelが新チップ"]), false);
+  assert.equal(followupSupported("Intelligent な機能", ["Intelが新チップ"]), false);
+  // 4字以上の英字が単語として共通すれば続報
+  assert.equal(followupSupported("OpenAIが続報を発表", ["OpenAIがGPT-5を発表"]), true);
+  assert.equal(followupSupported("Intel chip の続報", ["Intel chip を発表"]), true);
+  // 片仮名・漢字語の共通は従来どおり
+  assert.equal(followupSupported("エヌビディアが増産", ["エヌビディアの新チップ"]), true);
+  assert.equal(followupSupported("半導体が不足", ["半導体の供給"]), true);
 });
 
 // ---------- is_followup ----------

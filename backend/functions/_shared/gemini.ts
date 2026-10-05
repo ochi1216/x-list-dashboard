@@ -56,9 +56,9 @@ const RETRY_DELAY_MS = 1500;
 const DEFAULT_TIMEOUT_MS = 40_000;
 const GONE_BODY_RE = /not found|no longer|deprecated|retired|decommission|discontinued/i;
 const MODEL_WORD_RE = /model/i;
-const AUTH_BODY_RE = /API key not valid|API_KEY_INVALID|API key expired|API_KEY_EXPIRED|PERMISSION_DENIED|UNAUTHENTICATED/i;
+const AUTH_BODY_RE = /API key not valid|API_KEY_INVALID|API key expired|API_KEY_EXPIRED|PERMISSION_DENIED|UNAUTHENTICATED|FAILED_PRECONDITION/i;
 
-// 認証系エラー: HTTP 401/403、または400で本文がAPIキー不正・権限なしを示すもの。
+// 認証系エラー: HTTP 401/403、または400で本文がAPIキー不正・権限なし・FAILED_PRECONDITION(課金・地域・設定不備)を示すもの。
 // 鍵の誤設定・請求停止で全投稿が失敗するので、呼び出し側は試行回数に数えず、その実行を打ち切る。
 export function isAuthResponse(status: number, bodyText: string): boolean {
   if (status === 401 || status === 403) return true;

@@ -23,14 +23,19 @@ xd_pipeline_secret_cron(cron→各関数)、xd_pipeline_secret_win(Windows→sum
 - 認証必須化の準備: summarize-x-post を呼ぶ箇所に `x-pipeline-secret: <xd_pipeline_secret_win の値>` ヘッダを追加(値はSQLで取得して越智さんが貼る)。未付与の呼び出し件数は ops_events(kind=unauth_call)で確認できる。付与後に管理APIで `pipeline_auth_mode` を `enforce` へ。
 - Phase 5(参照先要約)の取得拡張: 外部リンクURL・カード題名/説明・引用元本文を x_posts.ref_url/ref_title/ref_desc/quoted_text へ保存する固定JS抽出を追加(抽出失敗でも従来どおり動くこと)。サーバー側は `ref_enabled=false` の列のみ。有効化は別途検証。
 
-## デプロイ順(本番反映)
-1. DB: `20261005_005_summary_attempts.sql` → `20261005_006_review_fixes.sql`(加算のみ・冪等。001〜004が未適用なら番号順に先に適用。004(cron)は最後)。
-2. 新関数: score-x-posts → model-health → admin-api。
-3. summarize-x-post(005の `summary_attempts` を使う版)。
-4. generate-digest-summary(今日の要点の試行開始時に `tuning_config.digest_last_attempt_at` を書く版)。
-5. TI系3関数(summarize-ti-news / -headline / -lesson)。
-6. `20261005_004_cron.sql`(定期実行の登録。x_hourlyは毎時3分)。
-7. ヘルス確認: ops_events に error が無いこと、`select public.x_tick();` が例外なく返ること、cron.job に新6本(旧7本と合わせて13本)あること、管理画面の費用・通知タブが開くこと。
+## デプロイ順(本番反映。この順番だけを使う。cronと区分確定の開始は必ず最後)
+1. DB: `20261005_005_summary_attempts.sql` → `20261005_006_review_fixes.sql`(加算のみ・冪等。001〜003cは適用済み)。直後に下の「本番適用前チェック」を実行して期待値を確認。
+   - 戻し: どちらも冪等なので、途中で失敗したら同じファイルを再実行。権限を戻す場合は `grant insert, update, delete on public.fetch_runs, public.digest_summaries to anon;`(通常は不要)。関数は 001〜003c と 005 の `create or replace` を再適用すれば旧定義へ戻る。
+   - 確認: `select column_name from information_schema.columns where table_name='x_posts' and column_name='summary_attempts';` が1行。
+2. 初期化: 下の「初期設定手順」の1(ops_bootstrap)・3(プロファイル承認)・4(GEMINI_API_KEY_X)を先に済ませる。秘密が無いまま cron を入れると、x_tick は `{"summarize":true}` を返すのに call_fn が何も呼ばない(ops_events に secrets_missing が出る)ので、動いたように見えてしまう。
+3. 新関数: score-x-posts → model-health → admin-api(verify_jwt=true)。確認: `list_edge_functions` で各関数が ACTIVE・verify_jwt=true。
+   - 戻し: 関数ごとに前の版へ再デプロイ(新関数は削除でなく、cronに入れないことで停止)。
+4. summarize-x-post(005の `summary_attempts` を使う版。必ず手順1の後)。戻し: `backend/legacy/summarize-x-post.v7.ts` を再デプロイ。
+5. generate-digest-summary → TI系3関数。戻し: legacy を再デプロイ。
+6. 動作確認(cron前): 各関数を `x-pipeline-secret` つきで1回ずつ呼ぶ、または `select public.x_tick();` を実行し、`select * from net._http_response order by id desc limit 5;` で call_fn の結果(200)を確認。ops_events に error が無いこと。
+7. `tier_scope_from` を設定(初期設定手順の2。これを入れた時点から区分確定が始まるため、プロファイル承認とキー設定の後)。
+8. `20261005_004_cron.sql`(定期実行の登録。x_hourlyは毎時3分)。確認: cron.job が新6本+旧7本=13本。管理画面の費用・通知タブが開くこと。
+9. enforce への切替(認証必須化)は、取得スキルが `x-pipeline-secret`(win)を付けるようになり、旧cron 6/7/8(anon JWTのみ)を x_tick 等へ寄せ、取得スキルの post_url 指定の再要約(log中でも403)が無いことを確認してから。未付与の呼び出しは ops_events(unauth_call)で見るが、通知は360分に1回に集約されるため件数としては使えない。件数は `select count(*) from net._http_response ...` や関数ログで確認する。
 
 ### 本番適用前チェック(006の直後・必須)
 anon / authenticated が書ける範囲を確認する。x_posts は `is_read` と `is_starred` の更新だけ、fetch_runs と digest_summaries は SELECT のみ。
@@ -62,14 +67,14 @@ update public.x_posts set summary_attempts = 0 where gist is null;
 ```
 (要約不能の投稿は区分確定の「未採点待ち」からも外れるため、バッチの確定は遅れない。)
 
-## 初期設定手順(本番反映後・越智さんの作業)
+## 初期設定手順(デプロイ順の2と7から参照)
 1. 初期化(一度だけ): `select public.ops_bootstrap();` が秘密4種(xd_ntfy_topic / xd_pipeline_secret_cron / xd_pipeline_secret_win / xd_admin_token_key。未設定のものだけ作る)と、一回限り・7日有効のセットアップコードを作って返す。コードは戻り値にだけ出るので、その場で管理画面の初回設定に入力しパスフレーズを決める。`xd_anon_jwt` は ops_bootstrap の対象外で、別途 `set_secret` で設定済み。
-2. 区分確定の開始日 `tier_scope_from`(ISO文字列)を tuning_config へ(これより前は区分・自動既読の対象外。未設定の間は確定も要点生成も動かない):
+2. (デプロイ順の7で実行。プロファイル承認とキー設定の後) 区分確定の開始日 `tier_scope_from`(ISO文字列)を設定。これより前は区分・自動既読の対象外。未設定の間は確定も要点生成も動かない。確定は未採点のまま4時間で強制されるので、採点の準備(プロファイル・キー)が整う前に設定しない:
    ```sql
    insert into public.tuning_config(key, value) values ('tier_scope_from', to_jsonb('2026-10-06T00:00:00Z'::text))
    on conflict (key) do update set value = excluded.value, updated_at = now();
    ```
-3. 関心プロファイル `interest_profile`: 本文はDBのみ(リポジトリ・文書には書かない)。管理画面の設定タブで本文を入力し承認(approve)する。承認されるまで status=draft。
+3. 関心プロファイル `interest_profile`: 本文はDBのみ(リポジトリ・文書には書かない)。管理画面の設定タブで本文を確認・承認(approve)する。承認されるまで status=draft(draftでも採点は始まる)。
 4. `GEMINI_API_KEY_X` を Edge Functions の Secrets へ(上の「X専用Geminiキー」参照)。
 5. モデルの予行演習(3.5 / 3.1 を有効化する前に): model-health の `rehearse` を n>=20 で実行し、`commit:true` で enabled に確定する。cron専用なので `x-pipeline-secret` が要る。値はリポジトリに書かず、SQLで取得して使う:
    ```sql
@@ -81,8 +86,7 @@ update public.x_posts set summary_attempts = 0 where gist is null;
      -H "x-pipeline-secret: $PIPELINE_SECRET_CRON" -H "Content-Type: application/json" \
      -d '{"action":"rehearse","model":"gemini-3.5-flash-lite","n":20,"commit":true}'
    ```
-   `$ANON_JWT` は anon key、`$PIPELINE_SECRET_CRON` は上のSQLの出力。n は20以上。`commit:true` を付けない呼び出しは確認だけ(確定しない)。
-6. cron(`20261005_004_cron.sql`)を最後に適用。登録後の `cron.job` は新6本(x_tick / x_hourly / x_pre_retention / x_daily / x_weekly / x_report_check)+ 旧7本 = 13本。
+   `$ANON_JWT` は anon key、`$PIPELINE_SECRET_CRON` は上のSQLの出力。n は20以上。`commit:true` を付けない呼び出しは確認だけ(確定しない)。2.5の終了見込みは2026-10-16。それまでに済ませる。
 
 ## 失敗状態のリセット(原因を直した後に実行)
 ```sql

@@ -66,11 +66,10 @@ async function callGemini(ctx: GeminiCtx, transcriptText: string): Promise<strin
   const res = await sharedGemini(ctx, {
     purpose: "ti_lesson",
     parts: [{ text: fullPrompt }],
-    maxOutputTokens: 4000,
+    maxOutputTokens: 8192, // 原本は上限なし。費用ガードのため必須だが、長い要約が切れないよう十分大きく取る
   });
   if (!res.ok) throw new Error(`gemini ${res.kind}${res.status ? ` http ${res.status}` : ""}: ${res.error}`);
-  // 途中で切れた要約を成功として保存しない(保存すると、次回以降も「要約済み」として再生成されない)
-  if (res.truncated) throw new Error("gemini output truncated (MAX_TOKENS): summary not saved");
+  // 原本どおり、途中で切れた(MAX_TOKENS)要約も保存する(TI系は「共通部品への差し替えのみ」の決定。保存しない分岐は置かない)
   return res.text;
 }
 

@@ -178,7 +178,7 @@ async function open(browser, base, o = {}) {
     if (!r) return route.abort("failed");
     return route.fulfill({ status: r.status, contentType: "application/json", body: JSON.stringify(r.json) });
   });
-  await page.goto(`${base}/index_beta.html`, { waitUntil: "domcontentloaded" });
+  await page.goto(`${base}/index_beta.html#test`, { waitUntil: "domcontentloaded" });
   await sleep(350);
   return { page, ctx, rec, st };
 }
@@ -221,7 +221,7 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     check("以降の呼び出しに x-admin-token が付く", callsOf(st, "config_get")[0].token === "tok-1");
     // トークン更新(応答の token で置き換え)
     st.renew = true;
-    await p.evaluate(() => Admin2.api("notify_info", {}));
+    await p.evaluate(() => __XD_TEST__.Admin2.api("notify_info", {}));
     check("応答の token で端末のトークンが更新される", (await tok(p)) === st.lastMinted && st.lastMinted !== "tok-1", await tok(p));
     // ログアウト→ログイン
     await p.click("#sxLogout"); await sleep(200);
@@ -371,8 +371,8 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     await p.click("#wkRead"); await sleep(300);
     const sp = await p.evaluate(() => window.__spoken.join(""));
     check("読み上げボタン: text_ja を TTS.utterances 経由で読む", sp.includes("新発表が多い週") && sp.includes("週次レポート"), sp);
-    check("読み上げ中はボタンが「止める」に変わる", (await txt(p, "#wkRead")).includes("止める") || !(await p.evaluate(() => Admin2.Reader.isPlaying("weekly"))));
-    await until(async () => !(await p.evaluate(() => Admin2.Reader.isPlaying("weekly"))), 4000);
+    check("読み上げ中はボタンが「止める」に変わる", (await txt(p, "#wkRead")).includes("止める") || !(await p.evaluate(() => __XD_TEST__.Admin2.Reader.isPlaying("weekly"))));
+    await until(async () => !(await p.evaluate(() => __XD_TEST__.Admin2.Reader.isPlaying("weekly"))), 4000);
     check("読み終えるとボタンが戻る", (await txt(p, "#wkRead")).includes("読み上げ"));
     // 通信簿
     await until(() => p.$(".au-row"));
@@ -435,7 +435,7 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     const q = await queueOf(p);
     check("サーバーが受理を返すまで端末キューに残る(500のとき)", q.some((o) => o.op_id === sub1.body.op_id));
     // 再送(同じ操作ID)→ duplicate:true で受理 → キューから消える。サーバー上では1件のまま。
-    await p.evaluate(() => AdminQueue.flush());
+    await p.evaluate(() => __XD_TEST__.AdminQueue.flush());
     await sleep(200);
     const resent = callsOf(st, "label_submit").filter((c) => c.body.op_id === sub1.body.op_id);
     check("冪等: 再送は同じ操作ID・サーバーでは1件だけ・受理後にキューから消える", resent.length >= 2 && st.answered.size >= 1 && [...st.answered.values()].filter((id) => id === 1001).length === 1 && !(await queueOf(p)).some((o) => o.op_id === sub1.body.op_id));
@@ -520,7 +520,7 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     const s = await open(browser, base, { token: "tok-seed", st });
     const p = s.page;
     await sleep(300);
-    check("通知先が未設定なら帯に出る(TopBand notify)", (await p.evaluate(() => TopBand.current())) === "notify" && (await txt(p, "#topBand")).includes("通知先が未設定"));
+    check("通知先が未設定なら帯に出る(TopBand notify)", (await p.evaluate(() => __XD_TEST__.TopBand.current())) === "notify" && (await txt(p, "#topBand")).includes("通知先が未設定"));
     await goTab(p, "settings"); await sleep(300);
     check("設定タブ: 未設定の案内を表示・テスト通知ボタンは出さない", (await txt(p, "#sx-notify")).includes("まだ設定されていません") && !(await p.$("#sxNotifyTest")));
     await p.click("#topBand").catch(() => {});

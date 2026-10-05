@@ -137,7 +137,9 @@ async function open(browser, base, o = {}) {
     return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, token: "tok-renewed" }) });
   });
   rec.postsFail = !!o.postsFail;
-  await page.goto(`${base}${o.path || "/index_beta.html"}`, { waitUntil: "domcontentloaded" });
+  // テスト用の名前空間 __XD_TEST__ は #test の時だけ公開される。ハッシュ指定の無い index_beta.html には #test を付ける
+  const url = o.path || "/index_beta.html";
+  await page.goto(`${base}${/index_beta\.html$/.test(url) ? url + "#test" : url}`, { waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.querySelectorAll(".row").length > 0 || /エラー/.test(document.getElementById("status").textContent) || document.getElementById("status").textContent.endsWith("件"), null, { timeout: 8000 }).catch(() => {});
   await sleep(250);
   return { page, ctx, rec };
@@ -254,7 +256,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     check("タブ: 今日/週次/費用/設定が並ぶ", JSON.stringify(await p.$$eval("#tabBar button", (b) => b.map((x) => x.textContent))) === JSON.stringify(["今日", "週次", "費用", "設定"]));
     check("タブ: 週次/費用/設定の空コンテナ(#tab-weekly/#tab-cost/#tab-settings/#settings-extra)がある", !!(await p.$("#tab-weekly")) && !!(await p.$("#tab-cost")) && !!(await p.$("#tab-settings")) && !!(await p.$("#settings-extra")));
     // 内訳の期待値(仕様どおり: 文字数÷(6.5×速度1.2))
-    const T = await p.evaluate(() => { const t = Beta.computeToday(); return { listen: t.listen.map((x) => x.post_url), skim: t.skim.length, hold: t.hold.length, min: t.listenMin, carry: t.carry, high: t.skimHigh.length, holdTop: t.holdTop.map((x) => x.post_url) }; });
+    const T = await p.evaluate(() => { const t = __XD_TEST__.Beta.computeToday(); return { listen: t.listen.map((x) => x.post_url), skim: t.skim.length, hold: t.hold.length, min: t.listenMin, carry: t.carry, high: t.skimHigh.length, holdTop: t.holdTop.map((x) => x.post_url) }; });
     const byId = (i) => big.find((x) => x.id === i);
     const tagLen = { 4: 9, 5: 14, 2: 5 };
     const chars = [4, 5, 2, 1, 3, 7].reduce((n, i) => n + byId(i).speech_title.length + byId(i).speech_body.length + (tagLen[i] || 0), 0);
@@ -264,10 +266,10 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     check(`主ボタン: ▶聴く(約${expectMin}分)=文字数÷(6.5×1.2)`, (await txt(p, "#btnListen")) === `▶聴く(約${expectMin}分)` && expectMin === 5, `${await txt(p, "#btnListen")} chars=${chars}`);
     check("昨日の聴き残し1件・流す4点以上2件・保留見出しは手動降格を除く(点数順)", T.carry === 1 && T.high === 2 && JSON.stringify(T.holdTop) === JSON.stringify([15, 14].map((i) => byId(i).post_url)));
     // 速度を変えると分が再計算される
-    await p.evaluate(() => { localStorage.setItem("xdash_listen_speed", "2"); Beta.refreshToday(); });
+    await p.evaluate(() => { localStorage.setItem("xdash_listen_speed", "2"); __XD_TEST__.Beta.refreshToday(); });
     const min2 = Math.max(1, Math.round(chars / (6.5 * 2) / 60));
     check("速度2.0へ変更すると約N分を端末で再計算", (await txt(p, "#btnListen")) === `▶聴く(約${min2}分)`, await txt(p, "#btnListen"));
-    await p.evaluate(() => { localStorage.setItem("xdash_listen_speed", "1.2"); Beta.refreshToday(); });
+    await p.evaluate(() => { localStorage.setItem("xdash_listen_speed", "1.2"); __XD_TEST__.Beta.refreshToday(); });
     // 今日の要点カード
     const dg = await txt(p, "#digestCard");
     check("今日の要点カード: 見出し・要約・生成時刻・続報チップ", dg.includes("要点見出し甲") && dg.includes("二つ目の要約です。") && /生成 \d\d:\d\d/.test(dg) && dg.includes("続報"), dg);
@@ -388,9 +390,9 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     check("次へ=既読(via=user)にして次のカードへ", s2.rec.reads.length === 1 && s2.rec.reads[0].url.endsWith("/4") && s2.rec.reads[0].via === "user" && (await txt(p2, "#plCard")).includes(titleOfId(5)) && /2 \/ 6/.test(await txt(p2, "#plPos")), JSON.stringify(s2.rec.reads));
     // 止める・再開
     await p2.click("#plToggle");
-    check("止める→ボタンが「再開」になる", (await txt(p2, "#plToggle")).includes("再開") && (await p2.evaluate(() => Beta.LP.state)) === "paused");
+    check("止める→ボタンが「再開」になる", (await txt(p2, "#plToggle")).includes("再開") && (await p2.evaluate(() => __XD_TEST__.Beta.LP.state)) === "paused");
     await p2.click("#plToggle");
-    check("再開→再び再生", (await txt(p2, "#plToggle")).includes("止める") && (await p2.evaluate(() => Beta.LP.state)) === "playing");
+    check("再開→再び再生", (await txt(p2, "#plToggle")).includes("止める") && (await p2.evaluate(() => __XD_TEST__.Beta.LP.state)) === "playing");
 
     // 4c. これは不要: 5秒の取り消し
     const cardBefore = await txt(p2, "#plCard");
@@ -408,7 +410,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
 
     // 4d. 中断→続きから
     await p2.click("#plExit"); await sleep(200);
-    check("✕中断: 今日へ戻り「中断しました。続きから再生」の大ボタンと聴き残しの帯", (await vis(p2, "#resumeBox")) && (await txt(p2, "#btnResume")).includes("中断しました。続きから再生") && (await p2.evaluate(() => TopBand.current())) === "leftover");
+    check("✕中断: 今日へ戻り「中断しました。続きから再生」の大ボタンと聴き残しの帯", (await vis(p2, "#resumeBox")) && (await txt(p2, "#btnResume")).includes("中断しました。続きから再生") && (await p2.evaluate(() => __XD_TEST__.TopBand.current())) === "leftover");
     const readsBefore = s2.rec.reads.length;
     await p2.click("#btnResume"); await sleep(300);
     check("続きから再生: 中断したカードの先頭から・途中のカードは既読になっていない", (await vis(p2, "#listenView")) && s2.rec.reads.length === readsBefore, `${await txt(p2, "#plPos")}`);
@@ -418,31 +420,31 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     check("バックグラウンド化で中断パネル(続きから再生の大ボタン)", (await vis(p2, "#plInterrupted")) && (await txt(p2, "#plResume")).includes("中断しました。続きから再生"));
     await p2.evaluate(() => { Object.defineProperty(document, "visibilityState", { get: () => "visible", configurable: true }); document.dispatchEvent(new Event("visibilitychange")); });
     await p2.click("#plResume"); await sleep(250);
-    check("パネルから続きから再生できる", !(await vis(p2, "#plInterrupted")) && (await p2.evaluate(() => Beta.LP.state)) === "playing");
+    check("パネルから続きから再生できる", !(await vis(p2, "#plInterrupted")) && (await p2.evaluate(() => __XD_TEST__.Beta.LP.state)) === "playing");
 
     // 4e. 端末キューの冪等・再送(第2段が使うAdminQueue)
     await p2.evaluate(() => { window.__r = {}; });
     s2.rec.adminMode = "fail500";
-    await p2.evaluate(() => AdminQueue.setToken("tok-1"));
+    await p2.evaluate(() => __XD_TEST__.AdminQueue.setToken("tok-1"));
     await sleep(300);
     const qa = await queueOf(p2);
     check("送信失敗(500): 溜めたまま残る・同じ操作IDで送られる(トークンはヘッダ)", qa.length === 1 && qa[0].op_id === opId && s2.rec.admin.length >= 1 && s2.rec.admin.every((a) => a.body.op_id === opId && a.body.action === "tier_set" && a.body.how === "demote" && a.token === "tok-1" && /^Bearer /.test(a.auth)), JSON.stringify(s2.rec.admin.map((a) => a.body)));
     s2.rec.adminMode = "dup";
     const n0 = s2.rec.admin.length;
-    const fr = await p2.evaluate(() => AdminQueue.flush());
+    const fr = await p2.evaluate(() => __XD_TEST__.AdminQueue.flush());
     const qb = await queueOf(p2);
     check("再送でサーバーが duplicate:true を返しても受理扱い→キューから削除、操作IDは同一(冪等)", qb.length === 0 && s2.rec.admin.length === n0 + 1 && s2.rec.admin[n0].body.op_id === opId && fr.sent === 1, JSON.stringify(fr));
-    const idem = await p2.evaluate(() => { const a = AdminQueue.add("tier_set", { post_url: "https://x.com/z", how: "promote" }, "fixed-op-1"); const b = AdminQueue.add("tier_set", { post_url: "https://x.com/z", how: "promote" }, "fixed-op-1"); return { same: a.op_id === b.op_id, n: AdminQueue.list().filter((o) => o.op_id === "fixed-op-1").length }; });
+    const idem = await p2.evaluate(() => { const a = __XD_TEST__.AdminQueue.add("tier_set", { post_url: "https://x.com/z", how: "promote" }, "fixed-op-1"); const b = __XD_TEST__.AdminQueue.add("tier_set", { post_url: "https://x.com/z", how: "promote" }, "fixed-op-1"); return { same: a.op_id === b.op_id, n: __XD_TEST__.AdminQueue.list().filter((o) => o.op_id === "fixed-op-1").length }; });
     check("同じ操作IDを2回addしても1件(冪等)", idem.same && idem.n === 1);
     await sleep(300);
     // 並行flushは1回に束ねる
     s2.rec.adminMode = "auth401";
-    await p2.evaluate(() => { AdminQueue.add("tier_set", { post_url: "https://x.com/y", how: "demote" }, "op-auth"); });
+    await p2.evaluate(() => { __XD_TEST__.AdminQueue.add("tier_set", { post_url: "https://x.com/y", how: "demote" }, "op-auth"); });
     await sleep(300);
-    const stt = await p2.evaluate(() => AdminQueue.stats());
-    check("トークン失効(401): キューは保持し needLogin=true・帯に「未送信」(再生画面にログインUIは出さない)", stt.needLogin === true && stt.pending >= 1 && (await p2.evaluate(() => TopBand.current())) !== null && (await p2.$$('input[type="password"]')).length === 0, JSON.stringify(stt));
+    const stt = await p2.evaluate(() => __XD_TEST__.AdminQueue.stats());
+    check("トークン失効(401): キューは保持し needLogin=true・帯に「未送信」(再生画面にログインUIは出さない)", stt.needLogin === true && stt.pending >= 1 && (await p2.evaluate(() => __XD_TEST__.TopBand.current())) !== null && (await p2.$$('input[type="password"]')).length === 0, JSON.stringify(stt));
     s2.rec.adminMode = "ok";
-    const fr2 = await p2.evaluate(() => AdminQueue.flush());
+    const fr2 = await p2.evaluate(() => __XD_TEST__.AdminQueue.flush());
     check("復旧後の再送で全件削除・応答のtokenでトークンを更新", fr2.remaining === 0 && (await p2.evaluate(() => localStorage.getItem("xdash_admin_token"))) === "tok-renewed", JSON.stringify(fr2));
     check("JSエラーなし(聴く2)", s2.rec.errors.length === 0, JSON.stringify(s2.rec.errors));
     await s2.ctx.close();
@@ -496,7 +498,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     check("再開→2秒で既読→終了表示", s.rec.reads.some((r) => r.url.endsWith("/3") && r.via === "flow") && (await vis(p, "#flEnd")) && (await txt(p, "#flEndMsg")).includes("流し終わりました"));
     check("流す画面: 横スクロールなし", await noOverflow(p));
     await p.click("#flBack"); await sleep(150);
-    const top = await p.evaluate(() => { const t = Beta.computeToday(); return { first: t.listen[0] && t.listen[0].post_url, n: t.listen.length, skim: t.skim.length }; });
+    const top = await p.evaluate(() => { const t = __XD_TEST__.Beta.computeToday(); return { first: t.listen[0] && t.listen[0].post_url, n: t.listen.length, skim: t.skim.length }; });
     check("昇格したカードが聴く待ちの先頭に入り、流すからは外れる", top.first.endsWith("/1") && top.n === 1 && top.skim === 0 && (await txt(p, "#breakdown")).includes("聴く1件"), JSON.stringify(top));
     check("JSエラーなし(流す)", s.rec.errors.length === 0, JSON.stringify(s.rec.errors));
     await s.ctx.close();
@@ -509,15 +511,15 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     // 取得遅れ > 聴き残し > 通知先未設定 > 暫定 > 未送信
     const s = await open(browser, base, { posts: [mk(1, old({ listen_tier: "listen", tier_assigned_at: YDAY_T, score: 4, score_state: "scored", scored_model: "gemini-2.5-flash" }))], storage: { xdash_admin_queue: JSON.stringify([{ op_id: "q1", kind: "tier_set", payload: { post_url: "u", how: "demote" }, at: 1, tries: 0 }]) } });
     const p = s.page;
-    const cur = () => p.evaluate(() => TopBand.current());
+    const cur = () => p.evaluate(() => __XD_TEST__.TopBand.current());
     check("帯: 取得遅れが最優先(同時に1件だけ表示)", (await cur()) === "late" && (await p.$$("#topBand:not([hidden])")).length === 1 && (await txt(p, "#topBand")).includes("取得が遅れています"), await txt(p, "#topBand"));
-    await p.evaluate(() => { const x = allPosts[0]; x.fetched_at = new Date().toISOString(); Beta.refreshToday(); });
+    await p.evaluate(() => { const x = allPosts[0]; x.fetched_at = new Date().toISOString(); __XD_TEST__.Beta.refreshToday(); });
     check("帯: 次に聴き残し(昨日からの聴き残し)", (await cur()) === "leftover" && (await txt(p, "#topBand")).includes("聴き残し"), await txt(p, "#topBand"));
-    await p.evaluate(() => { allPosts[0].tier_assigned_at = new Date().toISOString(); Beta.refreshToday(); TopBand.set("notify", { text: "🔔 通知先が未設定です" }); });
+    await p.evaluate(() => { allPosts[0].tier_assigned_at = new Date().toISOString(); __XD_TEST__.Beta.refreshToday(); __XD_TEST__.TopBand.set("notify", { text: "🔔 通知先が未設定です" }); });
     check("帯: 次に通知先未設定(第2段が TopBand.set('notify',…) で出す)", (await cur()) === "notify");
-    await p.evaluate(() => TopBand.set("notify", null));
+    await p.evaluate(() => __XD_TEST__.TopBand.set("notify", null));
     check("帯: 次に暫定", (await cur()) === "provisional" && (await txt(p, "#topBand")).includes("暫定"));
-    await p.evaluate(() => { allPosts[0].scored_model = "gemini-3.5"; Beta.refreshToday(); });
+    await p.evaluate(() => { allPosts[0].scored_model = "gemini-3.5"; __XD_TEST__.Beta.refreshToday(); });
     check("帯: 最後に未送信N件(タップで設定タブ)", (await cur()) === "unsent" && (await txt(p, "#topBand")).includes("未送信の操作が1件"));
     await p.click("#topBand"); await sleep(100);
     check("未送信の帯をタップ→設定タブ", await vis(p, "#tab-settings"));
@@ -551,7 +553,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     await p.reload({ waitUntil: "domcontentloaded" }); await sleep(600);
     check("①再読込後も続きから再生が出る", await vis(p, "#btnResume"));
     await p.click("#btnResume"); await sleep(400);
-    check("①skim区分のカードが復元されて再生される(listenに限らない)・追加分フラグを引き継ぐ", (await vis(p, "#listenView")) && (await txt(p, "#plCard")).includes(titleOfId(21)) && (await p.evaluate(() => Beta.LP.extra)) === true && /1 \/ 2/.test(await txt(p, "#plPos")), await txt(p, "#plPos"));
+    check("①skim区分のカードが復元されて再生される(listenに限らない)・追加分フラグを引き継ぐ", (await vis(p, "#listenView")) && (await txt(p, "#plCard")).includes(titleOfId(21)) && (await p.evaluate(() => __XD_TEST__.Beta.LP.extra)) === true && /1 \/ 2/.test(await txt(p, "#plPos")), await txt(p, "#plPos"));
     check("①JSエラーなし", s.rec.errors.length === 0, JSON.stringify(s.rec.errors));
     await s.ctx.close();
 
@@ -586,7 +588,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     const s2 = await open(browser, base, { posts: [silentOf(41, { score: 5 }), silentOf(42, { score: 4 })], storage: INTRO });
     const p2 = s2.page;
     check("②全部空: ▶は出さず案内(無反応にならない)・+10分も出さない・流すで見られる", !(await vis(p2, "#btnListen")) && (await vis(p2, "#listenGuide")) && (await txt(p2, "#listenGuide")).includes("読み上げる文章がない2件") && !(await vis(p2, "#btnExtraToday")) && !(await p2.$eval("#btnFlow", (b) => b.disabled)), `${await txt(p2, "#listenGuide")}`);
-    const items = await p2.evaluate(() => { const t = Beta.computeToday(); return { listen: t.listen.length, sec: t.listenSec, min: t.listenMin, silent: t.silent.length, skim: t.skim.length }; });
+    const items = await p2.evaluate(() => { const t = __XD_TEST__.Beta.computeToday(); return { listen: t.listen.length, sec: t.listenSec, min: t.listenMin, silent: t.silent.length, skim: t.skim.length }; });
     check("②所要時間0・聴く0件・流す2件", items.listen === 0 && items.sec === 0 && items.min === 0 && items.skim === 2 && items.silent === 2, JSON.stringify(items));
     await s2.ctx.close();
   } catch (e) { check("②空の読み上げ文のテストが完走", false, e.stack); }
@@ -620,7 +622,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     check("④復帰しただけ(再開ボタンを押す前)では効果音は鳴らない", (await wakeOf(p)).beeps === b0 + 1);
     await p.click("#plResume"); await sleep(250);
     const w3 = await wakeOf(p);
-    check("④再開ボタンのタップ後に効果音が鳴り、点灯を取り直す", w3.beeps === b0 + 2 && w3.req === 3 && !w3.cur.released && (await p.evaluate(() => Beta.LP.state)) === "playing", JSON.stringify(w3));
+    check("④再開ボタンのタップ後に効果音が鳴り、点灯を取り直す", w3.beeps === b0 + 2 && w3.req === 3 && !w3.cur.released && (await p.evaluate(() => __XD_TEST__.Beta.LP.state)) === "playing", JSON.stringify(w3));
     await p.evaluate(() => { window.__wake.cur.released = true; }); // OSが解放した状態を再現
     await setVis(p, "hidden"); await setVis(p, "visible"); // 裏→表(interruptされるので再開してから確認)
     await p.click("#plResume"); await sleep(250);
@@ -667,7 +669,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     await p.click("#btnFlow");
     await setVis(p, "hidden");
     await sleep(2800);
-    check("⑧流す: 画面が裏の間は既読にならない・一時停止になる(2.8秒経過しても未読)", s.rec.reads.length === 0 && (await p.evaluate(() => Beta.FL.paused)) === true && (await vis(p, "#flPaused")) && /1 \/ 3/.test(await txt(p, "#flPos")), JSON.stringify(s.rec.reads));
+    check("⑧流す: 画面が裏の間は既読にならない・一時停止になる(2.8秒経過しても未読)", s.rec.reads.length === 0 && (await p.evaluate(() => __XD_TEST__.Beta.FL.paused)) === true && (await vis(p, "#flPaused")) && /1 \/ 3/.test(await txt(p, "#flPos")), JSON.stringify(s.rec.reads));
     await setVis(p, "visible");
     await sleep(700);
     check("⑧画面が戻っても自動では進まず(一時停止のまま)、既読にもならない", s.rec.reads.length === 0 && /1 \/ 3/.test(await txt(p, "#flPos")));
@@ -707,11 +709,11 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     }
   } catch (e) { check("⑨長い文字列のテストが完走", false, e.stack); }
 
-  // ⑩ 読み込み失敗(オフライン)は今日タブに「通信できません。再読み込み」
+  // ⑩ 読み込み失敗(オフライン)は今日タブに「取得できませんでした。再読み込み」
   try {
     const s = await open(browser, base, { posts: scenario(70), postsFail: true });
     const p = s.page;
-    check("⑩読み込み失敗: 今日タブに「通信できません。再読み込み」ボタンが出る", (await vis(p, "#btnOffline")) && (await txt(p, "#btnOffline")).includes("通信できません。再読み込み"), await txt(p, "#btnOffline"));
+    check("⑩読み込み失敗: 今日タブに「取得できませんでした。再読み込み」ボタンが出る", (await vis(p, "#btnOffline")) && (await txt(p, "#btnOffline")).includes("取得できませんでした。再読み込み"), await txt(p, "#btnOffline"));
     s.rec.postsFail = false;
     await p.click("#btnOffline"); await sleep(600);
     check("⑩押すと再読み込みされ、成功すると案内は消えて今日の内訳が出る", !(await vis(p, "#btnOffline")) && (await txt(p, "#breakdown")).includes("聴く6件"), await txt(p, "#breakdown"));
@@ -731,7 +733,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     check("⑪不要を押すと猶予の間は端末に降格を控える(pending)", (await p.evaluate(() => localStorage.getItem("xdash_pending_demote"))) !== null);
     await setVis(p, "hidden");
     await sleep(5600);
-    check("⑪裏に回って5.6秒経っても確定しない(キューに積まない・取り消し帯は残る)", (await queueOf(p)).length === 0 && (await p.evaluate(() => !!Beta.LP.undo)), JSON.stringify(await queueOf(p)));
+    check("⑪裏に回って5.6秒経っても確定しない(キューに積まない・取り消し帯は残る)", (await queueOf(p)).length === 0 && (await p.evaluate(() => !!__XD_TEST__.Beta.LP.undo)), JSON.stringify(await queueOf(p)));
     await setVis(p, "visible");
     check("⑪画面が戻ると取り消し帯が見える(中断パネルの上)", (await vis(p, "#plToast")) && (await vis(p, "#plInterrupted")));
     await p.click("#plUndo"); await sleep(250);
@@ -785,7 +787,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     const n0 = s.rec.patches.length;
     await p.evaluate(() => window.dispatchEvent(new Event("online")));
     await until(async () => (await p.evaluate(() => JSON.parse(localStorage.getItem("xdash_unread_queue") || "[]"))).length === 0, 3000);
-    check("⑫通信が戻ると再送して、成功したらキューから消える", s.rec.patches.length > n0 && /"is_read":false/.test(s.rec.patches[s.rec.patches.length - 1].body) && (await p.evaluate(() => Beta.UnreadQueue.count())) === 0);
+    check("⑫通信が戻ると再送して、成功したらキューから消える", s.rec.patches.length > n0 && /"is_read":false/.test(s.rec.patches[s.rec.patches.length - 1].body) && (await p.evaluate(() => __XD_TEST__.Beta.UnreadQueue.count())) === 0);
     await s.ctx.close();
   } catch (e) { check("⑫既読戻しの再送テストが完走", false, e.stack); }
 

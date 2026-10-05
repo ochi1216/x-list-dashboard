@@ -1114,7 +1114,7 @@ Deno.test({ name: "summarize-ti-news / headline / lesson", ...T }, async (t) => 
     });
   });
 
-  await t.step("出力が途切れた(MAX_TOKENS)要約は保存しない: lesson は summary 未保存・news は summary_bullets 未保存", async () => {
+  await t.step("TI系は原本どおり: 途切れた(MAX_TOKENS)要約も lesson は保存(maxOutputTokens=8192)・news は保存しない(news は別担当)", async () => {
     fresh();
     supa.insert("ti_video_updates", { link: "https://ti/l9", sequence: 1, series_link: "T", platform: "ti_precision_labs_lesson" });
     const row = supa.insert("ti_video_transcripts", { video_link: "https://ti/l9", language: "ja-jp", content: null, transcript_url: `${gem.url}/files/a.vtt`, summary: null });
@@ -1122,9 +1122,8 @@ Deno.test({ name: "summarize-ti-news / headline / lesson", ...T }, async (t) => 
     gem.finishReason = "MAX_TOKENS";
     await withFn(env, "summarize-ti-lesson", {}, async (f) => {
       const r = await f.call({ series_link: "T" });
-      eq([r.json.ok, r.json.processed], [true, 0], "processed=0");
-      assert(String(r.json.errors["https://ti/l9"]).includes("truncated"), "errors に理由");
-      eq(row.summary, null, "途中で切れた要約は保存しない");
+      eq([r.json.ok, r.json.processed], [true, 1], "途切れても processed=1");
+      assert(row.summary, "途中で切れた要約も原本どおり保存する");
     });
     await withFn(env, "summarize-ti-news", {}, async (f) => {
       const r = await f.call({});
@@ -1132,10 +1131,6 @@ Deno.test({ name: "summarize-ti-news / headline / lesson", ...T }, async (t) => 
       eq(art.summary_bullets, null, "保存しない");
     });
     gem.finishReason = "STOP";
-    await withFn(env, "summarize-ti-lesson", {}, async (f) => {
-      eq((await f.call({ series_link: "T" })).json.processed, 1, "通常終了なら保存");
-      assert(row.summary, "summary");
-    });
   });
 
   await t.step("summarize-ti-lesson: 字幕取得→要約保存・不明series=404・series_link必須", async () => {
@@ -1149,6 +1144,7 @@ Deno.test({ name: "summarize-ti-news / headline / lesson", ...T }, async (t) => 
       eq([r.status, r.json.ok, r.json.processed, r.json.remaining], [200, true, 1, 0], "processed");
       assert(String(row.content).includes("字幕"), "字幕を保存");
       assert(String(row.summary).includes("要約終了"), "要約を保存");
+      eq(gem.calls[gem.calls.length - 1].body.generationConfig.maxOutputTokens, 8192, "lesson の出力上限は8192(原本は上限なし)");
       eq(supa.rows("llm_usage")[0].grp, "ti", "grp");
       eq((await f.call({ series_link: "S" })).json.processed, 0, "二度目は済");
       assertKeyOnlyInHeader();
