@@ -837,6 +837,184 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     }
   } catch (e) { check("⑯レイアウトのテストが完走", false, e.stack); }
 
+  // ================================================================ 8. 第2回レビューC
+  console.log("\n--- 8. 第2回レビューC(既読の再送キュー・読み込み表示・自動更新ほか) ---");
+  const readQ = (p) => p.evaluate(() => JSON.parse(localStorage.getItem("xdash_read_queue") || "[]"));
+
+  // 重大1: 既読化の失敗は黙って捨てず、再送キューに積む
+  try {
+    const s = await open(browser, base, { posts: [lt(91, { score: 4 })], speakMs: 20, storage: INTRO, rpcMode: "fail" });
+    const p = s.page; s.rec.patchFail = true;
+    await p.click("#btnListen");
+    await until(() => vis(p, "#plFinish"), 8000); await sleep(250);
+    const q = await readQ(p);
+    check("重大1: 圏外(RPCもPATCHも失敗)で最後まで聴くと、既読が再送キューに {url,via,at} で積まれる", q.length === 1 && q[0].url.endsWith("/91") && q[0].via === "listen" && Number.isFinite(q[0].at), JSON.stringify(q));
+    check("重大1: 未送信の帯に既読分が加算される(1件)", (await txt(p, "#topBand")).includes("未送信の操作が1件"), await txt(p, "#topBand"));
+    await p.evaluate(() => { __XD_TEST__.ReadQueue.add("https://x.com/u91/status/91", "listen"); __XD_TEST__.ReadQueue.add("https://x.com/u91/status/91", "flow"); });
+    check("重大1: 同じURLは二重に積まない(重複排除)", (await readQ(p)).length === 1);
+    await p.click("#plBackB"); await sleep(150);
+    await p.evaluate(() => __XD_TEST__.Tabs.show("settings")); await sleep(400);
+    check("重大1: 設定タブのキュー表示に既読の再送待ち件数が出る", (await vis(p, "#sxReadQ")) && (await txt(p, "#sxReadQ")).includes("1件"), await txt(p, "#sxReadQ"));
+    // 通信できないまま再読込→復帰しても、聴いたカードは「聴く」に戻らない
+    await p.reload({ waitUntil: "domcontentloaded" }); await sleep(900);
+    const after = await p.evaluate(() => { const t = __XD_TEST__.Beta.computeToday(); const x = allPosts.find((q) => q.post_url.endsWith("/91")); return { listen: t.listen.length, read: x && x.is_read, btn: !document.getElementById("btnListen").hidden }; });
+    check("重大1: 再読込後(サーバーは未読のまま・まだ送れない)も、キューの内容をローカルで既読として反映し「聴く」に戻らない", after.listen === 0 && after.read === true && !after.btn && (await txt(p, "#breakdown")).includes("聴く0件"), JSON.stringify(after));
+    check("重大1: 送れていない間は帯に件数が残り、キューも消えない(サーバー受理後にだけ削除)", (await txt(p, "#topBand")).includes("未送信の操作が1件") && (await readQ(p)).length === 1);
+    s.rec.rpcMode = "ok"; s.rec.patchFail = false;
+    const r0 = s.rec.reads.length;
+    await setVis(p, "visible");
+    await until(async () => (await readQ(p)).length === 0, 3000);
+    check("重大1: 画面が戻る(visibilitychange)と再送され、サーバーが受理したらキューから消えて via=listen で送られる", (await readQ(p)).length === 0 && s.rec.reads.length > r0 && s.rec.reads.some((x) => x.url.endsWith("/91") && x.via === "listen"), JSON.stringify(s.rec.reads));
+    check("重大1: 送り終わると帯が消える", !(await vis(p, "#topBand")));
+    // online でも再送される。RPCが失敗してもPATCHで受理されれば消える
+    s.rec.rpcMode = "fail";
+    await p.evaluate(() => { __XD_TEST__.ReadQueue.add("https://x.com/u92/status/92", "flow"); });
+    const pt0 = s.rec.patches.length;
+    await p.evaluate(() => window.dispatchEvent(new Event("online")));
+    await until(async () => (await readQ(p)).length === 0, 3000);
+    check("重大1: online で再送され、RPC失敗時はPATCH(is_read:true)で受理されたら消える", (await readQ(p)).length === 0 && s.rec.patches.slice(pt0).some((x) => /u92/.test(x.url) && /"is_read":true/.test(x.body)), JSON.stringify(s.rec.patches.slice(pt0)));
+    check("重大1: JSエラーなし", s.rec.errors.length === 0, JSON.stringify(s.rec.errors));
+    await s.ctx.close();
+  } catch (e) { check("重大1のテストが完走", false, e.stack); }
+
+  // 重大1続き: 「次へ」(既読)・流す(2秒)の既読失敗も同じキュー、これ聴くで外れる
+  try {
+    const s = await open(browser, base, { posts: [lt(93, { score: 4 }), lt(94, { score: 4 })], speakMs: 4000, storage: INTRO, rpcMode: "fail" });
+    const p = s.page; s.rec.patchFail = true;
+    await p.click("#btnListen"); await until(async () => (await spokenOf(p)).length >= 1, 3000);
+    await p.click("#plNext"); await sleep(300);
+    const q = await readQ(p);
+    check("重大1: 「次へ」の既読失敗も再送キューに via=user で積まれる", q.length === 1 && q[0].via === "user", JSON.stringify(q));
+    await s.ctx.close();
+    const f = await open(browser, base, { posts: [sk(95, { score: 5 }), sk(96, { score: 4 })], storage: { xdash_flow_sec: "4" }, rpcMode: "fail" });
+    const fp = f.page; f.rec.patchFail = true;
+    await fp.click("#btnFlow"); await sleep(2600);
+    const fq = await readQ(fp);
+    check("重大1: 流す(2秒表示)の既読失敗も再送キューに via=flow で積まれる", fq.length >= 1 && fq[0].via === "flow", JSON.stringify(fq));
+    await fp.click("#flListen"); await sleep(300);
+    check("重大1: 「これ聴く」(昇格)で、そのURLの未送信の既読は取り消される", (await readQ(fp)).every((x) => !x.url.endsWith("/95") && !x.url.endsWith("/96")) || (await readQ(fp)).length === 0, JSON.stringify(await readQ(fp)));
+    await f.ctx.close();
+  } catch (e) { check("重大1(次へ・流す・昇格)のテストが完走", false, e.stack); }
+
+  // 軽微3: 読み込み中/失敗は「聴く0件/まだありません」と断定しない
+  try {
+    const s = await open(browser, base, { posts: scenario(70), storage: INTRO });
+    const p = s.page;
+    await p.evaluate(() => { allPosts = []; postsLoading = true; loadFailed = false; __XD_TEST__.Beta.refreshToday(); });
+    const g1 = await txt(p, "#listenGuide"), b1 = await txt(p, "#breakdown");
+    check("軽微3: 読み込み中は「読み込み中…」(「聴く0件/まだありません」と出さない)", (await vis(p, "#listenGuide")) && g1 === "読み込み中…" && b1.includes("読み込み中…") && !/0件|まだありません/.test(g1 + b1), g1 + "/" + b1);
+    await p.evaluate(() => { postsLoading = false; loadFailed = true; __XD_TEST__.Beta.refreshToday(); });
+    const g2 = await txt(p, "#listenGuide"), b2 = await txt(p, "#breakdown");
+    check("軽微3: 失敗時は「取得できませんでした。再読み込み」ボタンと案内(0件・まだありませんと断定しない)", (await vis(p, "#btnOffline")) && (await txt(p, "#btnOffline")).includes("取得できませんでした。再読み込み") && g2.includes("取得できませんでした") && !/0件|まだありません/.test(g2 + b2), g2 + "/" + b2);
+    await p.evaluate(() => { postsLoading = false; loadFailed = false; });
+    await s.ctx.close();
+    const f = await open(browser, base, { posts: scenario(70), postsFail: true });
+    const gf = await txt(f.page, "#listenGuide");
+    check("軽微3: 実際に取得に失敗した時も「取得できませんでした」で、「まだありません」とは出さない", gf.includes("取得できませんでした") && !gf.includes("まだありません") && !(await txt(f.page, "#breakdown")).includes("聴く0件"), gf);
+    await f.ctx.close();
+  } catch (e) { check("軽微3のテストが完走", false, e.stack); }
+
+  // 軽微4: 自動更新(visibleに戻った時、30分超か日が変わっていたら再取得。再生中はしない)
+  try {
+    const s = await open(browser, base, { posts: scenario(70), speakMs: 5000, storage: INTRO });
+    const p = s.page; let gets = 0;
+    p.on("request", (r) => { if (r.method() === "GET" && r.url().includes("/rest/v1/x_posts") && decodeURIComponent(r.url()).includes("select=*&or=")) gets++; });
+    const shiftVis = (ms) => p.evaluate((d) => { const orig = Date.now; Date.now = () => orig.call(Date) + d; try { document.dispatchEvent(new Event("visibilitychange")); } finally { Date.now = orig; } }, ms);
+    await shiftVis(0); await sleep(300);
+    check("軽微4: 取得から30分以内なら再取得しない", gets === 0, String(gets));
+    await shiftVis(29 * 60e3); await sleep(300);
+    check("軽微4: 29分では再取得しない", gets === 0, String(gets));
+    await shiftVis(31 * 60e3); await until(() => gets >= 1, 3000); await sleep(300);
+    check("軽微4: 30分超で再取得して今日タブを再描画する", gets === 1 && (await txt(p, "#breakdown")).includes("聴く6件"), String(gets));
+    await shiftVis(25 * 3600e3); await until(() => gets >= 2, 3000); await sleep(300);
+    check("軽微4: 日(02:00 JST区切り)が変わっていたら30分以内でも再取得する", gets === 2, String(gets));
+    await p.click("#btnListen"); await until(async () => (await spokenOf(p)).length >= 1, 3000);
+    await shiftVis(40 * 60e3); await sleep(400);
+    check("軽微4: 再生中(聴く画面)は再取得しない", gets === 2, String(gets));
+    await s.ctx.close();
+  } catch (e) { check("軽微4のテストが完走", false, e.stack); }
+
+  // 軽微6: 「‹今日」は44px以上のタップ領域(見た目の高さは増やさない)
+  try {
+    const s = await open(browser, base, { path: "/index_beta.html#list", posts: [mk(1), mk(2)] });
+    const p = s.page;
+    const r = await p.evaluate(() => {
+      const b = document.getElementById("btnBackToday"); const rc = b.getBoundingClientRect(); const cs = getComputedStyle(b, "::before");
+      const cx = rc.left + rc.width / 2, cy = rc.top + rc.height / 2;
+      const hit = (dy) => { const e = document.elementFromPoint(cx, cy + dy); return e === b; };
+      return { h: rc.height, ph: parseFloat(cs.height), pw: rc.width + parseFloat(cs.left || 0) * -2, up: hit(-20), down: hit(20), mid: hit(0) };
+    });
+    check("軽微6: 「‹今日」の見た目の高さは増えない(40px未満のまま)", r.h < 30, JSON.stringify(r));
+    check("軽微6: タップ領域が44px以上(::before 44px・上下20px離れても同じボタンに当たる)", r.ph >= 44 && r.up && r.down && r.mid && r.pw >= 44, JSON.stringify(r));
+    await s.ctx.close();
+  } catch (e) { check("軽微6のテストが完走", false, e.stack); }
+
+  // 軽微7: 取り消しボタンは「取り消し」(5秒の固定表記をしない)
+  try {
+    const s = await open(browser, base, { posts: scenario(70), speakMs: 5000, storage: INTRO });
+    const p = s.page;
+    await p.click("#btnListen"); await until(async () => (await spokenOf(p)).length >= 1, 3000);
+    await p.click("#plReject"); await sleep(150);
+    check("軽微7: 取り消しボタンの文言は「取り消し」(「(5秒)」と固定表記しない)", (await txt(p, "#plUndo")) === "取り消し", await txt(p, "#plUndo"));
+    await s.ctx.close();
+  } catch (e) { check("軽微7のテストが完走", false, e.stack); }
+
+  // 軽微8: 中断中の今日タブは「続きから再生」だけを主に出し、+10分聴くは隠す
+  try {
+    const s = await open(browser, base, { posts: [sk(21, { score: 5 }), sk(22, { score: 4 }), sk(23, { score: 3 })], speakMs: 3000, storage: INTRO });
+    const p = s.page;
+    await p.click("#btnExtraToday"); await until(async () => (await spokenOf(p)).length >= 1, 3000);
+    await p.click("#plExit"); await sleep(250);
+    const cls = await p.evaluate(() => ({ resume: document.getElementById("btnResume").classList.contains("primary"), listen: document.getElementById("btnListen").classList.contains("primary") }));
+    check("軽微8: 中断中の今日タブでは「続きから再生」が主ボタン・「+10分聴く」は隠れる", (await vis(p, "#btnResume")) && !(await vis(p, "#btnExtraToday")) && cls.resume && !cls.listen, JSON.stringify(cls));
+    await p.evaluate(() => { localStorage.removeItem("xdash_listen_session"); __XD_TEST__.Beta.refreshToday(); });
+    check("軽微8: 中断が片付くと「+10分聴く」がまた出る", !(await vis(p, "#btnResume")) && (await vis(p, "#btnExtraToday")));
+    await s.ctx.close();
+  } catch (e) { check("軽微8のテストが完走", false, e.stack); }
+
+  // 軽微9: 「約N分」の見積もりに文間100ms・見出し/本文400msの間を加算
+  try {
+    const s = await open(browser, base, { posts: scenario(70), storage: { ...INTRO, xdash_listen_speed: "1.2" } });
+    const p = s.page;
+    const r = await p.evaluate(() => {
+      const T = __XD_TEST__.Beta.computeToday(); const sp = __XD_TEST__.Beta.listenSpeed();
+      let chars = 0, sent = 0, kind = 0;
+      for (const x of T.listen) { const its = __XD_TEST__.Beta.cardItems(x); its.forEach((it, i) => { chars += it.text.length; sent++; if (i > 0 && it.kind !== its[i - 1].kind) kind++; }); }
+      return { sec: T.listenSec, expect: chars / (6.5 * sp) + sent * 0.1 + kind * 0.4, plain: chars / (6.5 * sp), sent, kind };
+    });
+    check("軽微9: 聴く合計の見積もり秒 = 文字数÷(6.5×速度) + 文数×0.1 + 見出し→本文×0.4", Math.abs(r.sec - r.expect) < 1e-6 && r.sec > r.plain, JSON.stringify(r));
+    await s.ctx.close();
+  } catch (e) { check("軽微9のテストが完走", false, e.stack); }
+
+  // 軽微10: refreshToday の読み上げ文は投稿ごとに1回だけ作る(二重cleanを避ける)
+  try {
+    const s = await open(browser, base, { posts: scenario(70), storage: INTRO });
+    const p = s.page;
+    const n = await p.evaluate(() => {
+      const bust = allPosts.filter((x) => x.listen_tier === "listen" && !x.is_read).slice(0, 3);
+      bust.forEach((x, i) => { x.speech_body = "書き換え" + i + "。" + x.speech_body; });
+      let c = 0; const o = TTS.utterances; TTS.utterances = function () { c++; return o.apply(this, arguments); };
+      try { __XD_TEST__.Beta.refreshToday(); const first = c; __XD_TEST__.Beta.refreshToday(); __XD_TEST__.Beta.refreshToday(); return { first, total: c, bust: bust.length }; } finally { TTS.utterances = o; }
+    });
+    check("軽微10: 3件だけ本文が変わった時、refreshToday を3回呼んでも読み上げ文の生成は3回だけ(キャッシュ)", n.first === 3 && n.total === 3, JSON.stringify(n));
+    await s.ctx.close();
+  } catch (e) { check("軽微10のテストが完走", false, e.stack); }
+
+  // 軽微12: グローバル公開は window.__XD_TEST__ だけ、#test のハッシュがある時だけ
+  try {
+    const q = await open(browser, base, { path: "/index_beta.html?prod=1", posts: scenario(70) });
+    const g = await q.page.evaluate(() => ({ test: typeof window.__XD_TEST__, names: ["AdminQueue", "Admin2", "Beta", "TopBand", "Tabs", "UnreadQueue", "ReadQueue", "__xdBridge"].filter((k) => k in window), tok: !!(window.AdminQueue && window.AdminQueue.getToken) }));
+    check("軽微12: 通常の画面(#testなし)では __XD_TEST__ も AdminQueue 等のグローバルも公開されない", g.test === "undefined" && g.names.length === 0 && !g.tok, JSON.stringify(g));
+    await q.page.click("#tabBar button[data-tab=settings]"); await sleep(300);
+    await q.page.click("#tabBar button[data-tab=today]"); await sleep(100);
+    check("軽微12: 公開しなくてもタブ・設定は動き、JSエラーがない", (await vis(q.page, "#btnListen")) && q.rec.errors.length === 0, JSON.stringify(q.rec.errors));
+    await q.ctx.close();
+    const t = await open(browser, base, { posts: scenario(70) });
+    const h = await t.page.evaluate(() => ({ keys: Object.keys(window.__XD_TEST__).sort(), leaked: ["AdminQueue", "Admin2", "Beta", "TopBand", "Tabs", "UnreadQueue", "__xdBridge"].filter((k) => k in window) }));
+    check("軽微12: #test の時は単一の名前空間 __XD_TEST__ にだけ公開(AdminQueue/Admin2/Beta/TopBand/Tabs/UnreadQueue/ReadQueue)", ["Admin2", "AdminQueue", "Beta", "ReadQueue", "Tabs", "TopBand", "UnreadQueue"].every((k) => h.keys.includes(k)) && h.leaked.length === 0, JSON.stringify(h));
+    await t.ctx.close();
+  } catch (e) { check("軽微12のテストが完走", false, e.stack); }
+
   await browser.close(); srv.close();
   fs.rmSync(dir, { recursive: true, force: true });
   console.log(failures === 0 ? `\n全${total}項目OK` : `\nNG ${failures}/${total}件`);

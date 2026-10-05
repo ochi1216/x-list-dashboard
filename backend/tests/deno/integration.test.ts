@@ -440,6 +440,23 @@ Deno.test({ name: "score-x-posts", ...T }, async (t) => {
     });
   });
 
+  await t.step("400 FAILED_PRECONDITION(課金・地域・設定不備): 認証系として採点を打ち切り・試行回数を数えず・ops_event(gemini_auth)", async () => {
+    fresh();
+    const { p1, p2 } = mk();
+    supa.rows("x_posts").forEach((p) => { if (p.score_state === null && p.summary) p.score_attempts = 1; });
+    gem.failNext = Array.from({ length: 20 }, () => ({ status: 400, body: JSON.stringify({ error: { code: 400, status: "FAILED_PRECONDITION", message: "User location is not supported for the API use." } }) }));
+    await withFn(env, "score-x-posts", {}, async (f) => {
+      const r = await f.call({}, CRON);
+      eq([r.status, r.json.stopped, r.json.scored, r.json.speech], [200, "gemini_auth", 0, 0], "打ち切り");
+      assert(gem.calls.length <= 4, `並列分を超えて呼ばない: ${gem.calls.length}`);
+      eq([p1.score_state, p1.score_attempts, p2.score_state, p2.score_attempts], [null, 1, null, 1], "試行回数は据え置き・未採点(failed に確定しない)");
+      const ev = supa.rows("ops_events").filter((e) => e.kind === "gemini_auth");
+      eq(ev.length, 1, "ops_event 1件");
+      eq([ev[0].level, ev[0].data.detail], ["error", "http 400"], "内容");
+      eq(supa.locks.size, 0, "ロック解放");
+    });
+  });
+
   await t.step("読み下しで認証エラー(401): speech_at を記録せず打ち切り、ops_event を出す", async () => {
     fresh();
     const p = supa.addPost({ author_handle: "s", summary: "要約", content: `SCORE=5 ${JA_LONG}` });

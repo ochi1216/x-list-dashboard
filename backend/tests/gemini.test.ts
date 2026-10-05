@@ -276,6 +276,8 @@ test("認証系エラー(401/403、400のAPI key not valid・API_KEY_INVALID・P
     [403, { error: { status: "PERMISSION_DENIED", message: "The caller does not have permission" } }],
     [400, { error: { message: "API key not valid. Please pass a valid API key.", details: [{ reason: "API_KEY_INVALID" }] } }],
     [400, { error: { status: "PERMISSION_DENIED", message: "denied for model x" } }],
+    [400, { error: { status: "FAILED_PRECONDITION", message: "User location is not supported for the API use." } }],
+    [400, { error: { code: 400, status: "FAILED_PRECONDITION", message: "Billing account not found for the project." } }],
   ];
   for (const [status, body] of cases) {
     const h = harness([{ status, body }, { status: 200, body: okBody("{}") }]);
@@ -296,6 +298,8 @@ test("isAuthResponse: 401/403は常に。400は本文が鍵不正・権限なし
   assert.equal(isAuthResponse(400, "API key not valid"), true);
   assert.equal(isAuthResponse(400, '{"status":"PERMISSION_DENIED"}'), true);
   assert.equal(isAuthResponse(400, "API_KEY_INVALID"), true);
+  assert.equal(isAuthResponse(400, '{"error":{"status":"FAILED_PRECONDITION","message":"User location is not supported"}}'), true); // 課金・地域・設定不備
+  assert.equal(isAuthResponse(404, "FAILED_PRECONDITION"), false);
   assert.equal(isAuthResponse(400, "Invalid JSON payload"), false);
   assert.equal(isAuthResponse(404, "API key not valid"), false);
   assert.equal(isAuthResponse(500, "PERMISSION_DENIED"), false);
