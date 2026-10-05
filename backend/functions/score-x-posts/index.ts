@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 // デプロイ時は backend/build.sh が _shared/*.ts を _<名前>.ts としてこのフォルダへコピーする
-import { callGemini, makeGeminiDb, resolveGeminiBase } from "./_gemini.ts";
+import { callGemini, makeGeminiDb, reportGeminiAuthError, resolveGeminiBase } from "./_gemini.ts";
 import { checkPipelineAuth } from "./_auth.ts";
 import {
   buildSpeechPrompt, checkSpeechNumbers, classifyForScoring, dupKey, normalizeBody,
@@ -73,6 +73,12 @@ Deno.serve(async (req: Request) => {
     const call = (r: Parameters<typeof callGemini>[1]) => callGemini(gem, r);
 
     const counts = { scored: 0, rule: 0, skipped: 0, failed: 0, speech: 0 };
+    let authStopped = false; // Gemini認証エラー(鍵の誤設定・請求停止): その実行を打ち切る(試行回数は数えない)
+    const onAuth = async (status?: number) => {
+      if (authStopped) return;
+      authStopped = true;
+      await reportGeminiAuthError(db, status);
+    };
     const from = targetFrom(cfg);
     const baseQuery = (head: boolean) => {
       let q = supabase.from("x_posts")
@@ -163,11 +169,14 @@ Deno.serve(async (req: Request) => {
           }, p);
 
           if (!out.ok) {
-            const fc = failureClass(out.failKind);
+            const fc = failureClass(out.failKind, out.status);
             if (fc === "guard") { stop = true; return; }
+            if (fc === "auth") { stop = true; await onAuth(out.status); return; }
             counts.failed++;
             if (fc === "transport") {
+              // 通信系(network/5xx/429等)は試行回数に数えない(要約側と同じ)。連続したら中断する
               if (++transportFails >= 4) stop = true;
+              return;
             }
             await supabase.from("x_posts").update(failureUpdate(p.score_attempts ?? 0)).eq("id", p.id);
             return;
@@ -212,7 +221,7 @@ Deno.serve(async (req: Request) => {
     }
 
     // 読み下し(聴く確定済みで未生成のもの)
-    if (cfg.scoreEnabled && cfg.speechEnabled && cfg.speechMaxPerRun > 0 && Date.now() < speechDeadline) {
+    if (cfg.scoreEnabled && cfg.speechEnabled && cfg.speechMaxPerRun > 0 && !authStopped && Date.now() < speechDeadline) {
       const { data: sp } = await supabase.from("x_posts")
         .select("id,post_url,content,summary,image_urls")
         .eq("listen_tier", "listen").is("speech_body", null).is("speech_at", null).eq("is_read", false)
@@ -229,6 +238,7 @@ Deno.serve(async (req: Request) => {
             const numbersOk = !!s && checkSpeechNumbers(s.title + " " + s.body, [p.content ?? "", p.summary ?? ""]);
             const decision = speechDecision(r, !!s, numbersOk);
             if (decision === "guard_stop") { speechStop = true; return; } // 費用ガード: 記録せず次のtickで再開
+            if (decision === "auth_stop") { speechStop = true; await onAuth((r as { status?: number }).status); return; } // 認証エラー: 記録せず打ち切る
             const now = new Date().toISOString();
             if (decision === "record_failure") {
               // 失敗(通信・形式不正・数値不一致・parse失敗)は speech_at だけ記録して再試行しない(費用の無限消費を防ぐ)
@@ -248,7 +258,11 @@ Deno.serve(async (req: Request) => {
       remaining = count ?? null;
     }
 
-    return json({ ok: true, ...counts, remaining, tiers, ...(cfg.scoreEnabled ? {} : { skipped: "score_disabled" }) });
+    return json({
+      ok: true, ...counts, remaining, tiers,
+      ...(cfg.scoreEnabled ? {} : { skipped: "score_disabled" }),
+      ...(authStopped ? { stopped: "gemini_auth" } : {}),
+    });
   } catch (e) {
     return json({ ok: false, error: sanitize((e as Error)?.message) }, 500);
   } finally {

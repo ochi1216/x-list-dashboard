@@ -2,7 +2,7 @@
 // 共通部品は build.sh が `_gemini.ts` 等としてこのフォルダへコピーする。
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { callGemini, makeGeminiDb, resolveGeminiBase, sanitize } from "./_gemini.ts";
+import { callGemini, makeGeminiDb, reportGeminiAuthError, resolveGeminiBase, sanitize } from "./_gemini.ts";
 import { checkPipelineAuth } from "./_auth.ts";
 import { createBudget, jsonResponse, newBatchId, runPool } from "./_util.ts";
 import { checkUnauthRestrictions, isPermanentFailure, RESPONSE_SCHEMA, resolveLimit, summarizeOne } from "./logic.ts";
@@ -78,10 +78,11 @@ Deno.serve(async (req: Request) => {
 
     let processed = 0;
     let guardStop = false;
+    let authStop = false;
     const errors: Record<string, string> = {};
 
     const { results, skipped } = await runPool(posts, CONCURRENCY, async (post) => {
-      if (guardStop) return "skipped" as const;
+      if (guardStop || authStop) return "skipped" as const;
       const countPermanentFailure = async () => {
         if (body.post_url) return; // 手動指定は試行回数に数えない
         await supabase.from("x_posts")
@@ -103,6 +104,10 @@ Deno.serve(async (req: Request) => {
           if (r.ok && r.truncated) return { ok: false as const, error: "summary output truncated (MAX_TOKENS)", kind: "parse" };
           if (r.ok) return { ok: true as const, json: r.json };
           if (r.kind === "guard") guardStop = true; // 費用ガード・状態取得失敗: 全体を止める(試行回数は数えない)
+          if (r.kind === "auth") { // 認証エラー: 鍵の誤設定・請求停止。全体を止める(試行回数は数えない)
+            authStop = true;
+            await reportGeminiAuthError(db, r.status);
+          }
           return { ok: false as const, error: r.error, kind: r.kind, status: r.status };
         },
       });
@@ -153,6 +158,7 @@ Deno.serve(async (req: Request) => {
       remaining,
       ...(unstarted > 0 ? { deferred: unstarted } : {}),
       ...(guardStop ? { stopped: "cost_guard" } : {}),
+      ...(authStop ? { stopped: "gemini_auth" } : {}),
     });
   } catch (err) {
     console.error("summarize-x-post failed:", sanitize(err, [geminiKey]));

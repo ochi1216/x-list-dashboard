@@ -138,12 +138,16 @@ export type SummarizeOutcome =
   | { ok: false; error: string; kind?: string; status?: number };
 
 // summary_attempts に数える「恒久的な失敗」か。
-// 数える: Gemini の 4xx(429以外=要求自体が通らない) / 応答が空 / JSONや形が不正(parse・empty)。
-// 数えない: 通信失敗(network)・429/5xx・提供終了(gone)・モデル状態/費用ガードの取得失敗や拒否(guard)・
+// 数える: Gemini の 4xx(429と認証系を除く=要求自体が通らない) / 応答が空 / JSONや形が不正(parse・empty)。
+// 数えない: 認証系(auth: 鍵の誤設定・請求停止で全投稿が失敗するため。実行も打ち切る)・
+//   通信失敗(network)・429/5xx・提供終了(gone)・モデル状態/費用ガードの取得失敗や拒否(guard)・
 //   DB保存の失敗など、再試行すれば通る可能性があるもの(試行回数を消費して投稿が永久に未処理になるのを防ぐ)。
 export function isPermanentFailure(f: { kind?: string; status?: number }): boolean {
   if (f.kind === "parse" || f.kind === "empty") return true;
-  if (f.kind === "http") return typeof f.status === "number" && f.status >= 400 && f.status < 500 && f.status !== 429;
+  if (f.kind === "http") {
+    const st = f.status;
+    return typeof st === "number" && st >= 400 && st < 500 && st !== 429 && st !== 401 && st !== 403;
+  }
   return false;
 }
 

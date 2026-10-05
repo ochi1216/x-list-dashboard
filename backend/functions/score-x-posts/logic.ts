@@ -107,10 +107,18 @@ export function failureUpdate(prevAttempts: number): { score_attempts: number; s
   return { score_attempts: n, score_state: n >= MAX_ATTEMPTS ? "failed" : null };
 }
 
-// 失敗の扱い: guard=費用ガードで全体停止(試行回数は増やさない) / transport=通信系 / content=応答不正
-export function failureClass(kind: string): "guard" | "transport" | "content" {
+// 失敗の扱い:
+//   guard     = 費用ガードで全体停止(試行回数は増やさない)
+//   auth      = 認証エラー(鍵の誤設定・請求停止)で全体停止(試行回数は増やさない)
+//   transport = 通信系(network / 5xx / 429 / 提供終了など再試行で通りうるもの。試行回数は増やさない。連続すると中断)
+//   content   = 応答不正(parse / empty / 429・認証系以外の4xx)。試行回数を増やし、3回で failed
+export function failureClass(kind: string, status?: number): "guard" | "auth" | "transport" | "content" {
   if (kind === "guard") return "guard";
+  if (kind === "auth") return "auth";
   if (kind === "parse" || kind === "empty") return "content";
+  if (kind === "http" && typeof status === "number" && status >= 400 && status < 500 && status !== 429 && status !== 401 && status !== 403) {
+    return "content";
+  }
   return "transport";
 }
 
@@ -148,14 +156,14 @@ export async function mapPool<T>(
   await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
 }
 
-// 読み下しの結果の扱い: 保存 / 失敗を記録して再試行しない / 費用ガードで中断(何も記録しない)
-export type SpeechDecision = "save" | "record_failure" | "guard_stop";
+// 読み下しの結果の扱い: 保存 / 失敗を記録して再試行しない / 費用ガード・認証エラーで中断(何も記録しない)
+export type SpeechDecision = "save" | "record_failure" | "guard_stop" | "auth_stop";
 export function speechDecision(
   call: { ok: true } | { ok: false; kind: string },
   parsedOk: boolean,
   numbersOk: boolean,
 ): SpeechDecision {
-  if (!call.ok) return call.kind === "guard" ? "guard_stop" : "record_failure";
+  if (!call.ok) return call.kind === "guard" ? "guard_stop" : call.kind === "auth" ? "auth_stop" : "record_failure";
   return parsedOk && numbersOk ? "save" : "record_failure";
 }
 

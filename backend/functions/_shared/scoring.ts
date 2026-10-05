@@ -471,7 +471,7 @@ export type ScoreOutcome =
       runs: RunRow[];
       guardStopped?: boolean; // 再採点が費用ガードで止まった(呼び出し側は以後の着手を止める)
     }
-  | { ok: false; failKind: string; error: string; stop: boolean };
+  | { ok: false; failKind: string; error: string; stop: boolean; status?: number };
 
 export interface ScoreDeps {
   call: (req: LlmReq) => Promise<LlmRes>;
@@ -515,7 +515,10 @@ export async function scoreWithLlm(deps: ScoreDeps, post: PostLike & { post_url?
   const first = await once("score", 1);
   if (!first.ok) {
     const r = first.r;
-    return { ok: false, failKind: r.kind, error: r.error, stop: r.kind === "guard" };
+    return {
+      ok: false, failKind: r.kind, error: r.error, stop: r.kind === "guard" || r.kind === "auth",
+      ...("status" in r && r.status !== undefined ? { status: r.status } : {}),
+    };
   }
   const runs: RunRow[] = [first.row];
   let score = first.caps.score;
@@ -529,6 +532,10 @@ export async function scoreWithLlm(deps: ScoreDeps, post: PostLike & { post_url?
       if (deps.timeUp?.()) { incomplete = true; break; }
       const x = await once("rescore", attempt);
       if (!x.ok) {
+        // 認証エラー: 初回の点も保存せず全体を止める(鍵の誤設定のまま T-1 に確定させない)
+        if (x.r.kind === "auth") {
+          return { ok: false, failKind: "auth", error: x.r.error, stop: true, ...("status" in x.r && x.r.status !== undefined ? { status: x.r.status } : {}) };
+        }
         incomplete = true;
         if (x.r.kind === "guard") guardStopped = true;
         break;

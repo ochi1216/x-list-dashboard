@@ -42,7 +42,7 @@ export type GeminiResult =
   }
   | {
     ok: false;
-    kind: "guard" | "gone" | "http" | "empty" | "parse" | "network";
+    kind: "guard" | "gone" | "http" | "empty" | "parse" | "network" | "auth"; // auth: 認証系エラー(401/403、400のAPIキー不正・PERMISSION_DENIED等)。再試行しない
     error: string;
     status?: number;
     model?: string;
@@ -56,6 +56,26 @@ const RETRY_DELAY_MS = 1500;
 const DEFAULT_TIMEOUT_MS = 40_000;
 const GONE_BODY_RE = /not found|no longer|deprecated|retired|decommission|discontinued/i;
 const MODEL_WORD_RE = /model/i;
+const AUTH_BODY_RE = /API key not valid|API_KEY_INVALID|API key expired|API_KEY_EXPIRED|PERMISSION_DENIED|UNAUTHENTICATED/i;
+
+// 認証系エラー: HTTP 401/403、または400で本文がAPIキー不正・権限なしを示すもの。
+// 鍵の誤設定・請求停止で全投稿が失敗するので、呼び出し側は試行回数に数えず、その実行を打ち切る。
+export function isAuthResponse(status: number, bodyText: string): boolean {
+  if (status === 401 || status === 403) return true;
+  return status === 400 && AUTH_BODY_RE.test(bodyText);
+}
+
+// 認証エラーの通知(360分に1回に束ねる)。失敗しても処理は止めない。
+export async function reportGeminiAuthError(db: GeminiDb, status?: number): Promise<void> {
+  try {
+    await db.rpc("ops_event", {
+      p_level: "error", p_kind: "gemini_auth", p_message: "Gemini APIの認証エラー",
+      p_data: { detail: `http ${status ?? "unknown"}` }, p_dedupe_minutes: 360,
+    });
+  } catch {
+    // 通知の失敗で処理は止めない
+  }
+}
 
 // 「提供終了」判定: 404 は常に。400/410 は本文が提供終了を示し、かつ本文に "model" を含むときだけ
 // (認証・入力の不備など別原因の400/410でモデルを切り替えないため)。
@@ -329,6 +349,11 @@ export async function callGemini(ctx: GeminiCtx, req: GeminiRequest): Promise<Ge
       const msg = sanitize(`http ${out.status}: ${errorMessageFromBody(out.bodyText)}`, secrets);
       row.error = msg;
       await recordUsage(ctx, row);
+
+      // 認証系は再試行・モデル切替の対象外(別のモデルや再実行で直らない)
+      if (isAuthResponse(out.status, out.bodyText)) {
+        return { ok: false, kind: "auth", error: msg, status: out.status, model };
+      }
 
       const gone = isGoneResponse(out.status, out.bodyText);
       if (gone) {
