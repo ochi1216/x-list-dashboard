@@ -17,6 +17,7 @@ export interface GeminiCtx {
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
   timeoutMs?: number; // 1回のHTTP要求の上限(既定40秒。契約への追加・任意)
+  baseUrl?: string; // Geminiの "<origin>/v1beta/models" 相当の上書き(結合試験用。未設定なら本番URL。契約への追加・任意)
 }
 export interface GeminiRequest {
   purpose: string;
@@ -45,11 +46,29 @@ export type GeminiResult =
     level?: string;
   };
 
-const BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models";
+const DEFAULT_ORIGIN = "https://generativelanguage.googleapis.com";
+const BASE_URL = `${DEFAULT_ORIGIN}/v1beta/models`;
 const STATE_TTL_MS = 30_000;
 const RETRY_DELAY_MS = 1500;
 const DEFAULT_TIMEOUT_MS = 40_000;
 const GONE_BODY_RE = /not found|no longer|deprecated|retired|decommission|discontinued/i;
+
+// 環境変数 GEMINI_BASE_URL(例 "http://127.0.0.1:8788")から v1beta/models のURLを作る。
+// 未設定・不正なら本番URL。キーを平文で外部に送らないよう、http は loopback のみ許可する。
+export function resolveGeminiBase(origin?: string | null): string {
+  const raw = (origin ?? "").trim();
+  if (!raw) return BASE_URL;
+  try {
+    const u = new URL(raw);
+    const loopback = u.hostname === "localhost" || u.hostname === "127.0.0.1" || u.hostname === "[::1]";
+    if (u.protocol === "https:" || (u.protocol === "http:" && loopback)) {
+      return `${u.origin}/v1beta/models`;
+    }
+  } catch {
+    // 不正なURL
+  }
+  return BASE_URL;
+}
 
 // ---------- sanitize ----------
 
@@ -175,7 +194,7 @@ async function doFetch(
   const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
   const timer = ac ? setTimeout(() => ac.abort(), ctx.timeoutMs ?? DEFAULT_TIMEOUT_MS) : null;
   try {
-    const res = await fetchFn(`${BASE_URL}/${encodeURIComponent(model)}:generateContent`, {
+    const res = await fetchFn(`${ctx.baseUrl ?? BASE_URL}/${encodeURIComponent(model)}:generateContent`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": ctx.apiKey },
       body,

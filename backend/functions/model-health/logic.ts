@@ -2,6 +2,7 @@
 // (1) モデル一覧での提供確認 (2) 現行・次候補へのprobe (3) rehearse(予行演習)
 
 export const BASE = "https://generativelanguage.googleapis.com/v1beta";
+export const HTTP_TIMEOUT_MS = 40_000; // 1回のHTTP要求の上限(無いと応答しない相手で関数全体の150秒上限まで固まる)
 export const GONE_BODY_RE = /not found|no longer|deprecated|retired|decommission|discontinued/i;
 const MODEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._\-]{0,80}$/;
 
@@ -20,6 +21,7 @@ export interface HealthDeps {
   loadRecentPosts: (n: number) => Promise<PostRow[]>;
   commitConfig: (model: string, genConfig: Record<string, unknown>, atIso: string) => Promise<void>;
   timeBudgetMs?: number; // rehearse の打ち切り(既定100秒)
+  baseUrl?: string; // 例 "https://generativelanguage.googleapis.com/v1beta"(未指定ならBASE。結合試験でモックへ向ける用)
 }
 
 export function sanitize(input: unknown, apiKey = ""): string {
@@ -47,8 +49,8 @@ export async function listModels(deps: HealthDeps): Promise<ListResult> {
   let token = "";
   try {
     for (let page = 0; page < 10; page++) {
-      const url = `${BASE}/models?pageSize=1000${token ? `&pageToken=${encodeURIComponent(token)}` : ""}`;
-      const res = await deps.fetchFn(url, { method: "GET", headers: { "x-goog-api-key": deps.apiKey } });
+      const url = `${deps.baseUrl ?? BASE}/models?pageSize=1000${token ? `&pageToken=${encodeURIComponent(token)}` : ""}`;
+      const res = await deps.fetchFn(url, { method: "GET", headers: { "x-goog-api-key": deps.apiKey }, signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) });
       if (!res.ok) {
         const t = await res.text().catch(() => "");
         return { ok: false, names, error: sanitize(`list http ${res.status}: ${t}`, deps.apiKey) };
@@ -117,10 +119,11 @@ export async function genCall(deps: HealthDeps, o: CallOpts): Promise<CallOut> {
   let out: CallOut;
   let status: number | undefined;
   try {
-    const res = await deps.fetchFn(`${BASE}/models/${o.model}:generateContent`, {
+    const res = await deps.fetchFn(`${deps.baseUrl ?? BASE}/models/${o.model}:generateContent`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": deps.apiKey },
       body: JSON.stringify(body),
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     status = res.status;
     const raw = await res.text();
@@ -377,6 +380,7 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
   const state = st.error ? null : parseState(st.data);
   if (!state) return { ok: false, error: `get_model_state failed: ${st.error ? sanitize(st.error.message) : "bad shape"}` };
   const model = o.model;
+  const stateOk: ModelStateData = state; // worker内(関数宣言)では絞り込みが効かないため確定した値を持つ
   const deadline = deps.now() + (deps.timeBudgetMs ?? 100_000);
 
   const base = defaultGenConfig(state, model);
@@ -413,7 +417,7 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
         prompt: `${isSum ? SUMMARY_PROMPT : SCORE_PROMPT}\n\n本文:\n${t.content.slice(0, 3000)}`,
         schema: isSum ? SUMMARY_SCHEMA : SCORE_SCHEMA,
         maxOutputTokens: isSum ? 800 : 400,
-        extraConfig: useExtra, state,
+        extraConfig: useExtra, state: stateOk,
       });
       if (r.guard) { guard = true; return; }
       stat.calls++;

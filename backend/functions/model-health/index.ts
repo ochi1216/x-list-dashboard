@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { checkPipelineAuth } from "./_auth.ts";
+import { resolveGeminiBase } from "./_gemini.ts";
 import { runHealth, runRehearse, sanitize } from "./logic.ts";
 import type { HealthDeps } from "./logic.ts";
 
@@ -42,6 +43,7 @@ Deno.serve(async (req: Request) => {
     },
     fetchFn: fetch,
     apiKey,
+    baseUrl: resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL")).replace(/\/models$/, ""),
     now: () => Date.now(),
     batchId: `model-health-${crypto.randomUUID()}`,
     saveHealth: async (health, atIso) => {

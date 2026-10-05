@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 // デプロイ時は backend/build.sh が _shared/*.ts を _<名前>.ts としてこのフォルダへコピーする
-import { callGemini } from "./_gemini.ts";
+import { callGemini, resolveGeminiBase } from "./_gemini.ts";
 import { checkPipelineAuth } from "./_auth.ts";
 import {
   buildSpeechPrompt, checkSpeechNumbers, classifyForScoring, dupKey, normalizeBody,
@@ -15,7 +15,7 @@ import {
 const FN = "score-x-posts";
 const CONCURRENCY = 4;
 const SCORE_BUDGET_MS = 100_000;
-const SPEECH_BUDGET_MS = 130_000;
+const SPEECH_BUDGET_MS = 115_000; // 実行上限150秒。実行中の呼び出し(最大約40秒)の完了を待つ余裕を残す
 const BATCH_LIMIT = 200;
 const CFG_KEYS = [
   "score_enabled", "kill_switch", "backfill_enabled", "tier_scope_from", "score_backfill_from",
@@ -26,7 +26,9 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 Deno.serve(async (req: Request) => {
-  const supabase = createClient(
+  // supabase-js のselect型推論は動的な列指定と相性が悪いので any 扱い(実行時の挙動は同じ)
+  // deno-lint-ignore no-explicit-any
+  const supabase: any = createClient(
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
@@ -56,6 +58,7 @@ Deno.serve(async (req: Request) => {
   let locked = false;
   try {
     const lk = await db.rpc("lock_acquire", { p_name: FN, p_seconds: 170, p_owner: batchId });
+    if (lk.error) return json({ ok: false, error: "lock_error" }, 500);
     locked = lk.data === true;
     if (!locked) return json({ ok: true, skipped: "locked" });
 
@@ -64,7 +67,10 @@ Deno.serve(async (req: Request) => {
     if (cfg.killSwitch) return json({ ok: true, skipped: "kill_switch" });
     if (!cfg.scoreEnabled) return json({ ok: true, skipped: "score_disabled" });
 
-    const gem = { db, apiKey, fn: FN, grp: "x" as const, batchId };
+    const gem = {
+      db, apiKey, fn: FN, grp: "x" as const, batchId,
+      baseUrl: resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL")),
+    };
     const call = (r: Parameters<typeof callGemini>[1]) => callGemini(gem, r);
 
     const counts = { scored: 0, rule: 0, skipped: 0, failed: 0, speech: 0 };

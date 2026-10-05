@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { callGemini as sharedGemini, sanitize } from "./_gemini.ts";
+import { callGemini as sharedGemini, makeGeminiDb, resolveGeminiBase, sanitize } from "./_gemini.ts";
+import { createBudget } from "./_util.ts";
 import type { GeminiCtx } from "./_gemini.ts";
 
 const FETCH_HEADERS = {
@@ -71,20 +72,8 @@ async function callGemini(ctx: GeminiCtx, transcriptText: string): Promise<strin
   return res.text;
 }
 
-// llm_usage への記録・RPC呼び出しのアダプタ(共通部品 GeminiDb)
-function makeDb(supabase: ReturnType<typeof createClient>) {
-  return {
-    async rpc(name: string, args?: Record<string, unknown>) {
-      const r = await supabase.rpc(name, args ?? {});
-      return { data: r.data as unknown, error: r.error ? { message: r.error.message } : null };
-    },
-    async insertUsage(row: Record<string, unknown>) {
-      const r = await supabase.from("llm_usage").insert(row).select("id").single();
-      const id = r?.data?.id;
-      return id == null ? null : Number(id);
-    },
-  };
-}
+
+const TIME_BUDGET_MS = 100_000; // Edge Functionの実行上限(約150秒)に収める。残りは次回の呼び出しで処理する
 
 Deno.serve(async (req: Request) => {
   const supabase = createClient(
@@ -143,8 +132,9 @@ Deno.serve(async (req: Request) => {
   }
 
   const ctx: GeminiCtx = {
-    db: makeDb(supabase),
+    db: makeGeminiDb(supabase),
     apiKey: geminiKey,
+    baseUrl: resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL")),
     fn: "summarize-ti-lesson",
     grp: "ti",
     batchId: crypto.randomUUID(),
@@ -152,6 +142,7 @@ Deno.serve(async (req: Request) => {
   let processed = 0;
   let remaining = 0;
   const errors: Record<string, string> = {};
+  const budget = createBudget(TIME_BUDGET_MS);
 
   for (const lesson of lessons) {
     const { data: transcriptRows, error: trError } = await supabase
@@ -177,7 +168,7 @@ Deno.serve(async (req: Request) => {
     }
     if (!row) row = transcriptRows[0];
 
-    if (processed >= limit) {
+    if (processed >= limit || budget.expired()) {
       remaining++;
       continue;
     }
@@ -185,7 +176,7 @@ Deno.serve(async (req: Request) => {
     try {
       let content = row.content;
       if (!content) {
-        const res = await fetch(row.transcript_url, { headers: FETCH_HEADERS });
+        const res = await fetch(row.transcript_url, { headers: FETCH_HEADERS, signal: AbortSignal.timeout(20_000) });
         if (!res.ok) throw new Error(`transcript fetch http ${res.status}`);
         content = await res.text();
         await supabase
@@ -195,14 +186,16 @@ Deno.serve(async (req: Request) => {
       }
 
       const summary = await callGemini(ctx, content);
-      await supabase
+      const { error: upErr } = await supabase
         .from("ti_video_transcripts")
         .update({ summary, summarized_at: new Date().toISOString() })
         .eq("id", row.id);
+      // 保存に失敗したのに成功扱いにすると、次回また同じ回に費用を使ってしまう
+      if (upErr) throw new Error(`update failed: ${upErr.message}`);
       processed++;
     } catch (err) {
-      console.error(`summarize error for ${lesson.link}:`, sanitize(err, geminiKey));
-      errors[lesson.link] = sanitize(err, geminiKey);
+      console.error(`summarize error for ${lesson.link}:`, sanitize(err, [geminiKey]));
+      errors[lesson.link] = sanitize(err, [geminiKey]);
     }
   }
 

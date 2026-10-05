@@ -1534,6 +1534,7 @@ async function load() {
     if (typeof onPostsLoaded === "function") onPostsLoaded(); // beta: 今日タブの再計算
   } catch (err) {
     document.getElementById("status").textContent = "読み込みエラー: " + err.message;
+    if (typeof onPostsLoaded === "function") onPostsLoaded(); // beta: 端末に確保済みの聴き残しは通信できなくても出す
   }
 }
 
@@ -2840,7 +2841,8 @@ renderSettings();
   else Tabs.show(start === "today" || document.querySelector(`[data-tab-body="${start}"]`) ? start : "today");
   const st = AdminQueue.stats();
   TopBand.set("unsent", st.pending > 0 ? { text: `📤 未送信の操作が${st.pending}件あります${st.needLogin ? "(ログインが必要です・設定タブ)" : ""}`, onClick: () => Tabs.show("settings") } : null);
-  if (allPosts.length) onPostsLoaded(); // 投稿の読み込みが先に終わっていた場合
+  refreshToday(); // 投稿の読み込みが先に終わっていた場合・通信できない場合(確保済みの続きを出す)も含め、まず描画
+  if (allPosts.length) loadDigestDaily();
   AdminQueue.flush().catch(() => {});
 })();
 

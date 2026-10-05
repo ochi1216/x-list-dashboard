@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { callGemini as sharedGemini, sanitize } from "./_gemini.ts";
+import { callGemini as sharedGemini, makeGeminiDb, resolveGeminiBase, sanitize } from "./_gemini.ts";
+import { createBudget } from "./_util.ts";
 import type { GeminiCtx } from "./_gemini.ts";
 
 const PROMPT = `あなたはニュース見出しを要約する専門家です。
@@ -32,20 +33,8 @@ async function callGemini(
   return (res.json ?? JSON.parse(res.text)) as { bullets: string[] };
 }
 
-// llm_usage への記録・RPC呼び出しのアダプタ(共通部品 GeminiDb)
-function makeDb(supabase: ReturnType<typeof createClient>) {
-  return {
-    async rpc(name: string, args?: Record<string, unknown>) {
-      const r = await supabase.rpc(name, args ?? {});
-      return { data: r.data as unknown, error: r.error ? { message: r.error.message } : null };
-    },
-    async insertUsage(row: Record<string, unknown>) {
-      const r = await supabase.from("llm_usage").insert(row).select("id").single();
-      const id = r?.data?.id;
-      return id == null ? null : Number(id);
-    },
-  };
-}
+
+const TIME_BUDGET_MS = 100_000; // Edge Functionの実行上限(約150秒)に収める。残りは次回の呼び出しで処理する
 
 Deno.serve(async (req: Request) => {
   const supabase = createClient(
@@ -103,29 +92,38 @@ Deno.serve(async (req: Request) => {
   let processed = 0;
   const errors: Record<string, string> = {};
   const ctx: GeminiCtx = {
-    db: makeDb(supabase),
+    db: makeGeminiDb(supabase),
     apiKey: geminiKey,
+    baseUrl: resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL")),
     fn: "summarize-ti-news",
     grp: "ti",
     batchId: crypto.randomUUID(),
   };
 
+  const budget = createBudget(TIME_BUDGET_MS);
+  let deferred = 0;
   for (const article of articles) {
+    if (budget.expired()) {
+      deferred++;
+      continue;
+    }
     try {
       const { bullets } = await callGemini(ctx, article.title, article.source ?? "");
-      await supabase
+      const { error: upErr } = await supabase
         .from("news_articles")
         .update({ summary_bullets: bullets, summarized_at: new Date().toISOString() })
         .eq("link", article.link);
+      // 保存に失敗したのに成功扱いにすると、次回また同じ記事に費用を使ってしまう
+      if (upErr) throw new Error(`update failed: ${upErr.message}`);
       processed++;
     } catch (err) {
-      console.error(`summarize error for ${article.link}:`, sanitize(err, geminiKey));
-      errors[article.link] = sanitize(err, geminiKey);
+      console.error(`summarize error for ${article.link}:`, sanitize(err, [geminiKey]));
+      errors[article.link] = sanitize(err, [geminiKey]);
     }
   }
 
   return new Response(
-    JSON.stringify({ ok: true, processed, total: articles.length, errors }),
+    JSON.stringify({ ok: true, processed, total: articles.length, errors, ...(deferred > 0 ? { deferred } : {}) }),
     { headers: { "Content-Type": "application/json" } },
   );
 });

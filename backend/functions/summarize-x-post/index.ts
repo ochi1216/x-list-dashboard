@@ -2,7 +2,7 @@
 // 共通部品は build.sh が `_gemini.ts` 等としてこのフォルダへコピーする。
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { callGemini, makeGeminiDb, sanitize } from "./_gemini.ts";
+import { callGemini, makeGeminiDb, resolveGeminiBase, sanitize } from "./_gemini.ts";
 import { checkPipelineAuth } from "./_auth.ts";
 import { createBudget, jsonResponse, newBatchId, runPool } from "./_util.ts";
 import { checkUnauthRestrictions, RESPONSE_SCHEMA, resolveLimit, summarizeOne } from "./logic.ts";
@@ -19,6 +19,7 @@ Deno.serve(async (req: Request) => {
   );
   const geminiKey = Deno.env.get("GEMINI_API_KEY_X") || Deno.env.get("GEMINI_API_KEY");
   const db = makeGeminiDb(supabase);
+  const geminiBase = resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL"));
 
   let body: { post_url?: string; limit?: number };
   try {
@@ -79,7 +80,7 @@ Deno.serve(async (req: Request) => {
       const outcome = await summarizeOne(post, {
         gen: async (parts, opts) => {
           const r = await callGemini(
-            { db, apiKey: geminiKey, fn: FN, grp: "x", batchId },
+            { db, apiKey: geminiKey, fn: FN, grp: "x", batchId, baseUrl: geminiBase },
             {
               purpose: "summary",
               parts,

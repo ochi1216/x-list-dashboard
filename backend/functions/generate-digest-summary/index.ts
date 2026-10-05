@@ -1,6 +1,6 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { callGemini } from "./_gemini.ts";
+import { callGemini, makeGeminiDb, resolveGeminiBase } from "./_gemini.ts";
 import type { GeminiCtx } from "./_gemini.ts";
 import { checkPipelineAuth } from "./_auth.ts";
 import { runLegacy } from "./logic.ts";
@@ -33,17 +33,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // GeminiDb: contract の { rpc, insertUsage }
-  const db = {
-    async rpc(name: string, args?: Record<string, unknown>) {
-      const r = await supabase.rpc(name, args ?? {});
-      return { data: r.data as unknown, error: r.error ? { message: r.error.message } : null };
-    },
-    async insertUsage(row: Record<string, unknown>) {
-      const r = await supabase.from("llm_usage").insert(row).select("id").single();
-      const id = r?.data?.id;
-      return id == null ? null : Number(id);
-    },
-  };
+  const db = makeGeminiDb(supabase);
 
   // 新モード(today/week)はcron専用: mode に関わらず秘密必須
   if (isNew) {
@@ -59,7 +49,10 @@ Deno.serve(async (req: Request) => {
   }
 
   const batchId = crypto.randomUUID();
-  const ctx: GeminiCtx = { db, apiKey: geminiKey, fn: "generate-digest-summary", grp: "x", batchId };
+  const ctx: GeminiCtx = {
+    db, apiKey: geminiKey, fn: "generate-digest-summary", grp: "x", batchId,
+    baseUrl: resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL")),
+  };
 
   if (isNew) {
     try {

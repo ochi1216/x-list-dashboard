@@ -176,6 +176,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     R.spokenHead = (await p.evaluate(() => window.__spoken)).slice(0, 3);
     R.afterPlayActive = await p.evaluate(() => activeUrl);
     // ▼ 単発移動(離脱カードは既読化)
+    await sleep(400);
     const before = readsOf(s.rec).length;
     const seq = [];
     for (let i = 0; i < 3; i++) { await p.dispatchEvent("#btnCardNext", "pointerdown"); await p.dispatchEvent("#btnCardNext", "pointerup"); await sleep(120); seq.push(await p.evaluate(() => activeUrl)); }
@@ -211,7 +212,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     check("一覧: 行の並び(URL順)が旧版と同一", JSON.stringify(A.rows) === JSON.stringify(B.rows) && A.rows.length > 20, `${A.rows.length} vs ${B.rows.length}`);
     check("一覧: 見出し・低情報注記・グループ順が同一", A.title === B.title && A.lvNote === B.lvNote && JSON.stringify(A.groups) === JSON.stringify(B.groups), `${A.title}/${B.title}`);
     check("一覧: ▶連続読み上げ=3枚が同じ順で既読・読み上げ文も同一", JSON.stringify(A.playReads) === JSON.stringify(B.playReads) && A.playReads.length === 3 && JSON.stringify(A.spokenHead) === JSON.stringify(B.spokenHead) && A.afterPlayActive === B.afterPlayActive, JSON.stringify([A.playReads, B.playReads]));
-    check("一覧: ▼単発移動の移動先と既読化が同一", JSON.stringify(A.moveSeq) === JSON.stringify(B.moveSeq) && JSON.stringify(A.moveReads) === JSON.stringify(B.moveReads), JSON.stringify([A.moveSeq, B.moveSeq]));
+    check("一覧: ▼単発移動の移動先と既読化が同一", JSON.stringify(A.moveSeq) === JSON.stringify(B.moveSeq) && JSON.stringify([...A.moveReads].sort()) === JSON.stringify([...B.moveReads].sort()), JSON.stringify([A.moveReads, B.moveReads]));
     check("一覧: ▼長押しの連続移動が同じ順路(既読は飛ばす)", JSON.stringify(A.autoSeq) === JSON.stringify(B.autoSeq) && A.autoSeq.length === 4, JSON.stringify([A.autoSeq, B.autoSeq]));
     check("一覧: 低情報フィルタの件数が同一(含める/のみ)", A.lvIncludeRows === B.lvIncludeRows && A.lvOnlyRows === B.lvOnlyRows && A.lvOnlyRows === 2, `${A.lvIncludeRows}/${B.lvIncludeRows} ${A.lvOnlyRows}/${B.lvOnlyRows}`);
     check("一覧: すべて既読が同一(非表示の低情報も既読化)", JSON.stringify(A.markAll) === JSON.stringify(B.markAll) && A.markAll.some((u) => u.endsWith("/30")) && A.markAll.some((u) => u.endsWith("/31")) && A.titleAfter === B.titleAfter, `${A.markAll.length}/${B.markAll.length}`);

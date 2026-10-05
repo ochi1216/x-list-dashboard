@@ -1,6 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
-import { callGemini as sharedGemini, sanitize } from "./_gemini.ts";
+import { callGemini as sharedGemini, makeGeminiDb, resolveGeminiBase, sanitize } from "./_gemini.ts";
+import { createBudget } from "./_util.ts";
 import type { GeminiCtx } from "./_gemini.ts";
 
 const PROMPT = `あなたはニュース見出しを要約する専門家です。
@@ -32,21 +33,9 @@ async function callGemini(
   return (res.json ?? JSON.parse(res.text)) as { bullets: string[] };
 }
 
-// llm_usage への記録・RPC呼び出しのアダプタ(共通部品 GeminiDb)
-function makeDb(supabase: ReturnType<typeof createClient>) {
-  return {
-    async rpc(name: string, args?: Record<string, unknown>) {
-      const r = await supabase.rpc(name, args ?? {});
-      return { data: r.data as unknown, error: r.error ? { message: r.error.message } : null };
-    },
-    async insertUsage(row: Record<string, unknown>) {
-      const r = await supabase.from("llm_usage").insert(row).select("id").single();
-      const id = r?.data?.id;
-      return id == null ? null : Number(id);
-    },
-  };
-}
 
+
+const TIME_BUDGET_MS = 100_000; // Edge Functionの実行上限(約150秒)に収める。残りは次回の呼び出しで処理する
 
 Deno.serve(async (req: Request) => {
   const geminiKey = Deno.env.get("GEMINI_API_KEY");
@@ -76,8 +65,9 @@ Deno.serve(async (req: Request) => {
   }
 
   const ctx: GeminiCtx = {
-    db: makeDb(createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!)),
+    db: makeGeminiDb(createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!)),
     apiKey: geminiKey,
+    baseUrl: resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL")),
     fn: "summarize-ti-news-headline",
     grp: "ti",
     batchId: crypto.randomUUID(),
@@ -85,18 +75,24 @@ Deno.serve(async (req: Request) => {
   const results: Record<string, string[]> = {};
   const errors: Record<string, string> = {};
 
+  const budget = createBudget(TIME_BUDGET_MS);
+  let deferred = 0;
   for (const item of items) {
+    if (budget.expired()) {
+      deferred++;
+      continue;
+    }
     try {
       const { bullets } = await callGemini(ctx, item.title, item.source);
       results[item.title] = bullets;
     } catch (err) {
-      console.error(`summarize error for "${item.title}":`, sanitize(err, geminiKey));
-      errors[item.title] = sanitize(err, geminiKey);
+      console.error(`summarize error for "${item.title}":`, sanitize(err, [geminiKey]));
+      errors[item.title] = sanitize(err, [geminiKey]);
     }
   }
 
   return new Response(
-    JSON.stringify({ ok: true, results, errors }),
+    JSON.stringify({ ok: true, results, errors, ...(deferred > 0 ? { deferred } : {}) }),
     { headers: { "Content-Type": "application/json" } },
   );
 });
