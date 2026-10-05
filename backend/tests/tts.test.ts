@@ -616,3 +616,52 @@ test("index_beta.html に展開された TTS は ui/tts.js と一致(ui_build.sh
   assert.ok(m, "マーカーがある");
   assert.equal(m![1], TTS_SRC.replace(/\n+$/, "").replace(/<\/script/g, "<\\/script"));
 });
+
+// ---------- 第2回レビューC: 日付/分数・線形時間・辞書キャッシュ ----------
+test("日付: 前置語・後続語の文脈(来週/本日/米国時間/〜に/event)があれば日付、範囲は「から」でつなぐ", () => {
+  assert.ok(TTS.clean("6/1に新機能").startsWith("6月1日に新機能"), TTS.clean("6/1に新機能"));
+  assert.ok(TTS.clean("来週6/1").includes("来週6月1日"), TTS.clean("来週6/1"));
+  assert.ok(TTS.clean("本日4/5").includes("本日4月5日"), TTS.clean("本日4/5"));
+  assert.ok(TTS.clean("米国時間4/5").includes("米国時間4月5日"), TTS.clean("米国時間4/5"));
+  assert.ok(TTS.clean("10/15 event").startsWith("10月15日 event"), TTS.clean("10/15 event"));
+  assert.ok(TTS.clean("4/5〜4/7").startsWith("4月5日から4月7日"), TTS.clean("4/5〜4/7"));
+  assert.ok(TTS.clean("4/5~4/7に開催").startsWith("4月5日から4月7日に開催"), TTS.clean("4/5~4/7に開催"));
+  assert.ok(TTS.clean("12/28〜1/3").startsWith("12月28日から1月3日"), "年またぎ");
+});
+
+test("日付: 単独の分数・「carbon 3/4」のような英単語末尾のonは日付にしない・小数の評価値は満点表記", () => {
+  assert.ok(TTS.clean("4/5").startsWith("5分の4"));
+  assert.ok(TTS.clean("1/3").startsWith("3分の1"));
+  assert.ok(TTS.clean("carbon 3/4").includes("4分の3"), TTS.clean("carbon 3/4"));
+  assert.ok(TTS.clean("1/3に達した").startsWith("3分の1に達した"), TTS.clean("1/3に達した"));
+  assert.ok(!/月/.test(TTS.clean("1/4〜1/2")), "終わりが始まりより前の並びは分数");
+  assert.ok(TTS.clean("4.5/5点").startsWith("5点満点中4.5点"), TTS.clean("4.5/5点"));
+  assert.ok(TTS.clean("評価 4.5/5点です").includes("5点満点中4.5点"), TTS.clean("評価 4.5/5点です"));
+});
+
+test("長い連続英数字でも線形時間(5万文字で100ms以内)", () => {
+  const cases: Record<string, string> = {
+    alnum: "a".repeat(50000), digits: "1".repeat(50000), hyphen: "a-".repeat(25000), dots: "a.".repeat(25000),
+    underscore: "a_".repeat(25000), dash: "-".repeat(50000), mixed: "ab1".repeat(16667), url: "http://" + "a".repeat(50000),
+  };
+  clean_warm();
+  for (const [name, s] of Object.entries(cases)) {
+    const t0 = performance.now();
+    TTS.clean(s);
+    const ms = performance.now() - t0;
+    assert.ok(ms < 100, `${name}: ${ms.toFixed(0)}ms`);
+  }
+  function clean_warm() { TTS.clean("warm up 1/2 and a.com"); }
+});
+
+test("辞書: 正規表現は辞書が変わるまで作り直さない(dictSig が安定し、変更で変わる)・変更は反映される", () => {
+  const s1 = TTS.dictSig();
+  TTS.clean("OpenAIとNVIDIA");
+  assert.equal(TTS.dictSig(), s1, "cleanしても版は変わらない");
+  TTS.extendDict({ Plugh: "プラグ" });
+  assert.notEqual(TTS.dictSig(), s1);
+  assert.ok(TTS.clean("Plugh です").includes("プラグ"));
+  (globalThis as any).localStorage = { getItem: (k: string) => (k === "xdash_tts_dict" ? JSON.stringify({ Xyzzy: "ザイジー" }) : null) };
+  assert.ok(TTS.clean("Xyzzy です").includes("ザイジー"), "ユーザー辞書の変更も反映される");
+  delete (globalThis as any).localStorage;
+});

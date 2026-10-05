@@ -39,31 +39,43 @@
   };
 
   var STORAGE_KEY = "xdash_tts_dict";
-  function userDict() {
+  function userDictRaw() {
     try {
       if (typeof localStorage === "undefined" || !localStorage) return null;
-      var s = localStorage.getItem(STORAGE_KEY);
-      if (!s) return null;
-      var o = JSON.parse(s);
-      return o && typeof o === "object" ? o : null;
+      return localStorage.getItem(STORAGE_KEY) || null;
     } catch (e) { return null; }
   }
+  function parseUserDict(s) {
+    if (!s) return null;
+    try { var o = JSON.parse(s); return o && typeof o === "object" ? o : null; } catch (e) { return null; }
+  }
+  var dictVer = 0;
   function extendDict(obj) {
     if (!obj || typeof obj !== "object") return DICT;
     for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k) && typeof obj[k] === "string") DICT[k] = obj[k];
+    dictVer++;
     return DICT;
   }
+  // 組み込み辞書の簡易指紋(DICTを直接書き換えた場合の検知用。エントリ数と文字数の和)
+  function dictFingerprint() {
+    var n = 0, len = 0, k;
+    for (k in DICT) if (Object.prototype.hasOwnProperty.call(DICT, k)) { n++; len += k.length + (typeof DICT[k] === "string" ? DICT[k].length : 0); }
+    return dictVer + ":" + n + ":" + len;
+  }
+  // 辞書の版(ユーザー辞書・組み込み辞書のどちらが変わっても変わる安価な文字列)。呼び出し側のキャッシュ無効化用。
+  function dictSig() { return dictFingerprint() + "|" + (userDictRaw() || ""); }
 
   function esc(s) { return s.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&"); }
 
+  // 辞書の正規表現は一度だけ構築してキャッシュする(辞書が変わった時だけ作り直す)
   var dictCache = { sig: null, c: null };
   function compiledDict() {
-    var d = {}, k, u = userDict();
+    var sig = dictSig();
+    if (dictCache.sig === sig && dictCache.c) return dictCache.c;
+    var d = {}, k, u = parseUserDict(userDictRaw());
     for (k in DICT) if (Object.prototype.hasOwnProperty.call(DICT, k)) d[k] = DICT[k];
     if (u) for (k in u) if (Object.prototype.hasOwnProperty.call(u, k) && typeof u[k] === "string") d[k] = u[k];
     var keys = Object.keys(d).filter(function (x) { return x && typeof d[x] === "string"; });
-    var sig = keys.map(function (x) { return x + "\u0001" + d[x]; }).join("\u0002");
-    if (dictCache.sig === sig) return dictCache.c;
     keys.sort(function (a, b) { return b.length - a.length; });
     var sens = [], ins = [], plain = [], map = {}, mapL = {};
     keys.forEach(function (x) {
@@ -88,7 +100,7 @@
   }
 
   // ---------- 数値の読み下し ----------
-  var NUM = "\\d+(?:\\.\\d+)?";
+  var NUM = "\\d{1,20}(?:\\.\\d{1,20})?"; // 桁数に上限を付け、長い連続数字でも線形時間にする
   var MAGS = { k: 3, thousand: 3, m: 6, million: 6, b: 9, billion: 9, t: 12, trillion: 12 };
   var MAG_FALLBACK = { 3: "千", 6: "百万", 9: "十億", 12: "兆" };
 
@@ -148,8 +160,8 @@
 
   function validMD(m, d) { return m >= 1 && m <= 12 && d >= 1 && d <= 31; }
   // 月日の文脈語(日付・期日・曜日・発表/発売/開催などの直前直後)
-  var RE_DATE_CTX_BEFORE = /(?:日付|期日|期限|締切|締め切り|発売日|公開日|開催日|発表日|予定日|リリース日|配信日|開始日|終了日|更新日|投稿日|〆|date|dated|deadline|due|on|by|until|since|from|before|after)[\s:：は]{0,3}$/i;
-  var RE_DATE_CTX_AFTER = /^(?:\s?[(（][月火水木金土日祝](?:曜日?)?[)）]|\s?[月火水木金土日]曜|(?:の|に|には|は)?(?:発表|発売|公開|開催|開始|リリース|実施|施行|配信|終了|締切|締め切り|期限|登場|開幕|予定|スタート|解禁|出荷|納期|時点|現在|以降|以前|まで|から|より|付け?(?:の|で)?)|\s?(?:\(|（)\d)/;
+  var RE_DATE_CTX_BEFORE = /(?:日付|期日|期限|締切|締め切り|発売日|公開日|開催日|発表日|予定日|リリース日|配信日|開始日|終了日|更新日|投稿日|〆|来週|再来週|今週|先週|来月|今月|先月|本日|今日|明日|明後日|昨日|当日|翌日|同日|米国時間|日本時間|現地時間|東部時間|太平洋時間|(?:^|[^A-Za-z])(?:date|dated|deadline|due|on|by|until|till|since|from|before|after|today|tomorrow|yesterday|starting|starts|ends|as of|effective|week of))[\s:：は]{0,3}$/i;
+  var RE_DATE_CTX_AFTER = /^(?:\s?[(（][月火水木金土日祝](?:曜日?)?[)）]|\s?[月火水木金土日]曜|(?:の|に|には|は)?(?:発表|発売|公開|開催|開始|リリース|実施|施行|配信|終了|締切|締め切り|期限|登場|開幕|予定|スタート|解禁|出荷|納期|時点|現在|以降|以前|まで|から|より|付け?(?:の|で)?)|(?:に|には|にも)(?!達|到|近|なる|なった|相当|匹敵|対し|比べ|とどま)|\s?(?:\(|（)\d|\s?(?:event|launch|release|keynote|conference|summit|meeting|webinar|deadline|sale|update|expo|show|day|ship|ships|starts?|ends?|opens?)(?![A-Za-z]))/i;
 
   function readNumbers(t) {
     // 桁区切りカンマ(1,200 → 1200)
@@ -162,6 +174,16 @@
       return +mo >= 1 && +mo <= 12 ? pre + y + "年" + (+mo) + "月" : m;
     });
     t = t.replace(/(^|[^\d])24\/7(?![\d\/])/g, "$124時間365日");
+    // 「4.5/5点」は点数: 「5点満点中4.5点」(小数の分子で、分母以下の時だけ。整数の「3/5点」は従来どおり分数)
+    t = t.replace(/(^|[^\d\/.\-:])(\d{1,3}\.\d{1,2})\/(\d{1,3})\s?点/g, function (m, pre, a, b) {
+      return +a <= +b && +b > 0 ? pre + b + "点満点中" + a + "点" : m;
+    });
+    // 「4/5〜4/7」は日付の範囲(終わりが始まりより後、または年またぎ)。「1/4〜1/2」のような分数の並びは対象外
+    t = t.replace(/(^|[^\d\/.\-:])(\d{1,2})\/(\d{1,2})\s?[〜~\-–−―‐]\s?(\d{1,2})\/(\d{1,2})(?![\d\/])/g, function (m, pre, m1, d1, m2, d2) {
+      if (!validMD(+m1, +d1) || !validMD(+m2, +d2)) return m;
+      var ordered = +m2 > +m1 || (+m2 === +m1 && +d2 > +d1) || (+m1 >= 11 && +m2 <= 2);
+      return ordered ? pre + (+m1) + "月" + (+d1) + "日から" + (+m2) + "月" + (+d2) + "日" : m;
+    });
     // 年の無い n/n は「4/5(分数・評価値)」と区別できないので、月日の文脈語が前後にある時だけ日付にする。
     // 単独の n/n は日付にせず、後段で「n分のn」と読む。
     t = t.replace(/(^|[^\d\/.\-:])(\d{1,2})\/(\d{1,2})(?![\d\/])/g, function (m, pre, mo, d, off, str) {
@@ -200,8 +222,8 @@
   // ---------- clean ----------
   var CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
   var RE_EMOJI = /[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️︎⃣\u{1F1E6}-\u{1F1FF}\u{E0020}-\u{E007F}]/gu;
-  var RE_URL = /(?:https?:\/\/|www\.)[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]*[A-Za-z0-9\-_~\/=%#]|\b(?:[A-Za-z0-9\-]+\.)+(?:com|net|org|io|ai|dev|app|jp|co|me|ly|gl|us|uk|tv|xyz|info|biz)(?:\/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]*[A-Za-z0-9\-_~\/=%#])?(?![A-Za-z0-9])/g;
-  var RE_EMAIL = /[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g;
+  var RE_URL = /(?:https?:\/\/|www\.)[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]*[A-Za-z0-9\-_~\/=%#]|\b(?:[A-Za-z0-9\-]{1,63}\.){1,10}(?:com|net|org|io|ai|dev|app|jp|co|me|ly|gl|us|uk|tv|xyz|info|biz)(?:\/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]*[A-Za-z0-9\-_~\/=%#])?(?![A-Za-z0-9])/g;
+  var RE_EMAIL = /[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,255}\.[A-Za-z]{2,}/g; // 長さに上限を付け、長い連続英数字でも線形時間にする
   var JPC = "぀-ヿ㐀-䶿一-鿿";
 
   function handleReading(name, names) {
@@ -269,8 +291,8 @@
 
     // 記号の置換
     t = t.replace(/&/g, "アンド").replace(/=/g, "イコール").replace(/\+/g, "プラス");
-    t = t.replace(/(\d+):(\d+)/g, "$1対$2");
-    t = t.replace(/(\d+)\/(\d+)/g, "$2分の$1");
+    t = t.replace(/(\d{1,20}):(\d{1,20})/g, "$1対$2");
+    t = t.replace(/(\d{1,20})\/(\d{1,20})/g, "$2分の$1");
     t = t.replace(/[\/|]/g, "、").replace(/[:;,]/g, "、").replace(/[【「『]/g, " ").replace(/[】」』]/g, "、");
     t = t.replace(/%/g, "パーセント").replace(/°/g, "度");
     t = t.replace(/\.{2,}|…+/g, "、").replace(/!+/g, "!").replace(/\?+/g, "?").replace(/[!]/g, "！").replace(/[?]/g, "？");
@@ -539,5 +561,5 @@
     };
   }
 
-  return { clean: clean, split: split, utterances: utterances, pickVoice: pickVoice, createPlayer: createPlayer, DICT: DICT, extendDict: extendDict };
+  return { clean: clean, split: split, utterances: utterances, pickVoice: pickVoice, createPlayer: createPlayer, DICT: DICT, extendDict: extendDict, dictSig: dictSig };
 });
