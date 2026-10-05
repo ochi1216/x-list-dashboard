@@ -700,21 +700,72 @@ Deno.test({ name: "model-health", ...T }, async (t) => {
     });
   });
 
-  await t.step("rehearse: 不正なモデル名/不明なactionは400、commit で model_config を enabled にする", async () => {
+  const seedPosts = (n: number) => {
+    for (let i = 0; i < n; i++) supa.addPost({ content: `SCORE=${(i % 5) + 1} 新しい推論モデルが公開された話題です(${i})。`, summary: "要約" });
+  };
+
+  await t.step("rehearse: 不正なモデル名/不明なactionは400、n<20も400、commit で model_config を enabled にする(本番の採点プロンプト)", async () => {
     fresh();
-    supa.addPost({ content: "新しい推論モデルが公開された話題です" });
-    supa.addPost({ content: "画像生成の新機能が追加された話題です" });
+    seedPosts(22);
     await withFn(env, "model-health", {}, async (f) => {
       eq((await f.call({ action: "rehearse", model: "../etc/passwd" }, CRON)).status, 400, "不正なモデル名");
       eq((await f.call({ action: "nope" }, CRON)).status, 400, "不明なaction");
-      const dry = await f.call({ action: "rehearse", model: "gemini-3.1-flash", n: 2 }, CRON);
-      eq([dry.json.ok, dry.json.committed, dry.json.calls, dry.json.json_success_rate], [true, false, 4, 1], "commitなし");
+      const small = await f.call({ action: "rehearse", model: "gemini-3.1-flash", n: 2, commit: true }, CRON);
+      eq([small.status, small.json.ok], [400, false], "n<20は拒否");
+      eq(gem.calls.length, 0, "拒否ではGeminiを呼ばない");
+      const dry = await f.call({ action: "rehearse", model: "gemini-3.1-flash", n: 20 }, CRON);
+      eq([dry.json.ok, dry.json.committed, dry.json.json_success_rate, dry.json.n_posts], [true, false, 1, 20], "commitなし");
       eq(supa.rows("model_config").find((m) => m.model === "gemini-3.1-flash")!.enabled, false, "commitなしは変更しない");
-      const r = await f.call({ action: "rehearse", model: "gemini-3.1-flash", n: 2, commit: true }, CRON);
+      // 採点は本番のプロンプト・スキーマ(evidence入り)・関心プロファイル入り
+      const scoreCalls = gem.calls.filter((c) => c.body.generationConfig.responseSchema?.properties?.evidence);
+      assert(scoreCalls.length >= 20, "本番スキーマの採点呼び出し");
+      assert(scoreCalls.every((c) => c.body.contents[0].parts[0].text.includes("W1: AI全般の新発表と実践") && c.body.generationConfig.maxOutputTokens === 300), "プロファイル入り・出力上限300");
+      const r = await f.call({ action: "rehearse", model: "gemini-3.1-flash", n: 20, commit: true }, CRON);
       eq([r.json.ok, r.json.committed], [true, true], "commit");
       const mc = supa.rows("model_config").find((m) => m.model === "gemini-3.1-flash")!;
       eq(mc.enabled, true, "enabled");
       assert(mc.verified_at, "verified_at");
+      assertKeyOnlyInHeader();
+    });
+  });
+
+  await t.step("rehearse: 投稿が20件に満たなければ commit しない / kill_switch 中は実行しない", async () => {
+    fresh();
+    seedPosts(5);
+    await withFn(env, "model-health", {}, async (f) => {
+      const r = await f.call({ action: "rehearse", model: "gemini-3.1-flash", n: 20, commit: true }, CRON);
+      eq([r.json.ok, r.json.committed], [true, false], "5件では commit しない");
+      assert(r.json.commit_blocked.some((x: string) => x.includes("fewer than 20")), "理由");
+      eq(supa.rows("model_config").find((m) => m.model === "gemini-3.1-flash")!.enabled, false, "enabled のまま変えない");
+      fresh();
+      seedPosts(22);
+      supa.setCfg("kill_switch", true);
+      const k = await f.call({ action: "rehearse", model: "gemini-3.1-flash", n: 20, commit: true }, CRON);
+      eq(k.json.ok, false, "kill_switch 中は拒否");
+      eq(gem.calls.length, 0, "Gemini未呼び出し");
+    });
+  });
+
+  await t.step("日次: kill_switch 中は probe しない(skipped=kill_switch)が一覧は取得し health を保存する", async () => {
+    fresh();
+    supa.setCfg("kill_switch", true);
+    await withFn(env, "model-health", {}, async (f) => {
+      const r = await f.call({}, CRON);
+      eq([r.status, r.json.ok], [200, true], "ok");
+      const h = supa.rows("model_state")[0].last_health;
+      eq(h.probes.map((p: any) => [p.role, p.skipped]), [["current", "kill_switch"], ["next", "kill_switch"]], "probe は kill_switch で skip(guard ではない)");
+      eq(gem.calls.length, 0, "generateContent 未呼び出し");
+      eq(gem.listCalls, 1, "一覧は取得");
+      assert(!supa.rpcCalls.some((c) => c.name === "cost_guard"), "cost_guard にも問い合わせない");
+    });
+  });
+
+  await t.step("X専用キー GEMINI_API_KEY_X があればそれを使う", async () => {
+    fresh();
+    await withFn(env, "model-health", { GEMINI_API_KEY: "AIzaWRONGWRONGWRONGWRONGWRONG0000", GEMINI_API_KEY_X: gem.apiKey }, async (f) => {
+      const r = await f.call({}, CRON);
+      eq(r.status, 200, "ok");
+      eq(supa.rows("model_state")[0].last_health.probes.map((p: any) => p.ok), [true, true], "probe 成功");
       assertKeyOnlyInHeader();
     });
   });
@@ -963,6 +1014,43 @@ Deno.test({ name: "summarize-ti-news / headline / lesson", ...T }, async (t) => 
       const r2 = await f.call({ items: [{ title: "拒否される", source: "A" }] });
       assert(String(r2.json.errors["拒否される"]).includes("cost guard denied"), "ガード拒否");
       assertKeyOnlyInHeader();
+    });
+  });
+
+  await t.step("summarize-ti-news-headline: 上限(30)超過は無通知で落とさず dropped を返す", async () => {
+    fresh();
+    await withFn(env, "summarize-ti-news-headline", {}, async (f) => {
+      const items = Array.from({ length: 33 }, (_, i) => ({ title: `見出し${i}`, source: "A" }));
+      const r = await f.call({ items });
+      eq([r.status, r.json.ok, r.json.dropped], [200, true, 3], "dropped");
+      eq(Object.keys(r.json.results).length, 30, "処理は30件");
+      assert(!("見出し30" in r.json.results), "上限超過分は処理しない");
+      const r2 = await f.call({ items: items.slice(0, 2) });
+      eq(r2.json.dropped, 0, "上限内は 0");
+    });
+  });
+
+  await t.step("出力が途切れた(MAX_TOKENS)要約は保存しない: lesson は summary 未保存・news は summary_bullets 未保存", async () => {
+    fresh();
+    supa.insert("ti_video_updates", { link: "https://ti/l9", sequence: 1, series_link: "T", platform: "ti_precision_labs_lesson" });
+    const row = supa.insert("ti_video_transcripts", { video_link: "https://ti/l9", language: "ja-jp", content: null, transcript_url: `${gem.url}/files/a.vtt`, summary: null });
+    const art = supa.insert("news_articles", { link: "https://n/trunc", title: "見出し", source: "src", summary_bullets: null, fetched_at: new Date().toISOString() });
+    gem.finishReason = "MAX_TOKENS";
+    await withFn(env, "summarize-ti-lesson", {}, async (f) => {
+      const r = await f.call({ series_link: "T" });
+      eq([r.json.ok, r.json.processed], [true, 0], "processed=0");
+      assert(String(r.json.errors["https://ti/l9"]).includes("truncated"), "errors に理由");
+      eq(row.summary, null, "途中で切れた要約は保存しない");
+    });
+    await withFn(env, "summarize-ti-news", {}, async (f) => {
+      const r = await f.call({});
+      eq(r.json.processed, 0, "processed=0");
+      eq(art.summary_bullets, null, "保存しない");
+    });
+    gem.finishReason = "STOP";
+    await withFn(env, "summarize-ti-lesson", {}, async (f) => {
+      eq((await f.call({ series_link: "T" })).json.processed, 1, "通常終了なら保存");
+      assert(row.summary, "summary");
     });
   });
 
