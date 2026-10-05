@@ -53,6 +53,10 @@ export class MockGemini {
     const u = new URL(req.url);
     if (u.search.toLowerCase().includes("key=")) this.urlKeyLeaks++;
     const sent = req.headers.get("x-goog-api-key");
+    if (u.pathname.startsWith("/img/")) {
+      const png = Uint8Array.from(atob("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="), (c) => c.charCodeAt(0));
+      return new Response(png, { headers: { "Content-Type": "image/png" } });
+    }
     if (u.pathname.startsWith("/files/")) {
       return new Response("WEBVTT\n\nこれは字幕のテキストです。", { headers: { "Content-Type": "text/plain" } });
     }

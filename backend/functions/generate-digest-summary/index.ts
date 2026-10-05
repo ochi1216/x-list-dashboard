@@ -52,9 +52,15 @@ Deno.serve(async (req: Request) => {
   const ctx: GeminiCtx = {
     db, apiKey: geminiKey, fn: "generate-digest-summary", grp: "x", batchId,
     baseUrl: resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL")),
+    timeoutMs: 30_000,
   };
 
   if (isNew) {
+    // 同じモードの二重実行を防ぐ(同時に走ると同じ生成に二重で費用がかかる)。owner=batchId
+    const lockName = `generate-digest-summary:${periodType}`;
+    const lk = await db.rpc("lock_acquire", { p_name: lockName, p_seconds: 170, p_owner: batchId });
+    if (lk.error) return json({ ok: false, error: "lock_error" }, 500);
+    if (lk.data !== true) return json({ ok: true, skipped: true, reason: "busy" });
     try {
       const deps: DigestDeps = {
         now: () => Date.now(),
@@ -112,6 +118,10 @@ Deno.serve(async (req: Request) => {
     } catch (err) {
       console.error(`generate-digest-summary error (${periodType}):`, safeErr(err));
       return json({ ok: false, error: safeErr(err) }, 500);
+    } finally {
+      try {
+        await db.rpc("lock_release", { p_name: lockName, p_owner: batchId });
+      } catch (_e) { /* 期限(170秒)で自然に解放される */ }
     }
   }
 

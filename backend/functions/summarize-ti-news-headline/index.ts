@@ -68,6 +68,7 @@ Deno.serve(async (req: Request) => {
     db: makeGeminiDb(createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!)),
     apiKey: geminiKey,
     baseUrl: resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL")),
+    timeoutMs: 20_000,
     fn: "summarize-ti-news-headline",
     grp: "ti",
     batchId: crypto.randomUUID(),

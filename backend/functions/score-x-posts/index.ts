@@ -15,7 +15,8 @@ import {
 const FN = "score-x-posts";
 const CONCURRENCY = 4;
 const SCORE_BUDGET_MS = 100_000;
-const SPEECH_BUDGET_MS = 115_000; // 実行上限150秒。実行中の呼び出し(最大約40秒)の完了を待つ余裕を残す
+const SPEECH_BUDGET_MS = 105_000; // 実行上限150秒。着手後の呼び出し(1回25秒×最大2回+待ち1.5秒)の完了を待つ余裕を残す
+const GEMINI_TIMEOUT_MS = 25_000;
 const BATCH_LIMIT = 200;
 const CFG_KEYS = [
   "score_enabled", "kill_switch", "backfill_enabled", "tier_scope_from", "score_backfill_from",
@@ -62,13 +63,15 @@ Deno.serve(async (req: Request) => {
     locked = lk.data === true;
     if (!locked) return json({ ok: true, skipped: "locked" });
 
-    const { data: cfgRows } = await supabase.from("tuning_config").select("key,value").in("key", CFG_KEYS);
+    const { data: cfgRows, error: cfgError } = await supabase.from("tuning_config").select("key,value").in("key", CFG_KEYS);
+    // 設定が読めないまま既定値(kill_switch=false 等)で動くと、止めたはずの処理が走る。何もせず終える。
+    if (cfgError) return json({ ok: false, error: "config_unavailable" }, 500);
     const cfg: Cfg = parseCfg((cfgRows ?? []) as { key: string; value: unknown }[]);
     if (cfg.killSwitch) return json({ ok: true, skipped: "kill_switch" });
     if (!cfg.scoreEnabled) return json({ ok: true, skipped: "score_disabled" });
 
     const gem = {
-      db, apiKey, fn: FN, grp: "x" as const, batchId,
+      db, apiKey, fn: FN, grp: "x" as const, batchId, timeoutMs: GEMINI_TIMEOUT_MS,
       baseUrl: resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL")),
     };
     const call = (r: Parameters<typeof callGemini>[1]) => callGemini(gem, r);

@@ -349,10 +349,13 @@ export const THINKING_CANDIDATES: (Record<string, unknown> | null)[] = [
 
 export interface ExploreRow { config: Record<string, unknown> | null; ok: boolean; http_status?: number; thoughts: number; thought_part: boolean; error?: string }
 
-export async function exploreThinking(deps: HealthDeps, state: ModelStateData, model: string, base: Record<string, unknown>) {
+export async function exploreThinking(
+  deps: HealthDeps, state: ModelStateData, model: string, base: Record<string, unknown>, deadline = Infinity,
+) {
   const rows: ExploreRow[] = [];
   let guard = false;
   for (const cfg of THINKING_CANDIDATES) {
+    if (deps.now() >= deadline) break; // 時間予算切れ(未探索分は結果に出ない→commitはブロックされる)
     const extra = { ...base };
     delete extra.thinkingConfig;
     if (cfg) extra.thinkingConfig = cfg;
@@ -384,7 +387,7 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
   const deadline = deps.now() + (deps.timeBudgetMs ?? 100_000);
 
   const base = defaultGenConfig(state, model);
-  const ex = await exploreThinking(deps, state, model, base);
+  const ex = await exploreThinking(deps, state, model, base, deadline);
   const chosenCfg = ex.chosen ? ex.chosen.config : null;
   const useExtra = { ...base };
   delete useExtra.thinkingConfig;

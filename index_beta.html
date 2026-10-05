@@ -282,6 +282,90 @@
   .fl-actions { padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); }
   .fl-actions .btn { width: 100%; min-height: 64px; font-size: 20px; }
   #btnBackToday { background: none; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 14px; cursor: pointer; padding: 4px 10px; flex-shrink: 0; min-height: 32px; }
+
+  /* ================= beta 第2段: 週次・費用・設定(追加部分) ================= */
+  .fld { width: 100%; min-height: 48px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: #15152b; color: var(--text); font-size: 16px; font-family: inherit; }
+  textarea.fld { min-height: 150px; line-height: 1.6; resize: vertical; }
+  .fld + .fld, .fld + .btn, .btn + .btn { margin-top: 8px; }
+  .fmsg { font-size: 13px; line-height: 1.5; margin-top: 6px; color: var(--muted); }
+  .fmsg:empty { display: none; }
+  .fmsg.err { color: #ff9db0; }
+  .fmsg.ok { color: #8fe0b0; }
+  .badge { display: inline-block; padding: 1px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; border: 1px solid var(--line); color: var(--muted); white-space: nowrap; vertical-align: 1px; }
+  .badge.bad { background: rgba(233,69,96,0.22); border-color: var(--accent); color: #ffd0d9; }
+  .badge.warn { background: rgba(224,179,74,0.16); border-color: #a58a3c; color: #f0d58c; }
+  .badge.ok { background: rgba(80,200,140,0.14); border-color: #3f8f6b; color: #a8ecc8; }
+  .need-login { padding: 14px 4px; text-align: center; color: var(--muted); line-height: 1.7; }
+  .need-login .btn { margin-top: 8px; }
+  .card h2 .sub { font-weight: 400; }
+  .card .head2 { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .card .head2 h2 { flex: 1; margin: 0; }
+  .prewrap { white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.75; color: #dcdcec; }
+  .copyrow { display: flex; gap: 8px; align-items: center; }
+  .copyrow code { flex: 1; min-width: 0; padding: 10px 12px; border-radius: 10px; background: #15152b; border: 1px solid var(--line); font-size: 14px; word-break: break-all; }
+  .evrow { font-size: 12px; color: var(--muted); padding: 5px 0; border-top: 1px solid var(--line); line-height: 1.5; word-break: break-word; }
+  .big3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .big3 .btn.big { min-height: 76px; font-size: 17px; flex-direction: column; gap: 2px; padding: 8px 4px; }
+  details.cfgroup { border-top: 1px solid var(--line); }
+  details.cfgroup > summary { min-height: 48px; display: flex; align-items: center; cursor: pointer; font-size: 15px; font-weight: 700; list-style: none; }
+  details.cfgroup > summary::-webkit-details-marker { display: none; }
+  details.cfgroup > summary::after { content: "›"; margin-left: auto; color: var(--muted); transition: transform .15s; }
+  details.cfgroup[open] > summary::after { transform: rotate(90deg); }
+  .cfrow { padding: 10px 0 12px; border-top: 1px dashed var(--line); }
+  .cfrow .cf-label { font-size: 14px; line-height: 1.4; margin-bottom: 6px; }
+  .cfrow .cf-label small { color: var(--muted); font-size: 11px; display: block; }
+  .cfrow .seg-btns { margin-top: 0; }
+  .cfrow .cf-ctl + .cf-pass, .cfrow .cf-pass + .btn, .cfrow .cf-ctl + .btn { margin-top: 8px; }
+  .qop { display: flex; gap: 8px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+  .qop .q-body { flex: 1; min-width: 0; font-size: 14px; line-height: 1.5; }
+  .qop .q-body small { display: block; color: var(--muted); font-size: 12px; word-break: break-all; }
+  .wk-theme { padding: 8px 0; border-top: 1px solid var(--line); }
+  .wk-theme:first-of-type { border-top: 0; }
+  .wk-theme b { font-size: 15px; }
+  .wk-theme p { margin: 4px 0 0; font-size: 14px; line-height: 1.65; color: #d8d8e8; }
+  .wk-days { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .wk-days span { font-size: 11px; padding: 1px 7px; border-radius: 8px; background: var(--panel2); color: var(--muted); }
+  .au-row { padding: 10px 0; border-top: 1px solid var(--line); }
+  .au-row:first-of-type { border-top: 0; }
+  .au-name { font-size: 15px; font-weight: 700; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .au-name small { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .au-stats { margin-top: 4px; font-size: 13px; line-height: 1.7; color: #cfd0e4; font-variant-numeric: tabular-nums; }
+  .au-stats small { color: var(--muted); }
+  .lb-meta { font-size: 14px; color: var(--muted); margin-bottom: 8px; font-variant-numeric: tabular-nums; }
+  .lb-meta b { color: var(--text); font-size: 18px; }
+  .lb-card { background: #15152b; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+  .lb-title { font-size: 19px; font-weight: 700; line-height: 1.5; }
+  .lb-body { margin-top: 8px; font-size: 15px; line-height: 1.75; color: #d4d4e6; white-space: pre-wrap; word-break: break-word; }
+  .lb-card details { margin-top: 8px; font-size: 13px; color: var(--muted); }
+  .lb-card details summary { min-height: 36px; display: flex; align-items: center; cursor: pointer; }
+  .lb-card details div { white-space: pre-wrap; word-break: break-word; line-height: 1.6; }
+  .lb-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .lb-imgs img { max-width: 100%; max-height: 28vh; object-fit: contain; border-radius: 10px; border: 1px solid var(--line); }
+  .lb-q { margin: 14px 0 6px; font-size: 14px; color: var(--muted); }
+  .lb-scores { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .lb-scores button { min-height: 76px; border-radius: 14px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); font-size: 28px; font-weight: 800; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer; touch-action: manipulation; }
+  .lb-scores button small { font-size: 11px; font-weight: 500; color: var(--muted); }
+  .lb-scores button:active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .lb-cls { margin-top: 10px; }
+  .lb-cls button { flex: 1 1 22%; }
+  .co-big { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .co-num .l { font-size: 12px; color: var(--muted); }
+  .co-num .v { font-size: 26px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.3; }
+  .co-num .v.sm { font-size: 20px; }
+  .co-num .n { font-size: 12px; color: var(--muted); }
+  .co-chart { width: 100%; height: auto; display: block; }
+  .co-chart text { fill: #b8bad2; font-size: 9px; font-family: inherit; }
+  .co-chart .cur { fill: #e94560; }
+  .co-chart .past { fill: #6d6fa6; }
+  .co-chart .fc { fill: none; stroke: #e94560; stroke-dasharray: 3 2; }
+  .co-line { display: flex; gap: 8px; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--line); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .co-line:first-of-type { border-top: 0; }
+  .co-line .k { min-width: 0; word-break: break-all; }
+  .co-line .v { white-space: nowrap; color: #dcdcec; }
+  .co-bar { height: 8px; border-radius: 4px; background: var(--panel2); overflow: hidden; margin: 4px 0 2px; }
+  .co-bar i { display: block; height: 100%; background: var(--accent); }
+  .co-err { font-size: 12px; line-height: 1.5; padding: 6px 0; border-top: 1px solid var(--line); color: #d8c8cc; word-break: break-word; }
+  .co-err b { color: #ffb3c0; }
 </style>
 </head>
 <body data-view="tabs">
@@ -2848,6 +2932,833 @@ renderSettings();
 
 // テスト・第2段向けの公開
 window.Beta = { computeToday, rankCmp, dayKey, dayStartMs, cardItems, listenSpeed, setView, refreshToday, startListenNormal, startFlow, LP, FL, DG, K };
+})();
+</script>
+<script>
+// =====================================================================
+// beta 第2段: 週次タブ・費用タブ・設定タブ(ログイン/通知先/プロファイル/設定値/未送信キュー)
+// 第1段の部品(AdminQueue / TopBand / Tabs / xdash:tab)の上に載せる。第1段の既存機能には触れない。
+// =====================================================================
+(function () {
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => escapeHtml(String(s == null ? "" : s));
+const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
+const comma = (n) => String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+const yen = (n) => `¥${comma(Math.round(Number(n) || 0))}`;
+const usd = (n) => `$${(Number(n) || 0).toFixed(2)}`;
+const ratePct = (v) => { let n = Number(v); if (v === null || v === undefined || !Number.isFinite(n)) return "–"; if (n <= 1) n *= 100; return `${Math.round(n)}%`; };
+const p2 = (n) => String(n).padStart(2, "0");
+const fmtAt = (v) => { const t = typeof v === "number" ? v : Date.parse(v); if (!Number.isFinite(t)) return ""; const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()} ${p2(d.getHours())}:${p2(d.getMinutes())}`; };
+const md = (s) => { const m = String(s || "").match(/(\d{4})-(\d{2})-(\d{2})/); return m ? `${Number(m[2])}/${Number(m[3])}` : String(s || ""); };
+const LABEL_SKIP_KEY = "xdash_label_skip_until";
+const LABEL_N = 20;
+const LABEL_SEC_PER_ITEM = 30;
+const SKIP_MS = 3 * 24 * 3600e3;
+const VOICE_KEY = "xdash_voice_quality";
+
+const ERR_JA = {
+  network: "通信できませんでした。電波を確認してもう一度お試しください。",
+  bad_passphrase: "パスフレーズが違います。",
+  invalid_passphrase: "パスフレーズが違います。",
+  passphrase_required: "この操作にはパスフレーズの再入力が必要です。",
+  passphrase_too_short: "パスフレーズは12文字以上にしてください。",
+  setup_code_invalid: "セットアップコードが違います。",
+  setup_code_expired: "セットアップコードの期限が切れています。",
+  setup_done: "セットアップは完了済みです。ログインしてください。",
+  setup_unavailable: "セットアップコードがまだ発行されていません。",
+  setup_required: "初回セットアップが必要です。",
+  invalid_token: "ログインの有効期限が切れました。もう一度ログインしてください。",
+  key_not_allowed: "この設定は変更できません。",
+  invalid_value: "値が範囲外か、形式が違います。",
+  cannot_undo: "元に戻せませんでした。",
+  not_configured: "通知先がまだ設定されていません。",
+  not_found: "対象が見つかりませんでした。",
+  bad_request: "入力内容を確認してください。",
+  unknown_action: "この操作はサーバーが未対応です。",
+  server_error: "サーバーで問題が起きました。しばらくしてからお試しください。",
+  server_not_ready: "サーバーの準備ができていません。しばらくしてからお試しください。",
+  rate_limited: "失敗が続いたため、しばらく待つ必要があります。",
+};
+function errMsg(r) {
+  const j = (r && r.json) || {};
+  const code = String(j.error || "");
+  if (code === "rate_limited" || (r && r.status === 429)) {
+    const s = Math.max(1, Math.ceil(Number(j.retry_after) || 60));
+    return `パスフレーズの失敗が続いたため、あと${s >= 120 ? `${Math.ceil(s / 60)}分` : `${s}秒`}お待ちください。`;
+  }
+  if (ERR_JA[code]) return ERR_JA[code];
+  return `うまくいきませんでした(${code || (r && r.status) || "不明"})。`;
+}
+const setMsg = (el, text, kind) => { if (!el) return; el.textContent = text || ""; el.className = `fmsg${kind ? ` ${kind}` : ""}`; };
+
+// ---------------------------------------------------------------- 認証状態
+const Auth = { state: "unknown", setupDone: null, forceSetup: false };
+function setAuth(st) {
+  if (Auth.state === st) return;
+  Auth.state = st;
+  document.dispatchEvent(new CustomEvent("xdash:auth", { detail: { state: st } }));
+}
+const loggedIn = () => Auth.state !== "anon" && !!AdminQueue.getToken();
+
+// admin-api 呼び出し(失効した場合は端末のトークンを捨ててログイン前の表示へ)
+async function api(action, body) {
+  let r;
+  try { r = await AdminQueue.call(action, body || {}); } catch (e) { return { ok: false, status: 0, json: { error: "network" } }; }
+  const code = r.json && r.json.error;
+  if (r.status === 401 && code === "invalid_token") { AdminQueue.setToken(""); setAuth("anon"); }
+  else if (r.status === 401 && code === "setup_required") { Auth.setupDone = false; setAuth("anon"); }
+  return r;
+}
+let meBusy = null;
+function refreshAuth() {
+  if (meBusy) return meBusy;
+  meBusy = (async () => {
+    const r = await api("me", {});
+    if (r.ok) {
+      Auth.setupDone = r.json.setup_done !== false;
+      if (r.json.authed && AdminQueue.getToken()) setAuth("authed");
+      else { if (AdminQueue.getToken()) AdminQueue.setToken(""); setAuth("anon"); }
+    }
+    return r;
+  })().finally(() => { meBusy = null; });
+  return meBusy;
+}
+AdminQueue.onChange((st) => { if (st.needLogin && Auth.state === "authed") setAuth("anon"); });
+
+// ---------------------------------------------------------------- 読み上げ(TTSの仕組みで1か所だけ再生)
+const Reader = (() => {
+  let player = null, key = null;
+  const available = () => !!(window.TTS && typeof TTS.createPlayer === "function" && window.speechSynthesis && window.SpeechSynthesisUtterance);
+  const getVoice = () => { try { const vs = speechSynthesis.getVoices ? speechSynthesis.getVoices() : []; return TTS.pickVoice ? TTS.pickVoice(vs, lsGet(VOICE_KEY, "high") === "standard" ? "standard" : "high") : null; } catch (e) { return null; } };
+  const rate = () => { try { return window.Beta && Beta.listenSpeed ? Beta.listenSpeed() : 1.2; } catch (e) { return 1.2; } };
+  function sync() {
+    document.querySelectorAll("[data-reader]").forEach((b) => {
+      const on = b.dataset.reader === key;
+      b.textContent = on ? "⏹ 止める" : (b.dataset.label || "🔊 読み上げ");
+    });
+  }
+  function stop() {
+    const pl = player; player = null; key = null;
+    if (pl) { try { pl.stop(); } catch (e) { /* ignore */ } }
+    sync();
+  }
+  function play(k, post) {
+    stop();
+    if (!available()) return false;
+    let items = [];
+    try { items = TTS.utterances(post) || []; } catch (e) { items = []; }
+    if (!items.length) return false;
+    key = k;
+    const done = () => { if (key === k) { player = null; key = null; sync(); } };
+    player = TTS.createPlayer({
+      synth: window.speechSynthesis, Utterance: window.SpeechSynthesisUtterance, getVoice, getRate: rate,
+      pauseMs: Number.isFinite(window.XDASH_PAUSE_MS) ? window.XDASH_PAUSE_MS : 400,
+      onDone: done, onStall: done,
+    });
+    player.play(items, 0);
+    sync();
+    return true;
+  }
+  return { play, stop, sync, isPlaying: (k) => key === k, available };
+})();
+document.addEventListener("xdash:view", () => Reader.stop());
+
+// ---------------------------------------------------------------- 共通部品
+const needLoginHtml = (what) => `<div class="need-login">🔒 ${esc(what || "ここ")}はログインが必要です。<br><button type="button" class="btn small" data-goto="settings">⚙️ 設定タブでログイン</button></div>`;
+const toggleBtn = (id, label, key) => `<button type="button" class="btn small" id="${id}" data-reader="${key}" data-label="${label}">${label}</button>`;
+document.addEventListener("click", (e) => {
+  const g = e.target.closest("[data-goto]");
+  if (g) { Tabs.show(g.dataset.goto); window.scrollTo(0, 0); }
+});
+
+function buildSkeleton() {
+  $("settings-extra").innerHTML = `<div id="sx-auth"></div><div id="sx-notify"></div><div id="sx-profile"></div><div id="sx-config"></div><div id="sx-queue"></div>`;
+  $("tab-weekly").innerHTML = `
+    <div class="today-head"><h1>📅 週次</h1><button type="button" class="btn small" id="btnWeeklyReload" title="再読込">↻</button></div>
+    <div class="card" id="wk-report"></div>
+    <div class="card" id="wk-authors"></div>
+    <div class="card" id="wk-flow"></div>
+    <div class="card" id="wk-label"></div>`;
+  $("tab-cost").innerHTML = `
+    <div class="today-head"><h1>💴 費用</h1><button type="button" class="btn small" id="btnCostReload" title="再読込">↻</button></div>
+    <div id="cost-body"></div>`;
+}
+buildSkeleton();
+
+// ================================================================ 設定: ログイン
+let waitUntil = 0, waitTimer = null;
+function renderAuth() {
+  const el = $("sx-auth");
+  if (loggedIn()) {
+    el.innerHTML = `<div class="card"><h2>🔐 ログイン</h2><div>✅ ログイン中です</div><div class="sub" style="margin-top:4px">この端末のトークンで管理操作を送れます(使うたびに延長されます)。</div><div style="margin-top:10px"><button type="button" class="btn small" id="sxLogout">ログアウト</button></div></div>`;
+    return;
+  }
+  const setup = Auth.setupDone === false || Auth.forceSetup;
+  el.innerHTML = `<div class="card"><h2>🔐 ログイン${setup ? " (初回セットアップ)" : ""}</h2>
+    ${setup ? `
+      <div class="sub" style="margin-bottom:8px">セットアップコード(7日間有効・1回限り)と、新しいパスフレーズ(12文字以上)を入れてください。</div>
+      <input class="fld" id="sxSetupCode" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="セットアップコード">
+      <input class="fld" id="sxSetupPass" type="password" autocomplete="new-password" placeholder="新しいパスフレーズ(12文字以上)">
+      <button type="button" class="btn primary" id="sxSetupBtn" style="width:100%">🔑 初期設定してログイン</button>`
+    : `
+      <input class="fld" id="sxLoginPass" type="password" autocomplete="current-password" placeholder="パスフレーズ">
+      <button type="button" class="btn primary" id="sxLoginBtn" style="width:100%">🔓 ログイン</button>`}
+    <div class="fmsg" id="sxAuthMsg" role="status"></div>
+    <div style="margin-top:8px"><button type="button" class="btn small" id="sxSwitch">${setup ? "パスフレーズでログインする" : "初めて使う(セットアップコードがある)"}</button></div>
+  </div>`;
+  tickWait();
+}
+function tickWait() {
+  const btn = $("sxLoginBtn") || $("sxSetupBtn");
+  const msg = $("sxAuthMsg");
+  clearTimeout(waitTimer);
+  const left = Math.ceil((waitUntil - Date.now()) / 1000);
+  if (left > 0) {
+    if (btn) btn.disabled = true;
+    setMsg(msg, `パスフレーズの失敗が続いたため、あと${left}秒お待ちください。`, "err");
+    waitTimer = setTimeout(tickWait, 1000);
+  } else if (btn) { btn.disabled = false; if (waitUntil) { waitUntil = 0; setMsg(msg, "", ""); } }
+}
+async function doLogin() {
+  const pass = $("sxLoginPass").value;
+  const msg = $("sxAuthMsg");
+  if (!pass) { setMsg(msg, "パスフレーズを入力してください。", "err"); return; }
+  $("sxLoginBtn").disabled = true;
+  setMsg(msg, "確認中…", "");
+  const r = await api("login", { passphrase: pass });
+  if (r.ok && r.json.token) {
+    AdminQueue.setToken(r.json.token);
+    setAuth("authed");
+    renderAuth();
+    return;
+  }
+  if (r.status === 429 || (r.json && r.json.retry_after)) waitUntil = Date.now() + Math.max(1, Number(r.json.retry_after) || 60) * 1000;
+  $("sxLoginBtn").disabled = false;
+  setMsg(msg, errMsg(r), "err");
+  tickWait();
+}
+async function doSetup() {
+  const code = $("sxSetupCode").value.trim();
+  const pass = $("sxSetupPass").value;
+  const msg = $("sxAuthMsg");
+  if (!code) { setMsg(msg, "セットアップコードを入力してください。", "err"); return; }
+  if ([...pass].length < 12) { setMsg(msg, "パスフレーズは12文字以上にしてください。", "err"); return; }
+  $("sxSetupBtn").disabled = true;
+  setMsg(msg, "設定中…", "");
+  const r = await api("setup", { setup_code: code, passphrase: pass });
+  if (r.ok && r.json.token) {
+    Auth.setupDone = true; Auth.forceSetup = false;
+    AdminQueue.setToken(r.json.token);
+    setAuth("authed");
+    renderAuth();
+    return;
+  }
+  if (r.json && r.json.error === "setup_done") { Auth.setupDone = true; Auth.forceSetup = false; renderAuth(); setMsg($("sxAuthMsg"), errMsg(r), "err"); return; }
+  if (r.status === 429 || (r.json && r.json.retry_after)) waitUntil = Date.now() + Math.max(1, Number(r.json.retry_after) || 60) * 1000;
+  $("sxSetupBtn").disabled = false;
+  setMsg(msg, errMsg(r), "err");
+  tickWait();
+}
+$("sx-auth").addEventListener("click", (e) => {
+  const id = e.target.closest("button") && e.target.closest("button").id;
+  if (id === "sxLoginBtn") doLogin();
+  else if (id === "sxSetupBtn") doSetup();
+  else if (id === "sxSwitch") { Auth.forceSetup = Auth.setupDone === false ? false : !Auth.forceSetup; if (Auth.setupDone === false) Auth.setupDone = true; renderAuth(); }
+  else if (id === "sxLogout") { AdminQueue.setToken(""); setAuth("anon"); renderAuth(); renderAll(); }
+});
+$("sx-auth").addEventListener("keydown", (e) => {
+  if (e.key !== "Enter") return;
+  if (e.target.id === "sxLoginPass") doLogin();
+  else if (e.target.id === "sxSetupPass") doSetup();
+});
+
+// ================================================================ 設定: 通知先・ヘルスチェック
+const Nf = { topic: "", configured: null, events: [], hcKind: "daily", loaded: false };
+async function loadNotify() {
+  if (!loggedIn()) { renderNotify(); return; }
+  const r = await api("notify_info", {});
+  if (r.ok) {
+    Nf.topic = r.json.topic || ""; Nf.configured = !!r.json.configured; Nf.events = Array.isArray(r.json.events) ? r.json.events : []; Nf.loaded = true;
+    TopBand.set("notify", Nf.configured ? null : { text: "🔔 通知先が未設定です(設定タブで確認)", onClick: () => Tabs.show("settings") });
+  }
+  renderNotify(r.ok ? "" : errMsg(r));
+}
+function renderNotify(err) {
+  const el = $("sx-notify");
+  if (!loggedIn()) { el.innerHTML = `<div class="card"><h2>🔔 通知先</h2>${needLoginHtml("通知先の表示")}</div>`; return; }
+  const ev = Nf.events.slice(0, 5).map((e) => `<div class="evrow">${esc(fmtAt(e.at))} ・ ${esc(e.level || "")} ・ ${esc(e.kind || "")} ・ ${esc(e.message || "")}${e.suppressed ? "(まとめ済み)" : ""}</div>`).join("");
+  el.innerHTML = `<div class="card"><h2>🔔 通知先</h2>
+    ${!Nf.loaded ? `<div class="muted">読み込み中…</div>` : Nf.configured && Nf.topic ? `
+      <div class="sub" style="margin-bottom:6px">スマホの ntfy アプリで、次のトピックを購読してください。</div>
+      <div class="copyrow"><code id="sxTopic">${esc(Nf.topic)}</code><button type="button" class="btn small" id="sxCopy">📋 コピー</button></div>
+      <div style="margin-top:8px"><button type="button" class="btn" id="sxNotifyTest" style="width:100%">🔔 テスト通知を送る</button></div>`
+    : `<div>⚠️ 通知先はまだ設定されていません。</div><div class="sub" style="margin-top:4px">サーバー側の準備が終わるとここに表示されます。</div>`}
+    <div class="fmsg${err ? " err" : ""}" id="sxNotifyMsg" role="status">${esc(err || "")}</div>
+    ${ev ? `<details style="margin-top:8px"><summary class="sub" style="min-height:36px;display:flex;align-items:center">最近の通知(${Nf.events.length}件)</summary>${ev}</details>` : ""}
+    <h2 style="margin-top:16px">🩺 ヘルスチェックURL</h2>
+    <div class="sub" style="margin-bottom:6px">healthchecks.io の ping URL(https:// のみ)。空欄で保存すると削除します。</div>
+    <div class="seg-btns" id="sxHcKind"><button type="button" data-kind="daily" class="${Nf.hcKind === "daily" ? "on" : ""}">毎日</button><button type="button" data-kind="weekly" class="${Nf.hcKind === "weekly" ? "on" : ""}">毎週</button></div>
+    <input class="fld" id="sxHcUrl" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://hc-ping.com/…" style="margin-top:8px">
+    <input class="fld" id="sxHcPass" type="password" autocomplete="current-password" placeholder="パスフレーズ(再入力)">
+    <button type="button" class="btn" id="sxHcSave" style="width:100%">💾 保存</button>
+    <div class="fmsg" id="sxHcMsg" role="status"></div>
+  </div>`;
+}
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch (e) { /* フォールバック */ }
+  try {
+    const ta = document.createElement("textarea"); ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand("copy"); document.body.removeChild(ta); return !!ok;
+  } catch (e) { return false; }
+}
+$("sx-notify").addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const msg = $("sxNotifyMsg");
+  if (b.id === "sxCopy") { const ok = await copyText(Nf.topic); setMsg(msg, ok ? "✅ コピーしました" : "コピーできませんでした。長押しで選択してください。", ok ? "ok" : "err"); }
+  else if (b.id === "sxNotifyTest") {
+    b.disabled = true; setMsg(msg, "送信中…", "");
+    const r = await api("notify_test", {});
+    b.disabled = false;
+    setMsg(msg, r.ok ? "✅ テスト通知を送りました。ntfyアプリを確認してください。" : errMsg(r), r.ok ? "ok" : "err");
+  } else if (b.parentElement && b.parentElement.id === "sxHcKind") {
+    Nf.hcKind = b.dataset.kind;
+    b.parentElement.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+  } else if (b.id === "sxHcSave") {
+    const url = $("sxHcUrl").value.trim(), pass = $("sxHcPass").value, hm = $("sxHcMsg");
+    if (url && !/^https:\/\//i.test(url)) { setMsg(hm, "URLは https:// から始めてください。", "err"); return; }
+    if (!pass) { setMsg(hm, "パスフレーズ(再入力)を入れてください。", "err"); $("sxHcPass").focus(); return; }
+    b.disabled = true; setMsg(hm, "保存中…", "");
+    const r = await api("set_healthcheck", { kind: Nf.hcKind, url, passphrase: pass });
+    b.disabled = false;
+    if (r.ok) { $("sxHcPass").value = ""; $("sxHcUrl").value = ""; }
+    setMsg(hm, r.ok ? (url ? "✅ 保存しました(URLは画面に残しません)" : "✅ 削除しました") : errMsg(r), r.ok ? "ok" : "err");
+  }
+});
+
+// ================================================================ 設定: 関心プロファイル
+const Pf = { loaded: false, version: 0, status: "draft", text: "", editing: false };
+async function loadProfile() {
+  if (!loggedIn()) { renderProfile(); return; }
+  const r = await api("profile_get", {});
+  if (r.ok) { Pf.loaded = true; Pf.version = r.json.version || 0; Pf.status = r.json.status || "draft"; Pf.text = r.json.text || ""; }
+  renderProfile(r.ok ? "" : errMsg(r));
+}
+function renderProfile(err, ok) {
+  const el = $("sx-profile");
+  if (!loggedIn()) { el.innerHTML = `<div class="card"><h2>🧭 関心プロファイル</h2>${needLoginHtml("関心プロファイル")}</div>`; return; }
+  const approved = Pf.status === "approved";
+  let body;
+  if (!Pf.loaded) body = `<div class="muted">読み込み中…</div>`;
+  else if (Pf.editing) {
+    body = `<textarea class="fld" id="sxPfText" maxlength="600" placeholder="どんな話題を聴きたいか(600字以内)">${esc(Pf.text)}</textarea>
+      <div class="sub" id="sxPfCount" style="text-align:right">${[...Pf.text].length}/600字</div>
+      <input class="fld" id="sxPfPass" type="password" autocomplete="current-password" placeholder="パスフレーズ(再入力)">
+      <button type="button" class="btn primary" id="sxPfSaveApprove" style="width:100%">✅ 保存して承認</button>
+      <button type="button" class="btn" id="sxPfSaveDraft" style="width:100%">📝 下書きとして保存</button>
+      <button type="button" class="btn small" id="sxPfCancel">キャンセル</button>`;
+  } else {
+    const has = !!Pf.text.trim();
+    body = `<div style="margin-bottom:6px"><span class="badge ${approved ? "ok" : "warn"}" id="sxPfStatus">${approved ? "✅ 承認済み" : "📝 下書き"}</span> <span class="sub">第${Pf.version}版</span></div>
+      ${has ? `<div class="prewrap" id="sxPfView">${esc(Pf.text)}</div>
+        <div style="margin-top:10px">${toggleBtn("sxPfRead", "🔊 読み上げ", "profile")}</div>` : `<div class="muted">まだ設定されていません。「編集」から書いてください。</div>`}
+      ${has && !approved ? `
+        <input class="fld" id="sxPfPass" type="password" autocomplete="current-password" placeholder="承認にはパスフレーズ(再入力)" style="margin-top:10px">
+        <div class="big3"><button type="button" class="btn big primary" id="sxPfApprove">✅<span>承認</span></button><button type="button" class="btn big" id="sxPfLater">⏳<span>あとで</span></button><button type="button" class="btn big" id="sxPfEdit">✏️<span>編集</span></button></div>`
+      : `<div style="margin-top:10px"><button type="button" class="btn" id="sxPfEdit" style="width:100%">✏️ 編集する</button></div>`}`;
+  }
+  el.innerHTML = `<div class="card"><h2>🧭 関心プロファイル</h2>${body}<div class="fmsg${err ? " err" : ok ? " ok" : ""}" id="sxPfMsg" role="status">${esc(err || ok || "")}</div></div>`;
+  Reader.sync();
+}
+async function saveProfile(text, approve) {
+  const passEl = $("sxPfPass");
+  const pass = passEl ? passEl.value : "";
+  const msg = $("sxPfMsg");
+  if (!text.trim()) { setMsg(msg, "本文を入力してください。", "err"); return; }
+  if ([...text.trim()].length > 600) { setMsg(msg, "600字以内にしてください。", "err"); return; }
+  if (!pass) { setMsg(msg, "パスフレーズ(再入力)を入れてください。", "err"); if (passEl) passEl.focus(); return; }
+  setMsg(msg, "保存中…", "");
+  const r = await api("profile_set", { text: text.trim(), approve: !!approve, passphrase: pass });
+  if (r.ok) { Pf.version = r.json.version || Pf.version + 1; Pf.status = r.json.status || (approve ? "approved" : "draft"); Pf.text = text.trim(); Pf.editing = false; renderProfile("", approve ? "✅ 承認しました" : "✅ 下書きを保存しました"); }
+  else setMsg(msg, errMsg(r), "err");
+}
+$("sx-profile").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.id === "sxPfRead") { if (Reader.isPlaying("profile")) Reader.stop(); else Reader.play("profile", { gist: "関心プロファイル", summary: Pf.text }); }
+  else if (b.id === "sxPfApprove") saveProfile(Pf.text, true);
+  else if (b.id === "sxPfLater") { Reader.stop(); setMsg($("sxPfMsg"), "あとで確認します(下書きのままです)。", ""); }
+  else if (b.id === "sxPfEdit") { Pf.editing = true; Reader.stop(); renderProfile(); }
+  else if (b.id === "sxPfCancel") { Pf.editing = false; renderProfile(); }
+  else if (b.id === "sxPfSaveApprove") saveProfile($("sxPfText").value, true);
+  else if (b.id === "sxPfSaveDraft") saveProfile($("sxPfText").value, false);
+});
+$("sx-profile").addEventListener("input", (e) => { if (e.target.id === "sxPfText") $("sxPfCount").textContent = `${[...e.target.value].length}/600字`; });
+
+// ================================================================ 設定: 設定値(config_get / config_set)
+const NUM = "num", INT = "int", BOOL = "bool", ENUM = "enum", TXT = "txt";
+const CF_GROUPS = [
+  { g: "🎧 聴く量・閾値", open: true, items: [
+    ["listen_quota_min", "1日に聴く量(分)", INT, 1, 60], ["listen_threshold", "聴く閾値(この点以上を聴く)", INT, 3, 5],
+    ["listen_speed", "見積に使う速度(倍)", NUM, 0.5, 3], ["listen_chars_per_sec", "読み上げ文字数/秒(1倍)", NUM, 3, 15], ["listen_morning_share", "朝の枠の割合", NUM, 0.1, 0.9]] },
+  { g: "🧩 機能スイッチ", items: [
+    ["score_enabled", "採点", BOOL], ["tier_assign_enabled", "聴く/流す/保留の区分", BOOL], ["cap_opinion", "意見・感想は最大3点", BOOL], ["backfill_enabled", "過去分の一括採点", BOOL], ["speech_enabled", "読み下しの生成", BOOL]] },
+  { g: "💴 費用の上限", items: [
+    ["monthly_cap_jpy", "月の上限(円)", INT, 100, 50000], ["daily_cap_jpy", "日の上限(円)", INT, 50, 5000], ["hourly_call_cap", "1時間の呼び出し上限", INT, 50, 5000], ["ti_daily_call_cap", "TI系の1日の呼び出し上限", INT, 10, 5000],
+    ["cap_warn_ratio", "警告の割合", NUM, 0.3, 1], ["cap_stop_extra_ratio", "追加処理を止める割合", NUM, 0.5, 3], ["cap_stop_all_ratio", "全停止の割合", NUM, 1, 5], ["usd_jpy", "為替(円/ドル)", NUM, 50, 500]] },
+  { g: "🛡️ 安全", items: [
+    ["kill_switch", "全停止スイッチ", BOOL], ["auto_expire_enabled", "自動既読化", BOOL], ["auto_expire_max_per_run", "自動既読化の1回の上限", INT, 1, 2000], ["pipeline_auth_mode", "呼び出し認証モード", ENUM, ["log", "enforce"]]] },
+  { g: "⏱️ バッチ・期限", items: [
+    ["batch_gap_minutes", "バッチの区切り(分)", INT, 10, 600], ["batch_quiet_minutes", "取得完了とみなす静止(分)", NUM, 5, 120], ["batch_confirm_hours", "最長の確定待ち(時間)", NUM, 1, 24],
+    ["expire_listen_hours", "聴く→流すまで(時間)", NUM, 1, 168], ["expire_flow_hours", "流す→保留まで(時間)", NUM, 1, 336], ["speech_max_per_run", "読み下し1回の上限", NUM, 1, 100],
+    ["digest_min_interval_hours", "要点の最短間隔(時間)", NUM, 1, 48], ["digest_min_new_scored", "要点に必要な新規採点数", NUM, 1, 100]] },
+  { g: "🗓️ 日時", items: [["tier_scope_from", "区分の対象にする開始日時", TXT], ["score_backfill_from", "一括採点の開始日時", TXT]] },
+];
+const CF_PROTECTED_FALLBACK = ["monthly_cap_jpy", "daily_cap_jpy", "hourly_call_cap", "ti_daily_call_cap", "cap_warn_ratio", "cap_stop_extra_ratio", "cap_stop_all_ratio", "pipeline_auth_mode", "kill_switch", "auto_expire_enabled"];
+const Cf = { loaded: false, values: {}, protectedKeys: new Set(), undo: {}, err: "" };
+
+async function loadConfig() {
+  if (!loggedIn()) { renderConfig(); return; }
+  const r = await api("config_get", {});
+  if (r.ok) {
+    Cf.loaded = true; Cf.values = r.json.config || {}; Cf.err = "";
+    Cf.protectedKeys = new Set(Array.isArray(r.json.protected) ? r.json.protected : CF_PROTECTED_FALLBACK);
+  } else Cf.err = errMsg(r);
+  renderConfig();
+}
+function cfValueText(def, v) { return def[2] === BOOL ? (v ? "ON" : "OFF") : String(v == null ? "" : v); }
+function cfRowHtml(def) {
+  const [key, label, type, a, b] = def;
+  const v = Cf.values[key];
+  const prot = Cf.protectedKeys.has(key);
+  let ctl;
+  if (type === BOOL) ctl = `<div class="seg-btns cf-ctl" data-bool><button type="button" data-val="true" class="${v === true ? "on" : ""}">ON</button><button type="button" data-val="false" class="${v === false ? "on" : ""}">OFF</button></div>`;
+  else if (type === ENUM) ctl = `<div class="seg-btns cf-ctl" data-enum>${a.map((o) => `<button type="button" data-val="${esc(o)}" class="${v === o ? "on" : ""}">${esc(o)}</button>`).join("")}</div>`;
+  else if (type === TXT) ctl = `<input class="fld cf-ctl cf-in" type="text" value="${esc(v == null ? "" : v)}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="2026-01-01T00:00:00+09:00">`;
+  else ctl = `<input class="fld cf-ctl cf-in" type="number" inputmode="decimal" step="${type === INT ? 1 : "any"}" min="${a}" max="${b}" value="${esc(v == null ? "" : v)}"><div class="sub">範囲 ${a}〜${b}</div>`;
+  return `<div class="cfrow" data-key="${esc(key)}" data-type="${type}"${type === BOOL || type === ENUM ? ` data-pending="${esc(v)}"` : ""}>
+    <div class="cf-label">${esc(label)}${prot ? " 🔒" : ""}<small>${esc(key)} ・ 現在 ${esc(cfValueText(def, v))}</small></div>
+    ${ctl}
+    ${prot ? `<input class="fld cf-pass" type="password" autocomplete="current-password" placeholder="パスフレーズ(再入力が必要)">` : ""}
+    <button type="button" class="btn small cf-save">💾 保存</button> <span class="cf-undo"></span>
+    <div class="fmsg cf-msg" role="status"></div></div>`;
+}
+function renderConfig() {
+  const el = $("sx-config");
+  if (!loggedIn()) { el.innerHTML = `<div class="card"><h2>🎛️ 設定値</h2>${needLoginHtml("設定値")}</div>`; return; }
+  if (!Cf.loaded) { el.innerHTML = `<div class="card"><h2>🎛️ 設定値</h2><div class="${Cf.err ? "fmsg err" : "muted"}">${esc(Cf.err || "読み込み中…")}</div></div>`; return; }
+  const groups = CF_GROUPS.map((g) => {
+    const rows = g.items.filter((d) => Object.prototype.hasOwnProperty.call(Cf.values, d[0])).map(cfRowHtml).join("");
+    return rows ? `<details class="cfgroup"${g.open ? " open" : ""}><summary>${esc(g.g)}</summary>${rows}</details>` : "";
+  }).join("");
+  el.innerHTML = `<div class="card"><h2>🎛️ 設定値</h2><div class="sub" style="margin-bottom:6px">🔒 のついた項目は、変更にパスフレーズの再入力が必要です。</div>${groups || `<div class="muted">変更できる設定がありません。</div>`}</div>`;
+}
+function cfDefOf(key) { for (const g of CF_GROUPS) for (const d of g.items) if (d[0] === key) return d; return null; }
+function cfReadValue(row, def) {
+  const type = def[2];
+  if (type === BOOL) { const p = row.dataset.pending; return p === "true" ? true : p === "false" ? false : undefined; }
+  if (type === ENUM) return row.dataset.pending || undefined;
+  const raw = row.querySelector(".cf-in").value.trim();
+  if (type === TXT) return raw;
+  if (raw === "") return undefined;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : undefined;
+}
+$("sx-config").addEventListener("click", async (e) => {
+  const row = e.target.closest(".cfrow");
+  if (!row) return;
+  const key = row.dataset.key, def = cfDefOf(key);
+  const msg = row.querySelector(".cf-msg");
+  const seg = e.target.closest(".seg-btns button");
+  if (seg) { row.dataset.pending = seg.dataset.val; seg.parentElement.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === seg)); return; }
+  const undoBtn = e.target.closest(".cf-undo-btn");
+  if (undoBtn) {
+    const passEl = row.querySelector(".cf-pass");
+    const body = { history_id: Cf.undo[key] };
+    if (passEl && passEl.value) body.passphrase = passEl.value;
+    else if (Cf.protectedKeys.has(key)) { setMsg(msg, "元に戻すにもパスフレーズ(再入力)が必要です。", "err"); if (passEl) passEl.focus(); return; }
+    const r = await api("config_undo", body);
+    if (r.ok) { Cf.values[key] = r.json.value; delete Cf.undo[key]; renderConfig(); const nr = $("sx-config").querySelector(`.cfrow[data-key="${key}"] .cf-msg`); setMsg(nr, "↩️ 元に戻しました", "ok"); }
+    else setMsg(msg, errMsg(r), "err");
+    return;
+  }
+  if (!e.target.closest(".cf-save")) return;
+  const val = cfReadValue(row, def);
+  if (val === undefined) { setMsg(msg, "値を入力してください。", "err"); return; }
+  if (def[2] === INT && !Number.isInteger(val)) { setMsg(msg, "整数で入力してください。", "err"); return; }
+  if ((def[2] === INT || def[2] === NUM) && (val < def[3] || val > def[4])) { setMsg(msg, `${def[3]}〜${def[4]}の範囲で入力してください。`, "err"); return; }
+  if (def[2] === TXT && val !== "" && !Number.isFinite(Date.parse(val))) { setMsg(msg, "日時の形式で入力してください(例 2026-01-01T00:00:00+09:00)。", "err"); return; }
+  let passEl = row.querySelector(".cf-pass");
+  const body = { key, value: val };
+  if (passEl && passEl.value) body.passphrase = passEl.value;
+  else if (Cf.protectedKeys.has(key)) { setMsg(msg, "この項目の変更にはパスフレーズの再入力が必要です。", "err"); if (passEl) passEl.focus(); return; }
+  setMsg(msg, "保存中…", "");
+  const r = await api("config_set", body);
+  if (r.ok) {
+    if (r.json.unchanged) { setMsg(msg, "変更はありません(同じ値です)。", ""); return; }
+    Cf.values[key] = val;
+    if (r.json.history_id != null) Cf.undo[key] = r.json.history_id;
+    row.querySelector(".cf-label small").textContent = `${key} ・ 現在 ${cfValueText(def, val)}`;
+    if (passEl) passEl.value = "";
+    setMsg(msg, "✅ 保存しました", "ok");
+    row.querySelector(".cf-undo").innerHTML = Cf.undo[key] != null ? `<button type="button" class="btn small cf-undo-btn">↩️ 元に戻す</button>` : "";
+    return;
+  }
+  if (r.json && r.json.error === "passphrase_required" && !passEl) { // 想定外にサーバーが再入力を求めた場合も入力欄を出す
+    Cf.protectedKeys.add(key);
+    row.querySelector(".cf-save").insertAdjacentHTML("beforebegin", `<input class="fld cf-pass" type="password" autocomplete="current-password" placeholder="パスフレーズ(再入力が必要)">`);
+    passEl = row.querySelector(".cf-pass"); passEl.focus();
+  }
+  setMsg(msg, errMsg(r), "err");
+});
+
+// ================================================================ 設定: 未送信の操作
+const kindJa = (op) => {
+  const p = op.payload || {};
+  if (op.kind === "tier_set") return p.how === "promote" ? "⬆️ 聴くへ昇格" : "⬇️ 保留へ降格";
+  if (op.kind === "label_submit") return `📝 答え合わせ ${p.score}点`;
+  return op.kind;
+};
+let qConfirm = null, qConfirmTimer = null;
+function renderQueue(note) {
+  const el = $("sx-queue");
+  const st = AdminQueue.stats();
+  const ops = AdminQueue.list();
+  const rows = ops.map((op) => {
+    const p = op.payload || {};
+    const sub = [fmtAt(op.at), op.tries ? `試行${op.tries}回` : "", op.last_error ? `エラー ${op.last_error}` : "", op.kind === "tier_set" ? String(p.post_url || "").replace(/^https?:\/\//, "") : ""].filter(Boolean).join(" ・ ");
+    return `<div class="qop" data-op="${esc(op.op_id)}"><div class="q-body">${esc(kindJa(op))} ${op.dead ? `<span class="badge bad">保留中(失敗)</span>` : ""}<small>${esc(sub)}</small></div>
+      ${op.dead ? `<button type="button" class="btn small" data-q="retry">再送</button>` : ""}
+      <button type="button" class="btn small" data-q="discard">${qConfirm === op.op_id ? "本当に破棄" : "破棄"}</button></div>`;
+  }).join("");
+  el.innerHTML = `<div class="card"><h2>📤 未送信の操作</h2>
+    <div id="sxQSummary" style="font-variant-numeric:tabular-nums">未送信 <b>${st.pending}</b>件${st.dead ? ` ・ 保留中(失敗) <b>${st.dead}</b>件` : ""}${!st.hasToken && ops.length ? " ・ ログインすると送信されます" : st.needLogin ? " ・ ログインが必要です" : ""}</div>
+    ${rows || `<div class="muted" style="padding:8px 0">未送信の操作はありません。</div>`}
+    ${ops.length ? `<div style="margin-top:8px"><button type="button" class="btn" data-q="flush" style="width:100%">📨 今すぐ送る</button></div>` : ""}
+    ${st.dead ? `<div style="margin-top:8px"><button type="button" class="btn small" data-q="cleardead">失敗したものを全て破棄</button></div>` : ""}
+    <div class="fmsg" id="sxQMsg" role="status">${esc(note || "")}</div></div>`;
+}
+$("sx-queue").addEventListener("click", async (e) => {
+  const b = e.target.closest("button[data-q]");
+  if (!b) return;
+  const act = b.dataset.q;
+  const opEl = b.closest(".qop");
+  const opId = opEl && opEl.dataset.op;
+  if (act === "discard") {
+    if (qConfirm === opId) { qConfirm = null; clearTimeout(qConfirmTimer); AdminQueue.discard(opId); return; }
+    qConfirm = opId; clearTimeout(qConfirmTimer); qConfirmTimer = setTimeout(() => { qConfirm = null; renderQueue(); }, 3500); renderQueue(); return;
+  }
+  if (act === "retry") { const op = AdminQueue.list().find((o) => o.op_id === opId); if (op) { AdminQueue.discard(opId); AdminQueue.add(op.kind, op.payload, op.op_id); } return; }
+  if (act === "cleardead") { AdminQueue.clearDead(); return; }
+  if (act === "flush") {
+    b.disabled = true; setMsg($("sxQMsg"), "送信中…", "");
+    let res = null;
+    try { res = await AdminQueue.flush(); } catch (err) { res = { reason: "network" }; }
+    const left = AdminQueue.stats().pending;
+    renderQueue(res && res.reason === "auth" ? "ログインが必要です。" : res && res.reason === "no_token" ? "ログインすると送信されます。" : res && (res.reason === "network" || res.reason === "retry_later") ? "送れませんでした。あとで自動で再送します。" : left ? `一部を送れませんでした(残り${left}件)。` : "✅ 送信しました。");
+  }
+});
+AdminQueue.onChange(() => { if ($("sx-queue")) renderQueue(); });
+
+// ================================================================ 週次: レポート
+const Wk = { weeks: 4 };
+let reportBusy = false;
+async function loadReport() {
+  const el = $("wk-report");
+  if (!loggedIn()) { el.innerHTML = `<h2>📝 週次レポート</h2>${needLoginHtml("週次レポート")}`; return; }
+  if (reportBusy) return;
+  reportBusy = true;
+  try {
+    if (!el.innerHTML || el.querySelector(".need-login")) el.innerHTML = `<h2>📝 週次レポート</h2><div class="muted">読み込み中…</div>`;
+    const r = await api("week_report", {});
+    if (!r.ok) { el.innerHTML = `<h2>📝 週次レポート</h2><div class="fmsg err">${esc(errMsg(r))}</div>`; return; }
+    if (r.json.empty || !r.json.text_ja) { el.innerHTML = `<h2>📝 週次レポート</h2><div class="muted">まだ週次レポートがありません(毎週日曜の夜に作られます)。</div>`; return; }
+    el._text = String(r.json.text_ja);
+    el.innerHTML = `<div class="head2"><h2>📝 週次レポート <span class="sub">${esc(md(r.json.week_start))}の週</span></h2>${toggleBtn("wkRead", "🔊 読み上げ", "weekly")}</div><div class="prewrap" id="wkReportText">${esc(el._text)}</div>`;
+    Reader.sync();
+  } finally { reportBusy = false; }
+}
+$("wk-report").addEventListener("click", (e) => {
+  if (!e.target.closest("#wkRead")) return;
+  if (Reader.isPlaying("weekly")) Reader.stop();
+  else Reader.play("weekly", { gist: "週次レポート", summary: $("wk-report")._text || "" });
+});
+
+// ================================================================ 週次: 投稿者通信簿
+let authorsBusy = false;
+async function loadAuthors() {
+  const el = $("wk-authors");
+  if (!loggedIn()) { el.innerHTML = `<h2>👥 投稿者通信簿</h2>${needLoginHtml("投稿者通信簿")}`; return; }
+  if (authorsBusy) return;
+  authorsBusy = true;
+  try {
+    if (!el.querySelector("#auBody")) el.innerHTML = `<h2>👥 投稿者通信簿 <span class="sub" id="auLabel"></span></h2>
+      <div class="seg-btns" id="auWeeks">${[4, 8, 12].map((w) => `<button type="button" data-w="${w}">${w}週</button>`).join("")}</div>
+      <div id="auBody" class="muted" style="margin-top:8px">読み込み中…</div>`;
+    el.querySelector("#auLabel").textContent = `直近${Wk.weeks}週`;
+    el.querySelectorAll("#auWeeks button").forEach((b) => b.classList.toggle("on", Number(b.dataset.w) === Wk.weeks));
+    const r = await api("authors", { weeks: Wk.weeks });
+    const body = el.querySelector("#auBody");
+    if (!body) return;
+    if (!r.ok) { body.className = "fmsg err"; body.textContent = errMsg(r); return; }
+    const rows = Array.isArray(r.json.rows) ? r.json.rows : [];
+    body.className = "";
+    body.innerHTML = rows.length ? rows.map((a) => {
+      const badge = a.verdict === "exclude_candidate" ? `<span class="badge bad">除外候補</span>` : a.verdict === "hold" ? `<span class="badge warn">判定保留</span>` : "";
+      return `<div class="au-row"><div class="au-name">${esc(a.author_name || a.author_handle)} <small>${esc(a.author_handle || "")}</small>${badge}</div>
+        <div class="au-stats">総数 <b>${esc(a.n)}</b>件 ・ 平均 ${a.mean == null ? "–" : esc(Number(a.mean).toFixed(1))}点<br>
+        低評価 <b>${esc(a.low_n)}</b>件 ${ratePct(a.low_rate)} <small>(区間の下限 ${ratePct(a.low_lo)})</small><br>
+        高評価 <b>${esc(a.high_n)}</b>件 ${ratePct(a.high_rate)} <small>(区間の上限 ${ratePct(a.high_hi)})</small></div></div>`;
+    }).join("") : `<div class="muted">まだ集計できる投稿者がいません。答え合わせが進むと表示されます。</div>`;
+  } finally { authorsBusy = false; }
+}
+$("wk-authors").addEventListener("click", (e) => {
+  const b = e.target.closest("#auWeeks button");
+  if (!b) return;
+  Wk.weeks = Number(b.dataset.w);
+  loadAuthors();
+});
+
+// ================================================================ 週次: 今週の流れ(匿名でREST)
+let flowBusy = false;
+async function loadFlow() {
+  const el = $("wk-flow");
+  if (flowBusy) return;
+  flowBusy = true;
+  try {
+    let row = null, failed = false;
+    try { const rows = await sbFetch(`digest_week?select=*&order=week_start.desc&limit=1`); row = Array.isArray(rows) ? rows[0] || null : null; } catch (e) { failed = true; }
+    if (failed) { el.innerHTML = `<h2>🌊 今週の流れ</h2><div class="muted">今週の流れはまだ読み込めません。</div>`; return; }
+    if (!row) { el.innerHTML = `<h2>🌊 今週の流れ</h2><div style="margin-bottom:6px"><span class="badge warn" id="wkAccum">🌱 蓄積中 0/7</span></div><div class="muted">まだ集計がありません。7日分たまると表示されます。</div>`; return; }
+    let themes = row.themes;
+    if (typeof themes === "string") { try { themes = JSON.parse(themes); } catch (e) { themes = []; } }
+    themes = Array.isArray(themes) ? themes.filter((t) => t && (t.title || t.summary)) : [];
+    const days = Math.max(0, Math.min(7, Number(row.days_covered) || 0));
+    const accum = days < 7 || row.status === "accumulating";
+    el.innerHTML = `<div class="head2"><h2>🌊 今週の流れ <span class="sub">${esc(md(row.week_start))}の週</span></h2>${accum ? `<span class="badge warn" id="wkAccum">🌱 蓄積中 ${days}/7</span>` : ""}</div>
+      ${themes.length ? themes.map((t) => `<div class="wk-theme"><b>${esc(t.title)}</b><p>${esc(t.summary)}</p>${Array.isArray(t.day_refs) && t.day_refs.length ? `<div class="wk-days">${t.day_refs.map((d) => `<span>${esc(md(d))}</span>`).join("")}</div>` : ""}</div>`).join("")
+        : `<div class="muted">${accum ? "まだ流れとしてまとめられるほど集まっていません。" : "今週の流れは生成されませんでした。"}</div>`}
+      ${row.generated_at ? `<div class="sub" style="margin-top:8px;text-align:right">生成 ${esc(fmtAt(row.generated_at))}</div>` : ""}`;
+  } finally { flowBusy = false; }
+}
+
+// ================================================================ 週次: 答え合わせ
+const CLS = [["announce", "告知"], ["ref_only", "参照のみ"], ["opinion", "意見・感想"], ["other", "その他"]];
+const SCORE_HINT = { 1: "不要", 2: "弱い", 3: "ふつう", 4: "良い", 5: "最高" };
+const LB = { listNo: null, items: [], total: 0, cls: "other", answered: new Set(), phase: "idle", msg: "", lock: 0, busy: false };
+const skipUntil = () => Number(lsGet(LABEL_SKIP_KEY, "0")) || 0;
+const pendingLabelIds = () => new Set(AdminQueue.list().filter((o) => o.kind === "label_submit").map((o) => String((o.payload || {}).id)));
+function lbFilter(items) { const pend = pendingLabelIds(); return (items || []).filter((x) => x && !LB.answered.has(String(x.id)) && !pend.has(String(x.id))); }
+
+function lbTitleOf(it) { const s = String(it.summary || it.content || "").replace(/\s+/g, " ").trim(); const first = s.split(/(?<=[。！？!?])/)[0] || s; return (first.length > 60 ? first.slice(0, 60) + "…" : first); }
+function lbRender() {
+  const el = $("wk-label");
+  const head = `<h2>✅ 答え合わせ</h2>`;
+  if (!loggedIn()) { el.innerHTML = head + needLoginHtml("答え合わせ"); return; }
+  if (skipUntil() > Date.now()) {
+    el.innerHTML = `${head}<div class="muted">今日はお休み中です(${esc(fmtAt(skipUntil()))}まで非表示)。</div><div style="margin-top:8px"><button type="button" class="btn small" id="lbResume">今すぐ再開</button></div>`;
+    return;
+  }
+  const msg = `<div class="fmsg${LB.msgKind ? " " + LB.msgKind : ""}" id="lbMsg" role="status">${esc(LB.msg || "")}</div>`;
+  if (LB.phase === "loading") { el.innerHTML = `${head}<div class="muted">読み込み中…</div>${msg}`; return; }
+  if (LB.items.length) {
+    const it = LB.items[0];
+    const rem = LB.items.length;
+    const min = Math.max(1, Math.round((rem * LABEL_SEC_PER_ITEM) / 60));
+    const title = lbTitleOf(it);
+    const body = String(it.summary || it.content || "").trim();
+    const showOrig = it.summary && it.content && String(it.content).trim() !== body;
+    const imgs = (Array.isArray(it.image_urls) ? it.image_urls : []).filter((u) => /^https?:\/\//.test(String(u))).slice(0, 3);
+    el.innerHTML = `${head}
+      <div class="lb-meta" id="lbMeta">残り <b id="lbRemain">${rem}</b>件 ・ 約<b id="lbMin">${min}</b>分${LB.total ? ` <span>(今回${LB.total}件)</span>` : ""}</div>
+      <div class="lb-card" id="lbCard" data-id="${esc(it.id)}">
+        <div class="lb-title">${esc(title)}</div>
+        ${body && body !== title ? `<div class="lb-body">${esc(body)}</div>` : ""}
+        ${showOrig ? `<details><summary>元の本文を見る</summary><div>${esc(it.content)}</div></details>` : ""}
+        ${imgs.length ? `<div class="lb-imgs">${imgs.map((u) => `<img src="${esc(u)}" alt="" loading="lazy" referrerpolicy="no-referrer">`).join("")}</div>` : ""}
+        <div style="margin-top:10px">${toggleBtn("lbPlay", "▶ 聴く", "label")}</div>
+      </div>
+      <div class="lb-q">聴く価値はどのくらいありましたか?(押すとすぐ保存します)</div>
+      <div class="lb-scores" id="lbScores">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-score="${n}">${n}<small>${SCORE_HINT[n]}</small></button>`).join("")}</div>
+      <div class="lb-q">投稿の区分</div>
+      <div class="seg-btns lb-cls" id="lbCls">${CLS.map(([k, t]) => `<button type="button" data-cls="${k}" class="${LB.cls === k ? "on" : ""}">${t}</button>`).join("")}</div>
+      <div style="margin-top:12px"><button type="button" class="btn small" id="lbSkip">今日はしない(3日間隠す)</button></div>${msg}`;
+    Reader.sync();
+    return;
+  }
+  if (LB.phase === "done") {
+    el.innerHTML = `${head}<div style="padding:6px 0;line-height:1.7">🎉 今回の分は終わりました。ありがとうございます。</div>
+      <button type="button" class="btn primary" id="lbMore" style="width:100%">📋 次の${LABEL_N}件を作る</button>${msg}`;
+    return;
+  }
+  el.innerHTML = `${head}<div class="sub" style="margin-bottom:8px">AIの点数や投稿者名は見えない状態で、${LABEL_N}件ずつ「聴く価値」を付けます(最大3回)。</div>
+    <button type="button" class="btn primary" id="lbStart" style="width:100%">📋 答え合わせを始める(${LABEL_N}件)</button>${msg}`;
+}
+async function lbLoad(listNo) {
+  if (!loggedIn() || skipUntil() > Date.now()) { lbRender(); return; }
+  LB.phase = "loading"; lbRender();
+  const r = await api("label_next", listNo ? { list_no: listNo } : {});
+  if (!r.ok) { LB.phase = "idle"; LB.msg = errMsg(r); LB.msgKind = "err"; LB.items = []; lbRender(); return; }
+  LB.listNo = r.json.list_no == null ? null : r.json.list_no;
+  LB.total = Number(r.json.total) || 0;
+  LB.items = lbFilter(r.json.items);
+  LB.msg = ""; LB.msgKind = "";
+  LB.phase = LB.items.length ? "run" : (LB.listNo != null && LB.total > 0 ? "done" : "idle");
+  lbRender();
+}
+async function lbCreate() {
+  LB.msg = "作成中…"; LB.msgKind = ""; lbRender();
+  const r = await api("label_create", { n: LABEL_N });
+  if (!r.ok) { LB.phase = "idle"; LB.msg = errMsg(r); LB.msgKind = "err"; lbRender(); return; }
+  LB.answered = new Set();
+  await lbLoad(r.json.list_no);
+}
+async function lbFinish() {
+  LB.phase = "loading"; LB.msg = ""; lbRender();
+  try { await AdminQueue.flush(); } catch (e) { /* あとで再送 */ }
+  await lbLoad(LB.listNo);
+  if (!LB.items.length) { LB.phase = "done"; const st = AdminQueue.stats(); LB.msg = st.pending ? `送信待ちが${st.pending}件あります(ログイン後・通信回復後に自動で送ります)。` : ""; LB.msgKind = ""; lbRender(); }
+}
+function lbSubmit(score) {
+  if (Date.now() < LB.lock || !LB.items.length) return; // 連打で次の1件を誤って付けない
+  LB.lock = Date.now() + 300;
+  Reader.stop();
+  const it = LB.items.shift();
+  const opId = AdminQueue.newOpId();
+  LB.answered.add(String(it.id));
+  AdminQueue.add("label_submit", { id: it.id, score, cls: LB.cls }, opId);
+  LB.cls = "other";
+  if (LB.items.length) lbRender(); else lbFinish();
+}
+$("wk-label").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.score) lbSubmit(Number(b.dataset.score));
+  else if (b.dataset.cls) { LB.cls = b.dataset.cls; b.parentElement.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); }
+  else if (b.id === "lbPlay") {
+    const it = LB.items[0];
+    if (!it) return;
+    if (Reader.isPlaying("label")) Reader.stop();
+    else Reader.play("label", { gist: lbTitleOf(it), summary: String(it.summary || it.content || "") });
+  }
+  else if (b.id === "lbStart" || b.id === "lbMore") lbCreate();
+  else if (b.id === "lbSkip") { lsSet(LABEL_SKIP_KEY, String(Date.now() + SKIP_MS)); Reader.stop(); lbRender(); }
+  else if (b.id === "lbResume") { lsSet(LABEL_SKIP_KEY, "0"); lbLoad(LB.listNo); }
+});
+
+// ================================================================ 費用
+const GRP_JA = { x: "X系", ti: "TI系" };
+const LEVEL_JA = { ok: "通常", normal: "通常", warn: "警告(上限の80%超)", warning: "警告(上限の80%超)", stop_extra: "追加処理を停止中", extra: "追加処理を停止中", stop_all: "全停止中", stop: "全停止中", kill: "全停止中" };
+let costBusy = false;
+function chartSvg(months, curMonth, forecast) {
+  const ms = months.slice().sort((a, b) => String(a.month).localeCompare(String(b.month)));
+  if (!ms.length) return "";
+  const W = 340, H = 150, top = 18, bot = 22;
+  const lastIsCur = ms[ms.length - 1].month === curMonth;
+  const maxV = Math.max(1, ...ms.map((m) => Number(m.jpy) || 0), lastIsCur ? Number(forecast) || 0 : 0);
+  const bw = W / ms.length;
+  const ph = H - top - bot;
+  const compact = (n) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(Math.round(n)));
+  let g = "";
+  ms.forEach((m, i) => {
+    const v = Number(m.jpy) || 0;
+    const h = Math.max(1, (v / maxV) * ph);
+    const x = i * bw + bw * 0.18, w = bw * 0.64, y = top + ph - h;
+    const isCur = m.month === curMonth;
+    g += `<rect class="${isCur ? "cur" : "past"}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="2"${m.finalized === false && !isCur ? ` fill-opacity="0.6"` : ""}><title>${esc(m.month)} ${yen(v)}</title></rect>`;
+    if (isCur && lastIsCur && Number(forecast) > v) {
+      const fh = (Number(forecast) / maxV) * ph;
+      g += `<rect class="fc" x="${x.toFixed(1)}" y="${(top + ph - fh).toFixed(1)}" width="${w.toFixed(1)}" height="${fh.toFixed(1)}" rx="2"/>`;
+    }
+    g += `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${(y - 3).toFixed(1)}" text-anchor="middle">${compact(v)}</text>`;
+    g += `<text x="${(i * bw + bw / 2).toFixed(1)}" y="${H - 8}" text-anchor="middle">${Number(String(m.month).slice(5, 7))}月</text>`;
+  });
+  return `<svg class="co-chart" id="coChart" viewBox="0 0 ${W} ${H}" role="img" aria-label="月ごとの費用の推移(円)">${g}</svg>`;
+}
+function costHtml(c) {
+  const tm = c.this_month || {}, lm = c.last_month, guard = c.guard || {}, ms = c.model_state || {};
+  const months = Array.isArray(c.months) ? c.months : [];
+  const curMonth = months.length ? months.slice().sort((a, b) => String(a.month).localeCompare(String(b.month))).pop().month : "";
+  const grpTotal = (tm.by_grp || []).reduce((n, x) => n + (Number(x.jpy) || 0), 0) || 1;
+  const maxModel = Math.max(1, ...(tm.by_model || []).map((x) => Number(x.jpy) || 0));
+  const capRatio = guard.cap_jpy ? Math.min(100, ((Number(guard.month_jpy) || 0) / Number(guard.cap_jpy)) * 100) : 0;
+  const errs = Array.isArray(c.recent_errors) ? c.recent_errors : [];
+  return `
+    <div class="card"><h2>📆 今月</h2>
+      <div class="co-big">
+        <div class="co-num"><div class="l">今月の実績(今日まで)</div><div class="v" id="coMonth">${yen(tm.jpy)}</div><div class="n">${usd(tm.usd)} ・ ${comma(Number(tm.calls) || 0)}回</div></div>
+        <div class="co-num"><div class="l">月末の見込み</div><div class="v" id="coForecast">${yen(tm.forecast_jpy)}</div><div class="n">経過日数から計算</div></div>
+        <div class="co-num"><div class="l">先月</div><div class="v sm" id="coLast">${lm ? yen(lm.jpy) : "–"}</div><div class="n">${lm ? `${usd(lm.usd)} ・ ${comma(Number(lm.calls) || 0)}回` : "データなし"}</div></div>
+        <div class="co-num"><div class="l">直近24時間(X系)</div><div class="v sm" id="coToday">${yen(c.today_jpy)}</div><div class="n">&nbsp;</div></div>
+      </div></div>
+    <div class="card"><h2>📊 月ごとの推移</h2>${months.length ? chartSvg(months, curMonth, tm.forecast_jpy) : `<div class="muted">まだ月ごとの記録がありません。</div>`}
+      ${months.length ? `<div class="sub" style="margin-top:4px">赤=今月(点線は月末の見込み) ・ 単位は円(k=千円)</div>` : ""}</div>
+    <div class="card"><h2>🧮 X系とTI系の内訳</h2>${(tm.by_grp || []).length ? tm.by_grp.map((x) => `<div class="co-line" data-grp="${esc(x.grp)}"><span class="k">${esc(GRP_JA[x.grp] || x.grp)}</span><span class="v">${yen(x.jpy)} ・ ${Math.round(((Number(x.jpy) || 0) / grpTotal) * 100)}%</span></div><div class="co-bar"><i style="width:${Math.round(((Number(x.jpy) || 0) / grpTotal) * 100)}%"></i></div>`).join("") : `<div class="muted">まだありません。</div>`}</div>
+    <div class="card"><h2>🤖 モデル別</h2>${(tm.by_model || []).length ? tm.by_model.map((x) => `<div class="co-line"><span class="k">${esc(x.model)}</span><span class="v">${yen(x.jpy)} ・ ${comma(Number(x.calls) || 0)}回</span></div><div class="co-bar"><i style="width:${Math.round(((Number(x.jpy) || 0) / maxModel) * 100)}%"></i></div>`).join("") : `<div class="muted">まだありません。</div>`}
+      ${(tm.by_purpose || []).length ? `<details style="margin-top:8px"><summary class="sub" style="min-height:36px;display:flex;align-items:center">用途別を見る</summary>${tm.by_purpose.map((x) => `<div class="co-line"><span class="k">${esc(x.purpose)}</span><span class="v">${yen(x.jpy)} ・ ${comma(Number(x.calls) || 0)}回</span></div>`).join("")}</details>` : ""}</div>
+    <div class="card"><h2>🛡️ 費用ガード</h2>
+      <div id="coGuard" style="font-size:15px">${esc(LEVEL_JA[guard.level] || guard.level || "–")}${guard.allowed === false ? " ・ 処理を止めています" : ""}</div>
+      ${guard.cap_jpy ? `<div class="co-bar"><i style="width:${capRatio.toFixed(0)}%"></i></div><div class="sub">月 ${yen(guard.month_jpy)} / 上限 ${yen(guard.cap_jpy)} ・ 直近24時間 ${yen(guard.day_jpy)} ・ 直近1時間 ${comma(Number(guard.calls_1h) || 0)}回</div>` : ""}</div>
+    <div class="card"><h2>🧠 現行モデル</h2><div id="coModel" style="font-size:15px;word-break:break-all">${esc(ms.current_model || "–")}</div>
+      ${Array.isArray(ms.candidates) && ms.candidates.length ? `<div class="sub" style="margin-top:4px">候補: ${ms.candidates.map(esc).join(" → ")}</div>` : ""}
+      ${ms.last_switch_at ? `<div class="sub">最後の切替 ${esc(fmtAt(ms.last_switch_at))}</div>` : ""}</div>
+    <div class="card"><h2>⚠️ 直近のエラー</h2>${errs.length ? errs.map((x) => `<div class="co-err"><b>${esc(fmtAt(x.at))}</b> ${esc(x.fn || "")}${x.purpose ? `/${esc(x.purpose)}` : ""} ・ ${esc(x.model || "")} ・ ${esc(x.status == null ? "" : x.status)}<br>${esc(x.error || "")}</div>`).join("") : `<div class="muted">直近のエラーはありません 🎉</div>`}</div>`;
+}
+async function loadCost() {
+  const el = $("cost-body");
+  if (!loggedIn()) { el.innerHTML = `<div class="card">${needLoginHtml("費用の表示")}</div>`; return; }
+  if (costBusy) return;
+  costBusy = true;
+  try {
+    if (!el.innerHTML || el.querySelector(".need-login")) el.innerHTML = `<div class="card muted">読み込み中…</div>`;
+    const r = await api("cost_summary", {});
+    if (!r.ok) { el.innerHTML = loggedIn() ? `<div class="card"><div class="fmsg err">${esc(errMsg(r))}</div></div>` : `<div class="card">${needLoginHtml("費用の表示")}</div>`; return; }
+    el.innerHTML = costHtml(r.json) + `<div class="sub" style="text-align:right;margin:4px 2px">更新 ${esc(fmtAt(Date.now()))}</div>`;
+  } finally { costBusy = false; }
+}
+
+// ================================================================ 画面の切替
+function renderAll() { renderAuth(); renderNotify(); renderProfile(); renderConfig(); renderQueue(); }
+async function loadSettings() {
+  renderAuth(); renderQueue();
+  if (Auth.state === "unknown" || Auth.setupDone === null) await refreshAuth();
+  renderAuth();
+  if (loggedIn()) await Promise.all([loadNotify(), loadProfile(), loadConfig()]);
+  else renderAll();
+}
+async function loadWeekly() {
+  const jobs = [loadFlow()];
+  if (loggedIn()) { jobs.push(loadReport(), loadAuthors()); if (LB.phase === "idle" || LB.phase === "done" || !LB.items.length) jobs.push(lbLoad(LB.listNo)); else lbRender(); }
+  else { $("wk-report").innerHTML = `<h2>📝 週次レポート</h2>${needLoginHtml("週次レポート")}`; $("wk-authors").innerHTML = `<h2>👥 投稿者通信簿</h2>${needLoginHtml("投稿者通信簿")}`; lbRender(); }
+  await Promise.all(jobs);
+}
+const inflight = {};
+function onTab(tab) {
+  if (tab !== "weekly" && tab !== "cost" && tab !== "settings") { Reader.stop(); return; }
+  if (inflight[tab]) { inflight[tab].again = true; return; } // 読み込み中の再要求は1回にまとめる
+  const run = () => (tab === "weekly" ? loadWeekly() : tab === "cost" ? loadCost() : loadSettings());
+  const slot = inflight[tab] = { again: false };
+  run().catch(() => {}).finally(() => { const again = slot.again; delete inflight[tab]; if (again) onTab(tab); });
+}
+document.addEventListener("xdash:tab", (e) => { Reader.stop(); onTab(e.detail.tab); });
+document.addEventListener("xdash:auth", () => { renderAuth(); if (!loggedIn()) { renderAll(); TopBand.set("notify", null); } onTab(Tabs.current); });
+$("btnWeeklyReload").addEventListener("click", () => { LB.phase = "idle"; loadWeekly(); });
+$("btnCostReload").addEventListener("click", loadCost);
+
+// 起動: 枠を描き、トークンがあれば有効か確認して通知先の帯も更新(再生中の画面には出ない)
+(async function init() {
+  renderAll();
+  if (AdminQueue.getToken()) {
+    await refreshAuth();
+    if (loggedIn()) loadNotify();
+  }
+  onTab(Tabs.current);
+})();
+
+window.Admin2 = { api, Auth, Reader, loadWeekly, loadCost, loadSettings, refreshAuth, LB, Cf, Pf };
 })();
 </script>
 </body>

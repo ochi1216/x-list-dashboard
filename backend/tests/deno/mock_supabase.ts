@@ -147,6 +147,8 @@ export class MockSupabase {
   url = "";
   // テストからの故障注入: 次のN回のRPC名に対しエラーを返す
   failRpc = new Map<string, number>();
+  // テーブルへのリクエストを「METHOD table」(例 "PATCH news_articles"・"GET tuning_config")ごとに500で失敗させる(回数。Infinity可)
+  failTable = new Map<string, number>();
 
   async start(): Promise<void> {
     this.server = Deno.serve({ port: 0, hostname: "127.0.0.1", onListen: () => {} }, (req) => this.handle(req));
@@ -165,6 +167,7 @@ export class MockSupabase {
     this.requests = [];
     this.rpcCalls = [];
     this.failRpc.clear();
+    this.failTable.clear();
     this.modelState = { current_model: "gemini-2.5-flash", candidates: ["gemini-2.5-flash", "gemini-3.5-flash", "gemini-3.1-flash"], gone_streak: 0 };
     const cfg: Record<string, unknown> = {
       usd_jpy: 150, monthly_cap_jpy: 4000, daily_cap_jpy: 400, hourly_call_cap: 600, ti_daily_call_cap: 500,
@@ -262,6 +265,12 @@ export class MockSupabase {
         const out = this.rpc(name, args);
         if (out === undefined) return done(404, { message: `Could not find the function public.${name}`, code: "PGRST202" });
         return done(200, out === undefined ? null : out);
+      }
+      const fk = `${req.method} ${rest}`;
+      const fl = this.failTable.get(fk) ?? 0;
+      if (fl > 0) {
+        this.failTable.set(fk, fl - 1);
+        return done(500, { message: `injected failure for ${fk} (secret-ish detail)`, code: "XX000" });
       }
       return this.table(req, u, rest, body, done);
     } catch (e) {

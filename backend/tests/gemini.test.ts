@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { callGemini, sanitize } from "../functions/_shared/gemini.ts";
+import { callGemini, resolveGeminiBase, sanitize } from "../functions/_shared/gemini.ts";
 import type { GeminiCtx } from "../functions/_shared/gemini.ts";
 
 const KEY = "AIzaSyFAKEFAKEFAKEFAKEFAKEFAKE0123456789";
@@ -346,4 +346,40 @@ test("sanitize: キー・key=・長さ・Error対応", () => {
   assert.equal(sanitize("a".repeat(1000)).length, 200);
   assert.ok(!sanitize({ k: "AIzaSyABCDEFGHIJKL" }).includes("AIza"));
   assert.ok(!sanitize("x-goog-api-key: AIzaSyABCDEFGHIJKL").includes("AIza"));
+});
+
+test("resolveGeminiBase: 未設定・不正・外部httpは本番URL、loopback http と https は上書き", () => {
+  const def = "https://generativelanguage.googleapis.com/v1beta/models";
+  assert.equal(resolveGeminiBase(undefined), def);
+  assert.equal(resolveGeminiBase(""), def);
+  assert.equal(resolveGeminiBase("not a url"), def);
+  assert.equal(resolveGeminiBase("http://evil.example.com"), def);
+  assert.equal(resolveGeminiBase("http://127.0.0.1:8788"), "http://127.0.0.1:8788/v1beta/models");
+  assert.equal(resolveGeminiBase("https://proxy.example.com/"), "https://proxy.example.com/v1beta/models");
+});
+
+test("callGemini: ctx.baseUrl があればそのURLへ(キーは常にヘッダ)", async () => {
+  let seen = "";
+  let hdr: Record<string, string> = {};
+  const ctx = {
+    db: {
+      async rpc(name: string) {
+        if (name === "get_model_state") return { data: { current_model: "m1", configs: {} }, error: null };
+        if (name === "cost_guard") return { data: { allowed: true, level: "ok" }, error: null };
+        return { data: null, error: null };
+      },
+      async insertUsage() { return 1; },
+    },
+    apiKey: KEY, fn: "t", grp: "x", batchId: "b", baseUrl: "http://127.0.0.1:1/v1beta/models",
+    fetchFn: (async (url: string, init: RequestInit) => {
+      seen = url;
+      hdr = init.headers as Record<string, string>;
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "ok" }] } }], usageMetadata: {} }), { status: 200 });
+    }) as unknown as typeof fetch,
+  } as GeminiCtx;
+  const r = await callGemini(ctx, { purpose: "summary", parts: [{ text: "x" }], maxOutputTokens: 10 });
+  assert.equal(r.ok, true);
+  assert.equal(seen, "http://127.0.0.1:1/v1beta/models/m1:generateContent");
+  assert.ok(!seen.includes("key="));
+  assert.equal(hdr["x-goog-api-key"], KEY);
 });

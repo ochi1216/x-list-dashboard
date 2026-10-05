@@ -64,16 +64,23 @@ export function toSmallVariant(url: string): string {
   }
 }
 
+const IMAGE_TIMEOUT_MS = 10_000;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
 export async function fetchImageAsInlineData(
   url: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<{ mimeType: string; data: string } | null> {
   try {
-    const res = await fetchFn(toSmallVariant(url));
+    // 応答しない/巨大な画像で関数全体(実行上限約150秒・メモリ)を巻き込まない
+    const res = await fetchFn(toSmallVariant(url), { signal: AbortSignal.timeout(IMAGE_TIMEOUT_MS) });
     if (!res.ok) return null;
     const contentType = (res.headers.get("content-type") || "").split(";")[0].trim();
     if (!contentType.startsWith("image/")) return null;
+    const len = Number(res.headers.get("content-length") ?? 0);
+    if (len > MAX_IMAGE_BYTES) return null;
     const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.length > MAX_IMAGE_BYTES) return null;
     let binary = "";
     const chunkSize = 8192;
     for (let i = 0; i < buf.length; i += chunkSize) {

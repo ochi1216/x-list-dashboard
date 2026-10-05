@@ -80,7 +80,7 @@ Deno.serve(async (req: Request) => {
       const outcome = await summarizeOne(post, {
         gen: async (parts, opts) => {
           const r = await callGemini(
-            { db, apiKey: geminiKey, fn: FN, grp: "x", batchId, baseUrl: geminiBase },
+            { db, apiKey: geminiKey, fn: FN, grp: "x", batchId, baseUrl: geminiBase, timeoutMs: 25_000 },
             {
               purpose: "summary",
               parts,

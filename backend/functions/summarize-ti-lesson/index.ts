@@ -73,7 +73,7 @@ async function callGemini(ctx: GeminiCtx, transcriptText: string): Promise<strin
 }
 
 
-const TIME_BUDGET_MS = 100_000; // Edge Functionの実行上限(約150秒)に収める。残りは次回の呼び出しで処理する
+const TIME_BUDGET_MS = 60_000; // 実行上限(約150秒)に収める(1回の要約は長く、40秒×2回の再試行を見込む)。残りは次回の呼び出しで処理する
 
 Deno.serve(async (req: Request) => {
   const supabase = createClient(
@@ -135,6 +135,7 @@ Deno.serve(async (req: Request) => {
     db: makeGeminiDb(supabase),
     apiKey: geminiKey,
     baseUrl: resolveGeminiBase(Deno.env.get("GEMINI_BASE_URL")),
+    timeoutMs: 40_000,
     fn: "summarize-ti-lesson",
     grp: "ti",
     batchId: crypto.randomUUID(),
