@@ -186,6 +186,27 @@ test("再生成しても見出しが駄目なら話題ごと破棄 → 全滅は
   assert.equal(m.rec.upserts[0].dropped_ratio, 1);
   assert.ok(m.rec.events.some((e) => e.kind === "digest_failed"));
 });
+test("再生成が1回目より悪ければ置換しない(1回目の有効話題を ok で保存)/ 同数以上なら採用", async () => {
+  const cs = cards(5);
+  const bad = topic([cs[0].post_url], { headline: "Anthropicが発表" });
+  const good = topic([cs[1].post_url]);
+  // 1回目: good+bad(見出し落ち1)→ 再生成は全滅 → 1回目を採用
+  let m = makeDeps({ cards: cs, gen: (_r, n) => ok({ topics: n === 1 ? [good, bad] : [bad] }) });
+  let r = await runToday(m.deps);
+  assert.equal(m.rec.gens.length, 2);
+  assert.equal(r.status, "ok");
+  assert.equal(r.topics, 1);
+  assert.equal(m.rec.upserts[0].status, "ok");
+  // 再生成が話題数で劣る(2件→1件)なら1回目を保持
+  const good2 = topic([cs[2].post_url], { headline: "GPT-5を発表" });
+  m = makeDeps({ cards: cs, gen: (_r, n) => ok({ topics: n === 1 ? [good, good2, bad] : [good] }) });
+  r = await runToday(m.deps);
+  assert.equal(r.topics, 2);
+  // 再生成が1回目以上なら採用
+  m = makeDeps({ cards: cs, gen: (_r, n) => ok({ topics: n === 1 ? [good, bad] : [good, good2] }) });
+  r = await runToday(m.deps);
+  assert.equal(r.topics, 2);
+});
 test("一部の話題だけ破棄され残りは保存される", async () => {
   const cs = cards(5);
   const bad = topic([cs[0].post_url], { headline: "Anthropicが発表" });
@@ -368,6 +389,43 @@ test("本文にある漢字語は分割(人工知能研究 = 本文の語の連�
   assert.ok(checkClaim("自動運転規制が進む", c).ok); // 既定では漢字語は検査しない(week等)
 });
 
+// ---------- 英語カード由来の要点(第2回レビュー) ----------
+test("英語カード: 単位語・片仮名表記・要旨の言い換えで要点が落ちない / 本文に無い社名・人名・金額は落ちる", () => {
+  const c = buildCorpus(
+    ["NVIDIA announced Pro plan at $20 per month. Revenue grew 3.5%. OpenAI launched an agent."],
+    ["エヌビディアが月額プランを発表", "AIエージェントを公開"],
+  );
+  const k = { kanjiMin: 2 };
+  assert.ok(checkClaim("月20ドルで提供", c, k).ok);
+  assert.ok(checkClaim("3.5パーセント増", c, k).ok);
+  assert.ok(checkClaim("NVIDIAの発表", c, k).ok);
+  assert.ok(checkClaim("エヌビディアが発表", c, k).ok);
+  assert.ok(checkClaim("オープンエーアイがエージェントを公開", c, k).ok); // 辞書+要旨(エージェント)
+  assert.ok(checkClaim("エーアイエージェントを公開", buildCorpus(["An AI agent launched"], ["エージェントを公開"]), k).ok);
+  // 本文・要旨に無い社名・人名・金額は落ちる
+  assert.equal(checkClaim("ソフトバンクが発表", c, k).ok, false);
+  assert.equal(checkClaim("クロードが発表", c, k).ok, false); // Claude が本文に無い
+  assert.equal(checkClaim("月30ドルで提供", c, k).ok, false);
+  assert.equal(checkClaim("4.5パーセント増", c, k).ok, false);
+  assert.equal(checkClaim("田中氏が発表", c, k).ok, false);
+  // 単位語だけでは固有名扱いしない
+  assert.ok(checkClaim("5ユーロと3キロ", buildCorpus(["5 EUR, 3 km"])).ok);
+  assert.equal(checkClaim("6ユーロ", buildCorpus(["5 EUR"])).ok, false);
+});
+test("validateTopics: 英語カードの日本語要点(ドル・パーセント・エヌビディア)が残り、画像なしでも要旨が片仮名・漢字の根拠になる", () => {
+  const cs = [card(1, {
+    content: "NVIDIA unveils a chip. Price $20 per month, up 3.5%.",
+    gist: "エヌビディアが新チップ", summary: "エヌビディアが新チップを発表。月額は20ドル。",
+  })];
+  const v = validateTopics([topic([cs[0].post_url], {
+    headline: "エヌビディアが新チップ",
+    summary: "エヌビディアが新チップを発表した。月額は20ドル。",
+    new_facts: ["月20ドルで提供", "3.5パーセント増", "ソフトバンクが出資", "月30ドルで提供"],
+  })], cs, []);
+  assert.equal(v.topics.length, 1);
+  assert.deepEqual(v.topics[0].new_facts, ["月20ドルで提供", "3.5パーセント増"]);
+});
+
 // ---------- is_followup ----------
 test("is_followup: 前日の見出しが無ければ常に false、プロンプトにも前日の見出しを渡す", async () => {
   const cs = cards(5);
@@ -389,6 +447,15 @@ test("is_followup: 前日の見出しが無ければ常に false、プロンプ�
   assert.deepEqual(prevHeadlinesOf(daily, "2026-10-05"), ["OpenAIがGPT-5を発表"]);
   assert.deepEqual(prevHeadlinesOf([dailyRow("2026-10-05", "ok")], "2026-10-05"), []); // 当日は含めない
   assert.deepEqual(prevHeadlinesOf([dailyRow("2026-10-04", "failed")], "2026-10-05"), []);
+  // 前日の見出しと共通する語が無ければ is_followup は false に落とす
+  const unrelated = topic([cs[0].post_url], { is_followup: true });
+  const d2 = [dailyRow("2026-10-04", "ok", "日銀が政策金利を据え置き")];
+  m = makeDeps({ cards: cs, daily: d2, gen: () => ok({ topics: [unrelated] }) });
+  await runToday(m.deps);
+  assert.equal((m.rec.upserts[0].topics as { is_followup: boolean }[])[0].is_followup, false);
+  // 「前日」は2日以内のdigest_dailyだけ
+  assert.deepEqual(prevHeadlinesOf([dailyRow("2026-10-02")], "2026-10-05"), []);
+  assert.deepEqual(prevHeadlinesOf([dailyRow("2026-10-03")], "2026-10-05"), ["OpenAIがGPT-5を発表"]);
   // 前日の取得に失敗しても生成は続く(false)
   const m2 = makeDeps({ cards: cs, gen: () => ok({ topics: [tp] }) });
   m2.deps.listDaily = async () => { throw new Error("db"); };

@@ -1,7 +1,8 @@
 -- 006: レビュー指摘の修正(冪等・create or replace・加算のみ。DELETE文は無い)
 -- 適用順: 005 → 006。Edge Function(新関数・summarize-x-post)の配備より先に適用する(docs/RUNBOOK.md「デプロイ順」)。
 -- 内容: F1 x_postsのanon書き込み権限を列単位へ / A finalize_tiers 完全版 / B author_scoreboard・weekly_report
---       / C notify_ops 二重送信防止・digest_due バックオフ・x_tick・x_daily・x_weekly
+--       / C notify_ops 二重送信防止・digest_due バックオフ・x_tick・x_hourly(警報追加)・x_daily・x_weekly
+--       / N2 fetch_runs・digest_summaries の anon/authenticated 書き込み権限の剥奪
 
 -- ---------------------------------------------------------------------------------------------
 -- F1(致命): x_posts の anon / authenticated は INSERT・UPDATE・DELETE を表単位で持たない。
@@ -13,6 +14,10 @@
 revoke insert, update, delete, truncate, references, trigger on table public.x_posts from anon, authenticated;
 grant update (is_read, is_starred) on table public.x_posts to anon, authenticated;
 
+-- N2(重大): fetch_runs / digest_summaries も anon / authenticated は読み取り(SELECT)のみ。書き込み系はすべて外す。
+--   書くのはEdge Function(service role)なので影響なし。SELECT権限は触らない。
+revoke insert, update, delete, truncate, references, trigger on public.fetch_runs, public.digest_summaries from anon, authenticated;
+
 -- 005の列(安全のため。既にあれば何もしない)
 alter table public.x_posts add column if not exists summary_attempts smallint not null default 0;
 
@@ -22,6 +27,7 @@ alter table public.x_posts add column if not exists summary_attempts smallint no
 --     要約不能な投稿が1件あるだけでバッチが4時間確定しない問題の解消。
 --  ② score_enabled=false でも tier_assign_enabled=true なら確定する(この関数は元から score_enabled と独立)。
 --  ③ 確定前の手動降格(manual_action='demote')→hold、昇格('promote')→listen。聴くの枠は消費しない。
+--     tier_initial は手動を無視したアルゴリズム判定(score等から計算した区分)を保存し、listen_tier だけに手動結果を入れる。
 --  ④ 既読(is_read)で score>=閾値 の投稿は聴くの枠を消費せず skim(tier_reason='already_read')。
 --     (既読でも閾値未満なら従来どおり below_threshold / low_score / unscored のまま)
 -- ---------------------------------------------------------------------------------------------
@@ -31,7 +37,7 @@ declare
   v_scope timestamptz; v_gap interval; v_quiet interval; v_confirm interval;
   v_thr int; v_tver int; v_quota numeric; v_cps numeric; v_speed numeric; v_morning numeric;
   b record; p record; v_key text; v_slot text; v_day timestamptz;
-  v_alloc numeric; v_used numeric; v_est numeric; v_tier text; v_reason text;
+  v_alloc numeric; v_used numeric; v_est numeric; v_tier text; v_algo text; v_reason text;
   v_nl int; v_ns int; v_nh int; v_forced boolean; v_am_used numeric; v_day_used numeric; v_slot_used numeric;
   v_out jsonb := '[]'::jsonb;
 begin
@@ -105,25 +111,31 @@ begin
       order by score desc nulls last, coalesce(posted_at, fetched_at) desc, post_url
     loop
       v_est := p.chars / (v_cps * v_speed);
+      -- アルゴリズム判定(手動操作を無視した区分)。tier_initial はこれを保存する(評価の分母を歪めない)。
+      -- 手動昇降格の投稿は枠を消費しない(枠に収まるかは見るだけ)。
+      if p.score is null then
+        v_algo := 'skim'; v_reason := 'unscored';
+      elsif p.score >= v_thr and p.is_read then
+        v_algo := 'skim'; v_reason := 'already_read';                     -- 既読は枠を消費しない
+      elsif p.score >= v_thr and v_used + v_est <= v_alloc then
+        v_algo := 'listen'; v_reason := 'score>=' || v_thr;
+      elsif p.score >= v_thr then
+        v_algo := 'skim'; v_reason := 'quota';
+      elsif p.score >= 3 then
+        v_algo := 'skim'; v_reason := 'below_threshold';
+      else
+        v_algo := 'hold'; v_reason := 'low_score';
+      end if;
       if p.manual_action = 'demote' then
         v_tier := 'hold'; v_reason := 'manual_demote';                    -- 手動降格を尊重(枠は消費しない)
       elsif p.manual_action = 'promote' then
         v_tier := 'listen'; v_reason := 'manual_promote';                 -- 手動昇格を尊重(枠は消費しない)
-      elsif p.score is null then
-        v_tier := 'skim'; v_reason := 'unscored';
-      elsif p.score >= v_thr and p.is_read then
-        v_tier := 'skim'; v_reason := 'already_read';                     -- 既読は枠を消費しない
-      elsif p.score >= v_thr and v_used + v_est <= v_alloc then
-        v_tier := 'listen'; v_reason := 'score>=' || v_thr; v_used := v_used + v_est;
-      elsif p.score >= v_thr then
-        v_tier := 'skim'; v_reason := 'quota';
-      elsif p.score >= 3 then
-        v_tier := 'skim'; v_reason := 'below_threshold';
       else
-        v_tier := 'hold'; v_reason := 'low_score';
+        v_tier := v_algo;
+        if v_tier = 'listen' then v_used := v_used + v_est; end if;
       end if;
       update public.x_posts
-         set batch_key = v_key, listen_tier = v_tier, tier_initial = v_tier, tier_reason = v_reason,
+         set batch_key = v_key, listen_tier = v_tier, tier_initial = v_algo, tier_reason = v_reason,
              tier_assigned_at = now(), threshold_version = v_tver
        where post_url = p.post_url;
       if v_tier = 'listen' then v_nl := v_nl + 1; elsif v_tier = 'skim' then v_ns := v_ns + 1; else v_nh := v_nh + 1; end if;
@@ -294,6 +306,12 @@ begin
       when 'report_missing'    then '週次レポートが未生成です'
       when 'score_quality'     then '採点の品質が基準を外れています'
       when 'unauth_call'       then '認証なしの呼び出しを検知しました'
+      when 'llm_error_rate'    then 'Geminiの呼び出しエラー率が高くなっています'
+      when 'tier_stalled'      then '区分の確定が止まっています'
+      when 'gemini_auth'       then 'Geminiのキーが認証に失敗しています'
+      when 'digest_failed'     then '今日の要点の生成に失敗しました'
+      when 'score_stalled'     then '採点が止まっています'
+      when 'model_probe_failed' then 'モデルの予行演習に失敗しました'
       when 'test'              then 'テスト通知'
       else e.kind end;
     v_detail := left(regexp_replace(coalesce(e.data ->> 'detail', ''), '[^0-9A-Za-z .,:/%_()+>-]', '', 'g'), 80);
@@ -314,8 +332,10 @@ begin
   return n;
 end $$;
 
--- digest_due: 失敗のバックオフ。Edge側(generate-digest-summary)が各試行の開始時に
---   tuning_config 'digest_last_attempt_at'(ISO文字列)を書く。そこから30分以内は false(失敗の連打防止)。
+-- digest_due: Edge側(digest.ts の runToday)と基準を揃える。条件は次の2つだけ(failed/paused 行の有無は見ない)。
+--   ① tuning_config 'digest_last_attempt_at'(ISO文字列。Edge側が各試行の開始時に書く)から30分以内なら false(失敗の連打防止)
+--   ② 当日の ok/empty 行の generated_at から digest_min_interval_hours 以内なら false
+--   そのうえで「前回生成以降に区分確定があり、score>=3 の新規が digest_min_new_scored 件以上」なら true。
 create or replace function public.digest_due()
 returns boolean language plpgsql stable security definer set search_path = public, pg_temp as $$
 declare
@@ -332,10 +352,6 @@ begin
   if v_attempt is not null and now() - v_attempt < interval '30 minutes' then return false; end if;
   select generated_at into v_last from public.digest_daily where day = v_day and status in ('ok', 'empty');
   if v_last is not null and now() - v_last < make_interval(secs => (public.cfg_num('digest_min_interval_hours', 6) * 3600)::int) then
-    return false;
-  end if;
-  if exists (select 1 from public.digest_daily where day = v_day and status in ('paused', 'failed')
-             and generated_at > now() - interval '60 minutes') then
     return false;
   end if;
   if not exists (select 1 from public.tier_batches where finalized_at > coalesce(v_last, v_day_start)) then return false; end if;
@@ -392,6 +408,56 @@ begin
   return r;
 end $$;
 
+-- x_hourly(003cを置き換え): 003cの処理に警報2つを追加
+--  ・llm_error_rate: 直近1時間のllm_usageでエラー率50%以上(呼び出し10回以上のとき)
+--  ・tier_stalled: batch_key が null のまま、最初の投稿から batch_confirm_hours(既定4)を超えた投稿群が残っている
+--    (tier_scope_from が未設定、または tier_assign_enabled=false の間は確定しないのが正常なので出さない)
+create or replace function public.x_hourly()
+returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
+declare v_prev timestamptz; v_prev_date date; v_last_fetch timestamptz; r jsonb;
+        v_calls int; v_errs int; v_scope timestamptz; v_oldest timestamptz; v_hours numeric;
+begin
+  r := public.tier_maintenance();
+  perform public.snapshot_post_scores();
+  perform public.refresh_cost_monthly();
+  v_prev := public.jst_month_start(public.jst_month_start(now()) - interval '1 day');
+  v_prev_date := (v_prev at time zone 'Asia/Tokyo')::date;
+  if extract(day from (now() at time zone 'Asia/Tokyo')) <= 3
+     and not exists (select 1 from public.llm_cost_monthly where month = v_prev_date and finalized) then
+    perform public.refresh_cost_monthly(v_prev, true);
+  end if;
+  perform public.cost_watch();
+  select max(fetched_at) into v_last_fetch from public.x_posts;
+  if v_last_fetch is not null and v_last_fetch < now() - interval '20 hours' then
+    perform public.ops_event('warn', 'fetch_stale', 'Xの取得が20時間以上ありません',
+                             jsonb_build_object('detail', round(extract(epoch from (now() - v_last_fetch)) / 3600) || ' hours'), 720);
+  end if;
+
+  select count(*), count(*) filter (where status = 'error') into v_calls, v_errs
+    from public.llm_usage where called_at >= now() - interval '1 hour';
+  if v_calls >= 10 and v_errs * 2 >= v_calls then
+    perform public.ops_event('warn', 'llm_error_rate', 'Geminiの呼び出しエラー率が高くなっています',
+                             jsonb_build_object('detail', v_errs || '/' || v_calls || ' errors in 1h'), 360);
+  end if;
+
+  begin
+    v_scope := (public.cfg('tier_scope_from') #>> '{}')::timestamptz;
+  exception when others then
+    v_scope := null;
+  end;
+  if v_scope is not null and public.cfg_bool('tier_assign_enabled', true) then
+    v_hours := greatest(public.cfg_num('batch_confirm_hours', 4), 4);
+    select min(fetched_at) into v_oldest from public.x_posts where batch_key is null and fetched_at >= v_scope;
+    if v_oldest is not null and v_oldest < now() - make_interval(secs => (v_hours * 3600)::int) then
+      perform public.ops_event('warn', 'tier_stalled', '区分が確定しない投稿が' || v_hours || '時間以上残っています',
+                               jsonb_build_object('detail', round(extract(epoch from (now() - v_oldest)) / 3600) || ' hours'), 360);
+    end if;
+  end if;
+
+  perform public.notify_ops();
+  return r;
+end $$;
+
 -- x_daily(毎日05:00 JST): モデル確認・今週の流れの日次更新・整理・死活信号
 create or replace function public.x_daily()
 returns void language plpgsql security definer set search_path = public, pg_temp as $$
@@ -417,7 +483,7 @@ do $$
 declare f text;
 begin
   foreach f in array array['finalize_tiers(boolean)', 'author_scoreboard(int)', 'weekly_report(date)', 'notify_ops()',
-                           'digest_due()', 'x_tick()', 'x_daily()', 'x_weekly()']
+                           'digest_due()', 'x_tick()', 'x_hourly()', 'x_daily()', 'x_weekly()']
   loop
     execute format('revoke all on function public.%s from public, anon, authenticated', f);
     execute format('grant execute on function public.%s to service_role', f);

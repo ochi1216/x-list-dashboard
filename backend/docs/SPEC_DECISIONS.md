@@ -27,4 +27,6 @@ PM-A=音声・UX / PM-B=費用・運用・安全 / PM-C=データ品質・評価
 | 21 | キャップ: 重複→1(採点前にコード判定)、本文も画像も無い→1、告知→1(ただし生スコア4以上と矛盾なら3に留めて記録)、参照のみ→最大3、evidence無しで4以上→3、指示文混入→2。意見・感想→3は`cap_opinion`(初期false=記録のみ)。全キャップで`score_raw`と`cap_reason`保存。 |
 | 22 | 本番反映: DB(加算のみ)→Edge(新規→summarize-x-post→他X系→TI系)→新UIは`index_beta.html`で先行公開(iPhone実機確認後に`index.html`へ昇格、旧版は`index_prev.html`)。cronは削除でなく無効化して1週間残す。 |
 
+#6の例外: 再採点で中央値を採った試行の kind/interest/reason/raw も採用する(cap_reasonと点の矛盾を避けるため。全試行は `score_runs` に残る)。
+
 追加: 採点の全試行は追記専用`score_runs`、初回の一括採点は`backfill`扱い(区分確定の対象外)。通知・費用・認証の誤設定時は`kill_switch`で止められる。

@@ -164,7 +164,47 @@ export const KATAKANA_STOP = new Set([
   "コメント", "メッセージ", "プロジェクト", "ビジネス", "マーケット", "トレンド", "リスク", "ルール",
   "モデル", "テスト", "サイト", "ページ", "リンク", "ファイル", "カード", "チーム", "メリット", "デメリット",
   "アップデート", "リリース", "スタート", "ケース", "タイプ", "レベル", "イメージ", "アイデア", "ヒント",
+  // 単位語(英語カードの $20 / 3.5% / 5km などを日本語で書くと片仮名になる)
+  "ドル", "セント", "パーセント", "ユーロ", "ポンド", "キロ", "メガ", "ギガ", "テラ", "ミリ", "マイクロ", "ナノ",
+  "キロメートル", "キログラム", "メートル", "グラム", "リットル", "ヘルツ", "ワット", "バイト", "ビット",
 ]);
+
+// 英略語・社名の片仮名表記(ui/tts.js の DICT と同等の主要語)。英字が本文にあれば片仮名表記も根拠ありとみなす。
+export const KANA_DICT: Record<string, string> = {
+  "AI": "エーアイ", "AGI": "エージーアイ", "GPT": "ジーピーティー", "ChatGPT": "チャットジーピーティー",
+  "LLM": "エルエルエム", "ML": "エムエル", "API": "エーピーアイ", "SDK": "エスディーケイ", "MCP": "エムシーピー",
+  "RAG": "ラグ", "SaaS": "サース", "CPU": "シーピーユー", "GPU": "ジーピーユー", "NPU": "エヌピーユー", "TPU": "ティーピーユー",
+  "SoC": "エスオーシー", "FPGA": "エフピージーエー", "ASIC": "エーシック", "HBM": "エイチビーエム", "DRAM": "ディーラム",
+  "SRAM": "エスラム", "NAND": "ナンド", "SSD": "エスエスディー", "HDD": "エイチディーディー", "LED": "エルイーディー",
+  "OLED": "オーレッド", "LiDAR": "ライダー", "TSMC": "ティーエスエムシー", "NVIDIA": "エヌビディア",
+  "OpenAI": "オープンエーアイ", "Anthropic": "アンスロピック", "Claude": "クロード", "Gemini": "ジェミニ",
+  "Google": "グーグル", "Microsoft": "マイクロソフト", "Apple": "アップル", "Amazon": "アマゾン",
+  "AWS": "エーダブリューエス", "Meta": "メタ", "Tesla": "テスラ", "Intel": "インテル", "AMD": "エーエムディー",
+  "Qualcomm": "クアルコム", "Samsung": "サムスン", "SpaceX": "スペースエックス", "xAI": "エックスエーアイ",
+  "DeepSeek": "ディープシーク", "Llama": "ラマ", "Mistral": "ミストラル", "Copilot": "コパイロット", "Siri": "シリ",
+  "iPhone": "アイフォーン", "iPad": "アイパッド", "iOS": "アイオーエス", "macOS": "マックオーエス",
+  "Android": "アンドロイド", "Windows": "ウィンドウズ", "GitHub": "ギットハブ", "Git": "ギット",
+  "YouTube": "ユーチューブ", "Twitter": "ツイッター", "Bluetooth": "ブルートゥース", "Wi-Fi": "ワイファイ",
+  "IoT": "アイオーティー", "EV": "イーブイ", "PC": "ピーシー", "OS": "オーエス", "UI": "ユーアイ", "UX": "ユーエックス",
+  "AR": "エーアール", "VR": "ブイアール", "DX": "ディーエックス", "USB": "ユーエスビー", "PDF": "ピーディーエフ",
+  "CEO": "シーイーオー", "CFO": "シーエフオー", "CTO": "シーティーオー", "IPO": "アイピーオー", "ETF": "イーティーエフ",
+  "GDP": "ジーディーピー", "KPI": "ケーピーアイ", "ROI": "アールオーアイ", "ESG": "イーエスジー", "Fed": "フェド",
+  "FAQ": "エフエーキュー", "B2B": "ビーツービー", "B2C": "ビーツーシー",
+};
+const KANA_ENTRIES = Object.entries(KANA_DICT)
+  .map(([k, v]) => ({ latin: k.toLowerCase(), kana: v }))
+  .sort((a, b) => b.kana.length - a.kana.length);
+const KANA_BY_LATIN = new Map(KANA_ENTRIES.map((e) => [e.latin, e.kana]));
+
+function hasLatinWord(hay: string, w: string): boolean {
+  let i = hay.indexOf(w);
+  while (i >= 0) {
+    const b = i > 0 ? hay[i - 1] : "", a = hay[i + w.length] ?? "";
+    if (!/[a-z0-9]/.test(b) && !/[a-z0-9]/.test(a)) return true;
+    i = hay.indexOf(w, i + 1);
+  }
+  return false;
+}
 
 export function extractLatin(text: string): string[] {
   return (norm(text).toLowerCase().match(LATIN_RE) ?? []).filter((w) => w.length >= 2);
@@ -176,16 +216,44 @@ export function extractKatakana(text: string): string[] {
 // ---------- 検査 ----------
 
 export interface Corpus {
-  text: string; // norm済み・小文字
+  text: string; // norm済み・小文字(本文。数値・英字・日付はこれだけで検査)
   nums: Set<string>;
   dates: DateTok[];
+  // 同じカードの要旨・要約(小文字)。片仮名・漢字語の根拠にだけ使う(英語カードの日本語要旨が語の言い換えを持つため)
+  soft: string;
 }
-export function buildCorpus(texts: string[]): Corpus {
+export function buildCorpus(texts: string[], softTexts: string[] = []): Corpus {
   const joined = texts.join("\n");
   const text = norm(joined).toLowerCase();
   const nums = new Set<string>();
   for (const n of extractNumbers(joined)) nums.add(numKey(n.v, n.pct));
-  return { text, nums, dates: extractDates(joined).dates };
+  return { text, nums, dates: extractDates(joined).dates, soft: norm(softTexts.join("\n")).toLowerCase() };
+}
+// 片仮名・漢字語の根拠(本文+同カードの要旨・要約)
+function hayOf(c: Corpus): string {
+  return c.soft ? `${c.text}\n${c.soft}` : c.text;
+}
+
+// 英字語が本文で裏付けられるか(本文に在る、またはその片仮名表記が本文にある)
+function latinOk(w: string, c: Corpus): boolean {
+  if (c.text.includes(w)) return true;
+  const kana = KANA_BY_LATIN.get(w);
+  return !!kana && c.text.includes(kana);
+}
+// 片仮名語が根拠ありか。本文・要旨・要約に在る、または辞書の片仮名表記(対応する英字が本文等にある)で分割できる。
+function katakanaOk(w: string, c: Corpus): boolean {
+  const hay = hayOf(c);
+  if (hay.includes(w)) return true;
+  let rest = w;
+  let hit = false;
+  for (const e of KANA_ENTRIES) {
+    if (!rest.includes(e.kana)) continue;
+    if (!hasLatinWord(hay, e.latin)) continue;
+    rest = rest.split(e.kana).join(" ");
+    hit = true;
+  }
+  if (!hit) return false;
+  return rest.split(" ").every((p) => p.length < 2 || KATAKANA_STOP.has(p) || hay.includes(p));
 }
 
 function dateOk(dt: DateTok, c: Corpus): boolean {
@@ -230,6 +298,7 @@ export function extractKanjiRuns(text: string, minLen: number): string[] {
 
 // 漢字の連なりが「ストップ語・本文に在る部分・接頭接尾の1字」だけで分割できれば根拠あり。
 function kanjiRunOk(run: string, c: Corpus): boolean {
+  const hay = hayOf(c);
   const ch = [...run];
   const n = ch.length;
   const okAt: boolean[] = new Array(n + 1).fill(false);
@@ -240,7 +309,7 @@ function kanjiRunOk(run: string, c: Corpus): boolean {
       const seg = ch.slice(i, j).join("");
       if (j - i === 1) {
         if (KANJI_AFFIX.has(seg)) okAt[j] = true;
-      } else if (KANJI_STOP.has(seg) || c.text.includes(seg)) {
+      } else if (KANJI_STOP.has(seg) || hay.includes(seg)) {
         okAt[j] = true;
       }
     }
@@ -259,8 +328,8 @@ export function checkClaim(claim: string, c: Corpus, opts: ClaimOpts = {}): { ok
   for (const dt of dates) if (!dateOk(dt, c)) return { ok: false, reason: "date" };
   const nt = numberTokens(rest, true);
   for (const n of nt.toks) if (!numOk(n, c)) return { ok: false, reason: "number" };
-  for (const w of extractLatin(rest)) if (!c.text.includes(w)) return { ok: false, reason: "latin" };
-  for (const w of extractKatakana(rest)) if (!c.text.includes(w)) return { ok: false, reason: "katakana" };
+  for (const w of extractLatin(rest)) if (!latinOk(w, c)) return { ok: false, reason: "latin" };
+  for (const w of extractKatakana(nt.rest)) if (!katakanaOk(w, c)) return { ok: false, reason: "katakana" };
   const kmin = opts.kanjiMin ?? 0;
   if (kmin > 0) {
     for (const w of extractKanjiRuns(nt.rest, kmin)) if (!kanjiRunOk(w, c)) return { ok: false, reason: "kanji" };
@@ -314,6 +383,11 @@ export function cardCorpusTexts(c: Card): string[] {
   const t = [c.content ?? ""];
   if (c.image_urls && c.image_urls.length > 0) t.push(c.gist ?? "", c.summary ?? "");
   return t;
+}
+
+// 片仮名・漢字語の根拠に加える同カードの要旨・要約
+export function cardSoftTexts(c: Card): string[] {
+  return [c.gist ?? "", c.summary ?? ""];
 }
 
 export const TODAY_SCHEMA = {
@@ -394,8 +468,29 @@ function asStr(v: unknown): string {
 export const KANJI_MIN_FACT = 2;
 export const KANJI_MIN_TEXT = 3;
 
+// 続報の照合: 前日の見出しのどれかと共通する語(英字・固有の片仮名・ストップ語以外の漢字語)があるか。
+function followupTerms(text: string): string[] {
+  const t = norm(text);
+  return [
+    ...extractLatin(t),
+    ...extractKatakana(t).map((w) => w.toLowerCase()),
+    ...extractKanjiRuns(t, 2).filter((w) => !KANJI_STOP.has(w)),
+  ];
+}
+export function followupSupported(topicText: string, prevHeadlines: string[]): boolean {
+  if (prevHeadlines.length === 0) return false;
+  const topicLow = norm(topicText).toLowerCase();
+  const topicTerms = new Set(followupTerms(topicText));
+  for (const h of prevHeadlines) {
+    const hLow = norm(h).toLowerCase();
+    for (const w of followupTerms(h)) if (topicLow.includes(w.toLowerCase())) return true;
+    for (const w of topicTerms) if (hLow.includes(w.toLowerCase())) return true;
+  }
+  return false;
+}
+
 // 生成結果(未検査)を検査し、本文に無い文を削除する。
-// prevHeadlines: 前日(直近のdigest_daily)の見出し。空なら is_followup は常に false。
+// prevHeadlines: 前日(直近のdigest_daily・2日以内)の見出し。空、または共通する語が無ければ is_followup は false。
 export function validateTopics(raw: unknown, cards: Card[], prevHeadlines: string[] = []): TodayValidation {
   const byUrl = new Map(cards.map((c) => [c.post_url, c]));
   const list = Array.isArray(raw) ? (raw as unknown[]).slice(0, MAX_TOPICS) : [];
@@ -414,7 +509,7 @@ export function validateTopics(raw: unknown, cards: Card[], prevHeadlines: strin
       if (!headline) headlineFailed++;
       continue;
     }
-    const corpus = buildCorpus(urls.flatMap((u) => cardCorpusTexts(byUrl.get(u)!)));
+    const corpus = buildCorpus(urls.flatMap((u) => cardCorpusTexts(byUrl.get(u)!)), urls.flatMap((u) => cardSoftTexts(byUrl.get(u)!)));
     if (!checkClaim(headline, corpus, { kanjiMin: KANJI_MIN_TEXT }).ok) {
       dropped += units;
       headlineFailed++;
@@ -432,7 +527,7 @@ export function validateTopics(raw: unknown, cards: Card[], prevHeadlines: strin
       summary: keptSent.slice(0, 2).join(""),
       new_facts: keptFacts,
       card_urls: urls,
-      is_followup: prevHeadlines.length > 0 && o.is_followup === true,
+      is_followup: o.is_followup === true && followupSupported([headline, ...keptSent, ...keptFacts].join(" "), prevHeadlines),
     });
   }
   return { topics: out, total, dropped, headlineFailed };
@@ -497,10 +592,12 @@ export function todayMaxTokens(cardCount: number): number {
   return Math.min(6000, 1500 + 80 * cardCount);
 }
 
-// 前日(直近のdigest_daily。当日より前で status=ok かつ話題あり)の見出し一覧
+// 前日(直近のdigest_daily。当日より前・2日以内で status=ok かつ話題あり)の見出し一覧
+export const FOLLOWUP_MAX_DAYS = 2;
 export function prevHeadlinesOf(rows: DailyRow[], day: string): string[] {
+  const oldest = addDays(day, -FOLLOWUP_MAX_DAYS);
   const prev = rows
-    .filter((r) => r.day < day && r.status === "ok")
+    .filter((r) => r.day < day && r.day >= oldest && r.status === "ok")
     .sort((a, b) => b.day.localeCompare(a.day))
     .find((r) => topicsOf(r).length > 0);
   return prev ? topicsOf(prev).map((t) => t.headline) : [];
@@ -549,7 +646,7 @@ export async function runToday(deps: DigestDeps): Promise<TodayResult> {
   // 前日の見出し(is_followup の根拠)。取れなくても生成は続ける(その場合 is_followup は常に false)。
   let prevHeadlines: string[] = [];
   try {
-    prevHeadlines = prevHeadlinesOf(await deps.listDaily(addDays(day, -7), addDays(day, -1)), day);
+    prevHeadlines = prevHeadlinesOf(await deps.listDaily(addDays(day, -FOLLOWUP_MAX_DAYS), addDays(day, -1)), day);
   } catch {
     prevHeadlines = [];
   }
@@ -599,8 +696,12 @@ export async function runToday(deps: DigestDeps): Promise<TodayResult> {
     if (g2.ok) {
       const t2 = topicsArray(g2);
       if (t2 !== null) {
-        model = g2.model;
-        v = validateTopics(t2, cards, prevHeadlines);
+        // 再生成が1回目より悪い(話題が減る・全滅)なら採用しない。1回目に有効な話題があればそれを保存する。
+        const v2 = validateTopics(t2, cards, prevHeadlines);
+        if (v2.topics.length > 0 && v2.topics.length >= v.topics.length) {
+          model = g2.model;
+          v = v2;
+        }
       }
     }
   }

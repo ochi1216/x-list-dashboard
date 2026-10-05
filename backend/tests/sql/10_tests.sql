@@ -63,8 +63,33 @@ select pg_temp.chk('F1 表権限は SELECT のみ',
   (select string_agg(distinct privilege_type, ',') from information_schema.role_table_grants
     where table_schema = 'public' and table_name = 'x_posts' and grantee in ('anon', 'authenticated')) = 'SELECT');
 select pg_temp.chk('F1 RLSは有効のまま', (select relrowsecurity from pg_class where oid = 'public.x_posts'::regclass));
-select pg_temp.chk('F1 他の既存表(digest_summaries)は触っていない',
-  has_table_privilege('anon', 'public.digest_summaries', 'INSERT'));
+-- N2: fetch_runs / digest_summaries は anon / authenticated とも SELECT のみ
+insert into public.fetch_runs default values; insert into public.digest_summaries(list_name, period_type) values ('l', 'p');
+do $$
+declare r1 boolean; r2 boolean; r3 boolean; r4 boolean; r5 boolean; r6 boolean; r7 boolean; r8 boolean; n1 int; n2 int; r text;
+begin
+  foreach r in array array['anon', 'authenticated'] loop
+    execute format('set local role %I', r);
+    begin insert into public.fetch_runs default values; r1 := false; exception when insufficient_privilege then r1 := true; end;
+    begin update public.fetch_runs set ran_at = now(); r2 := false; exception when insufficient_privilege then r2 := true; end;
+    begin delete from public.fetch_runs; r3 := false; exception when insufficient_privilege then r3 := true; end;
+    begin truncate public.fetch_runs; r4 := false; exception when insufficient_privilege then r4 := true; end;
+    begin insert into public.digest_summaries(list_name) values ('x'); r5 := false; exception when insufficient_privilege then r5 := true; end;
+    begin update public.digest_summaries set list_name = 'x'; r6 := false; exception when insufficient_privilege then r6 := true; end;
+    begin delete from public.digest_summaries; r7 := false; exception when insufficient_privilege then r7 := true; end;
+    begin truncate public.digest_summaries; r8 := false; exception when insufficient_privilege then r8 := true; end;
+    begin select count(*) into n1 from public.fetch_runs; select count(*) into n2 from public.digest_summaries; exception when others then n1 := -1; end;
+    reset role;
+    perform pg_temp.chk('N2 ' || r || ': fetch_runs の INSERT/UPDATE/DELETE/TRUNCATE は拒否', r1 and r2 and r3 and r4);
+    perform pg_temp.chk('N2 ' || r || ': digest_summaries の INSERT/UPDATE/DELETE/TRUNCATE は拒否', r5 and r6 and r7 and r8);
+    perform pg_temp.chk('N2 ' || r || ': 2表とも SELECT は可', n1 >= 1 and n2 >= 1, n1 || '/' || n2);
+  end loop;
+end $$;
+select pg_temp.chk('N2 2表の表権限は SELECT のみ(anon/authenticated)',
+  (select string_agg(distinct privilege_type, ',') from information_schema.role_table_grants
+    where table_schema = 'public' and table_name in ('fetch_runs', 'digest_summaries') and grantee in ('anon', 'authenticated')) = 'SELECT');
+select pg_temp.chk('N2 service_role は書ける(Edge Function用)',
+  has_table_privilege('service_role', 'public.fetch_runs', 'INSERT') or (select rolbypassrls from pg_roles where rolname = 'service_role'));
 
 -- ============ A: finalize_tiers ============
 select pg_temp.reset_state();
@@ -90,6 +115,14 @@ select pg_temp.chk('A 通常: 新しい順に3件が聴く(既読・昇格は枠
   (select string_agg(post_url || '=' || listen_tier || '/' || tier_reason, ',' order by post_url) from public.x_posts where post_url ~ '^a[0-9]$')
   = 'a1=skim/quota,a2=listen/score>=4,a3=listen/score>=4,a4=listen/score>=4',
   (select string_agg(post_url || '=' || listen_tier || '/' || tier_reason, ',' order by post_url) from public.x_posts where post_url ~ '^a[0-9]$'));
+select pg_temp.chk('A 手動降格(score5): tier_initial はアルゴリズム判定(listen)、listen_tier だけ hold',
+  (select tier_initial = 'listen' and listen_tier = 'hold' from public.x_posts where post_url = 'dm'),
+  (select tier_initial || '/' || listen_tier from public.x_posts where post_url = 'dm'));
+select pg_temp.chk('A 手動昇格(score2): tier_initial は hold、listen_tier だけ listen',
+  (select tier_initial = 'hold' and listen_tier = 'listen' from public.x_posts where post_url = 'pr'),
+  (select tier_initial || '/' || listen_tier from public.x_posts where post_url = 'pr'));
+select pg_temp.chk('A 手動以外の投稿は tier_initial = listen_tier',
+  not exists (select 1 from public.x_posts where manual_action is null and batch_key is not null and tier_initial <> listen_tier));
 select pg_temp.chk('A 閾値未満: 3点=skim, 2点=hold',
   (select listen_tier = 'skim' and tier_reason = 'below_threshold' from public.x_posts where post_url = 'mid')
   and (select listen_tier = 'hold' and tier_reason = 'low_score' from public.x_posts where post_url = 'lo'));
@@ -157,6 +190,20 @@ select pg_temp.chk('C digest_due: 40分前の試行 -> true', public.digest_due(
 update public.tuning_config set value = '"not a date"'::jsonb where key = 'digest_last_attempt_at';
 select pg_temp.chk('C digest_due: 不正な値でも例外にならず true', public.digest_due());
 delete from public.tuning_config where key = 'digest_last_attempt_at';
+-- 古い failed/paused 行があっても(試行が30分より前なら)空振りしない
+insert into public.digest_daily(day, generated_at, status) values ((public.jst_day2_start(now()) at time zone 'Asia/Tokyo')::date, now() - interval '3 hours', 'failed');
+select pg_temp.chk('C digest_due: 古い failed 行があっても true(failed/paused の有無は見ない)', public.digest_due());
+update public.digest_daily set generated_at = now() - interval '5 minutes', status = 'paused';
+select pg_temp.chk('C digest_due: 直近の paused 行があっても試行記録が無ければ true', public.digest_due());
+-- ok 行から digest_min_interval_hours(6)以内なら false
+update public.digest_daily set generated_at = now() - interval '1 hour', status = 'ok';
+update public.tier_batches set finalized_at = now();
+select pg_temp.chk('C digest_due: ok 行から1時間(<6時間) -> false', not public.digest_due());
+update public.digest_daily set generated_at = now() - interval '7 hours', status = 'empty';
+update public.tier_batches set finalized_at = now();
+update public.x_posts set scored_at = now();
+select pg_temp.chk('C digest_due: empty 行から7時間(>=6時間)で新規が揃えば true', public.digest_due());
+delete from public.digest_daily;
 
 -- ============ C: x_tick の分岐(net.http_post をスタブし、呼ばれた関数名を記録) ============
 select pg_temp.reset_state();
@@ -212,6 +259,55 @@ select pg_temp.chk('C x_weekly: 週次レポートのみ(関数は呼ばない)'
   and exists (select 1 from public.weekly_reports where week_start = (date_trunc('week', (now() at time zone 'Asia/Tokyo') - interval '2 hours'))::date - 7));
 select pg_temp.chk('C 004: x_hourly は毎時3分、x_tickの分(*/5)と重ならない',
   (select schedule from cron.job where jobname = 'x_hourly') = '3 * * * *' and (select schedule from cron.job where jobname = 'x_tick') = '*/5 * * * *');
+
+-- ============ C: x_hourly の警報(llm_error_rate / tier_stalled)と notify_ops のラベル ============
+select pg_temp.reset_state();
+truncate public.ops_events, public.llm_usage;
+select pg_temp.chk('C x_hourly: 警報の条件が無ければ警告は出ない',
+  (select public.x_hourly() is not null) and not exists (select 1 from public.ops_events where kind in ('llm_error_rate', 'tier_stalled')));
+insert into public.llm_usage(fn, purpose, model, status) select 'f', 'score', 'm', 'error' from generate_series(1, 9);
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: 呼び出し9回(<10)はエラー率100%でも警報なし', not exists (select 1 from public.ops_events where kind = 'llm_error_rate'));
+insert into public.llm_usage(fn, purpose, model, status) values ('f', 'score', 'm', 'ok');
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: 10回中9回エラー -> llm_error_rate(warn)', (select count(*) = 1 from public.ops_events where kind = 'llm_error_rate' and level = 'warn'));
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: llm_error_rate は360分dedupeで増えない', (select count(*) = 1 from public.ops_events where kind = 'llm_error_rate'));
+truncate public.llm_usage, public.ops_events;
+insert into public.llm_usage(fn, purpose, model, status) select 'f', 'score', 'm', case when i <= 4 then 'error' else 'ok' end from generate_series(1, 10) i;
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: 10回中4回エラー(40%)は警報なし', not exists (select 1 from public.ops_events where kind = 'llm_error_rate'));
+insert into public.llm_usage(fn, purpose, model, status) select 'f', 'score', 'm', 'error' from generate_series(1, 2);
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: 12回中6回エラー(50%)で警報', (select count(*) = 1 from public.ops_events where kind = 'llm_error_rate'));
+insert into public.llm_usage(fn, purpose, model, status, called_at) select 'f', 'score', 'm', 'error', now() - interval '2 hours' from generate_series(1, 30);
+-- tier_stalled
+select pg_temp.addp('ts1', now() - interval '3 hours', 4, 'scored');
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: 3時間前の未確定は tier_stalled にしない', not exists (select 1 from public.ops_events where kind = 'tier_stalled'));
+update public.x_posts set fetched_at = now() - interval '5 hours', posted_at = now() - interval '5 hours';
+update public.tuning_config set value = 'false'::jsonb where key = 'tier_assign_enabled';
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: tier_assign_enabled=false の間は tier_stalled を出さない', not exists (select 1 from public.ops_events where kind = 'tier_stalled'));
+update public.tuning_config set value = 'true'::jsonb where key = 'tier_assign_enabled';
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: 5時間前から未確定 -> tier_stalled(warn)', (select count(*) = 1 from public.ops_events where kind = 'tier_stalled' and level = 'warn'));
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: tier_stalled は360分dedupeで増えない', (select count(*) = 1 from public.ops_events where kind = 'tier_stalled'));
+select public.finalize_tiers(true);
+select pg_temp.chk('C x_hourly: 確定後(batch_key あり)は未確定が残らない=tier_stalled の対象外', not exists (select 1 from public.x_posts where batch_key is null));
+truncate public.ops_events; select public.x_hourly();
+select pg_temp.chk('C x_hourly: 確定後は tier_stalled を出さない', not exists (select 1 from public.ops_events where kind = 'tier_stalled'));
+-- notify_ops のラベル(日本語)
+truncate public.ops_events; truncate net._log;
+select public.set_secret('xd_ntfy_topic', 't_label');
+select public.ops_event('warn', k, 'x', '{}', 0) from unnest(array['llm_error_rate', 'tier_stalled', 'gemini_auth', 'digest_failed', 'score_stalled', 'model_probe_failed']) k;
+select pg_temp.chk('C notify_ops: 6種の警報が6件送られる', public.notify_ops() = 6);
+select pg_temp.chk('C notify_ops: 新6種のラベルは日本語(kind名のまま送らない)',
+  (select count(*) = 6 and bool_and(body ->> 'message' ~ '[ぁ-ん]') and bool_and(body ->> 'message' !~ '(llm_error_rate|tier_stalled|gemini_auth|digest_failed|score_stalled|model_probe_failed)')
+     from net._log where url = 'https://ntfy.sh'),
+  (select string_agg(body ->> 'message', ' | ') from net._log where url = 'https://ntfy.sh'));
+delete from vault.secrets where name = 'xd_ntfy_topic';
 
 -- ============ 結果 ============
 \o
