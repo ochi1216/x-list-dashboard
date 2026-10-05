@@ -47,8 +47,10 @@ jobs:
           for i in 1 2 3 4 5 6; do
             a=$(curl -s -o /dev/null -w '%{http_code}' "$url")
             b=$(curl -s -o /dev/null -w '%{http_code}' "${url}backend/docs/CONTRACT.md")
-            echo "attempt $i: / -> $a, /backend/docs/CONTRACT.md -> $b"
-            if [ "$a" = "200" ] && [ "$b" = "404" ]; then ok=1; break; fi
+            c=200
+            if [ -f index_beta.html ]; then c=$(curl -s -o /dev/null -w '%{http_code}' "${url}index_beta.html"); fi
+            echo "attempt $i: / -> $a, /index_beta.html -> $c, /backend/docs/CONTRACT.md -> $b"
+            if [ "$a" = "200" ] && [ "$b" = "404" ] && [ "$c" = "200" ]; then ok=1; break; fi
             sleep 10
           done
           test "$ok" = "1"
