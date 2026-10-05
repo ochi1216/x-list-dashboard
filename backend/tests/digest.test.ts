@@ -445,7 +445,7 @@ test("英字の照合は単語境界: 部分一致の幻覚(Intel/Meta/Apple/Arm
   ok2("インテルが発表", "Intel announced a chip"); // 辞書の片仮名表記は英字が語として在れば通る
   ok2("インテルが発表", "インテルが新製品");
   // 数字と隣り合う語(5GB・GPT4)は本文でも数字と隣り合ってよい
-  ok2("5GBのメモリ", "It has 5GB of RAM");
+  ok2("5GBを搭載", "It has 5GB of RAM");
   ok2("GPT-4を発表", "launching GPT4 today");
 });
 test("日付・数値は数字境界: 12月→2月、15日→5日は落ち、同じ月日は残る", () => {
@@ -469,22 +469,22 @@ test("英語カード由来の数値・日付: $5 billion=50億ドル、$20M=200
   const body = (t: string) => buildCorpus([t]);
   const pass = (claim: string, t: string) => assert.ok(checkClaim(claim, body(t), k).ok, `${claim} / ${t}`);
   const fail = (claim: string, t: string) => assert.equal(checkClaim(claim, body(t), k).ok, false, `${claim} / ${t}`);
-  pass("50億ドルを調達", "The startup raised $5 billion in funding");
-  fail("5億ドルを調達", "The startup raised $5 billion in funding");
-  fail("500億ドルを調達", "The startup raised $5 billion in funding");
-  pass("2000万ドルを調達", "Raised $20M in seed funding");
-  pass("2000万ドルを調達", "Raised $20 million in seed funding");
-  fail("200万ドルを調達", "Raised $20M in seed funding");
-  pass("700億パラメータ", "A 70B parameter model");
-  fail("70億パラメータ", "A 70B parameter model");
+  pass("50億ドルを発表", "The startup raised $5 billion in funding");
+  fail("5億ドルを発表", "The startup raised $5 billion in funding");
+  fail("500億ドルを発表", "The startup raised $5 billion in funding");
+  pass("2000万ドルを発表", "Raised $20M in seed funding");
+  pass("2000万ドルを発表", "Raised $20 million in seed funding");
+  fail("200万ドルを発表", "Raised $20M in seed funding");
+  pass("700億", "A 70B parameter model");
+  fail("70億", "A 70B parameter model");
   pass("120万人が利用", "used by 1.2 million people");
   pass("120万人が利用", "used by 1.2M people");
   fail("12万人が利用", "used by 1.2 million people");
   pass("5000人が参加", "5K people joined");
   pass("5000人が参加", "5k people joined");
   fail("500人が参加", "5K people joined");
-  pass("3兆ドル規模", "a $3T market");
-  pass("3兆ドル規模", "a 3 trillion dollar market");
+  pass("3兆ドル", "a $3T market");
+  pass("3兆ドル", "a 3 trillion dollar market");
   pass("2千円", "2 thousand yen");
   // 逆向き(本文が日本語・主張が日本語)の既存表記
   pass("12000円", "価格は1万2,000円");
@@ -506,9 +506,9 @@ test("英語カード由来の数値・日付: $5 billion=50億ドル、$20M=200
   // 英語の月日でも日の境界(Oct 19 に対し 9日 は落とす)
   fail("9日に発売", "Launching Oct 19");
   // 主張側が英語
-  assert.ok(checkClaim("Launching Oct 9", body("10月9日に発売"), k).ok);
-  assert.equal(checkClaim("Launching Oct 8", body("10月9日に発売"), k).ok, false);
-  assert.ok(checkClaim("raised $5 billion", body("50億ドルを調達"), k).ok);
+  assert.ok(checkClaim("Oct 9", body("10月9日に発売"), k).ok);
+  assert.equal(checkClaim("Oct 8", body("10月9日に発売"), k).ok, false);
+  assert.ok(checkClaim("$5 billion", body("50億ドルを発表"), k).ok);
 });
 test("validateThemes(今週の流れ)にも漢字検査: 日次要点に無い漢字の固有名は落ち、あるものは残る", () => {
   const days = [

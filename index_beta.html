@@ -291,7 +291,9 @@
   .fl-actions { padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); }
   .fl-actions .btn { width: 100%; min-height: 64px; font-size: 20px; }
   /* 「‹ 今日」は既存の1行(更新ダイジェストの題名行)の中に置く。行の高さは右端の「▲ 閉じる」ピルと同じなので、固定ヘッダの高さは増えない */
-  #btnBackToday { background: none; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 11px; cursor: pointer; padding: 3px 8px; margin-right: 8px; flex-shrink: 0; min-height: 0; line-height: normal; white-space: nowrap; }
+  #btnBackToday { position: relative; background: none; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 11px; cursor: pointer; padding: 3px 8px; margin-right: 8px; flex-shrink: 0; min-height: 0; line-height: normal; white-space: nowrap; }
+  /* タップ領域は44px以上にする(見た目の高さ・固定ヘッダの高さは増やさない: 透明な ::before で上下左右へ広げる) */
+  #btnBackToday::before { content: ""; position: absolute; left: -8px; right: -8px; top: 50%; height: 44px; margin-top: -22px; }
   #digest .digest-titlebar h2 { flex: 1; min-width: 0; }
   #digest .digest-titlebar .caret { white-space: nowrap; }
 
@@ -393,7 +395,7 @@
 
   <section id="tab-today" class="tab-body" data-tab-body="today">
     <div class="today-head"><h1>🎧 今日</h1><span class="date" id="todayDate"></span><button type="button" class="btn small" id="btnTodayReload" title="再読込">↻</button></div>
-    <div id="offlineBox" hidden><button type="button" class="btn big" id="btnOffline">⚠️ 通信できません。再読み込み</button></div>
+    <div id="offlineBox" hidden><button type="button" class="btn big" id="btnOffline">⚠️ 取得できませんでした。再読み込み</button></div>
     <div id="todayNote" hidden role="status"></div>
     <div id="resumeBox" hidden><button type="button" class="btn big" id="btnResume">中断しました。続きから再生<small id="resumeSub"></small></button></div>
     <div id="listenBox" class="stack">
@@ -615,31 +617,43 @@
   };
 
   var STORAGE_KEY = "xdash_tts_dict";
-  function userDict() {
+  function userDictRaw() {
     try {
       if (typeof localStorage === "undefined" || !localStorage) return null;
-      var s = localStorage.getItem(STORAGE_KEY);
-      if (!s) return null;
-      var o = JSON.parse(s);
-      return o && typeof o === "object" ? o : null;
+      return localStorage.getItem(STORAGE_KEY) || null;
     } catch (e) { return null; }
   }
+  function parseUserDict(s) {
+    if (!s) return null;
+    try { var o = JSON.parse(s); return o && typeof o === "object" ? o : null; } catch (e) { return null; }
+  }
+  var dictVer = 0;
   function extendDict(obj) {
     if (!obj || typeof obj !== "object") return DICT;
     for (var k in obj) if (Object.prototype.hasOwnProperty.call(obj, k) && typeof obj[k] === "string") DICT[k] = obj[k];
+    dictVer++;
     return DICT;
   }
+  // 組み込み辞書の簡易指紋(DICTを直接書き換えた場合の検知用。エントリ数と文字数の和)
+  function dictFingerprint() {
+    var n = 0, len = 0, k;
+    for (k in DICT) if (Object.prototype.hasOwnProperty.call(DICT, k)) { n++; len += k.length + (typeof DICT[k] === "string" ? DICT[k].length : 0); }
+    return dictVer + ":" + n + ":" + len;
+  }
+  // 辞書の版(ユーザー辞書・組み込み辞書のどちらが変わっても変わる安価な文字列)。呼び出し側のキャッシュ無効化用。
+  function dictSig() { return dictFingerprint() + "|" + (userDictRaw() || ""); }
 
   function esc(s) { return s.replace(/[.*+?^${}()|[\]\\\/]/g, "\\$&"); }
 
+  // 辞書の正規表現は一度だけ構築してキャッシュする(辞書が変わった時だけ作り直す)
   var dictCache = { sig: null, c: null };
   function compiledDict() {
-    var d = {}, k, u = userDict();
+    var sig = dictSig();
+    if (dictCache.sig === sig && dictCache.c) return dictCache.c;
+    var d = {}, k, u = parseUserDict(userDictRaw());
     for (k in DICT) if (Object.prototype.hasOwnProperty.call(DICT, k)) d[k] = DICT[k];
     if (u) for (k in u) if (Object.prototype.hasOwnProperty.call(u, k) && typeof u[k] === "string") d[k] = u[k];
     var keys = Object.keys(d).filter(function (x) { return x && typeof d[x] === "string"; });
-    var sig = keys.map(function (x) { return x + "\u0001" + d[x]; }).join("\u0002");
-    if (dictCache.sig === sig) return dictCache.c;
     keys.sort(function (a, b) { return b.length - a.length; });
     var sens = [], ins = [], plain = [], map = {}, mapL = {};
     keys.forEach(function (x) {
@@ -664,7 +678,7 @@
   }
 
   // ---------- 数値の読み下し ----------
-  var NUM = "\\d+(?:\\.\\d+)?";
+  var NUM = "\\d{1,20}(?:\\.\\d{1,20})?"; // 桁数に上限を付け、長い連続数字でも線形時間にする
   var MAGS = { k: 3, thousand: 3, m: 6, million: 6, b: 9, billion: 9, t: 12, trillion: 12 };
   var MAG_FALLBACK = { 3: "千", 6: "百万", 9: "十億", 12: "兆" };
 
@@ -724,8 +738,8 @@
 
   function validMD(m, d) { return m >= 1 && m <= 12 && d >= 1 && d <= 31; }
   // 月日の文脈語(日付・期日・曜日・発表/発売/開催などの直前直後)
-  var RE_DATE_CTX_BEFORE = /(?:日付|期日|期限|締切|締め切り|発売日|公開日|開催日|発表日|予定日|リリース日|配信日|開始日|終了日|更新日|投稿日|〆|date|dated|deadline|due|on|by|until|since|from|before|after)[\s:：は]{0,3}$/i;
-  var RE_DATE_CTX_AFTER = /^(?:\s?[(（][月火水木金土日祝](?:曜日?)?[)）]|\s?[月火水木金土日]曜|(?:の|に|には|は)?(?:発表|発売|公開|開催|開始|リリース|実施|施行|配信|終了|締切|締め切り|期限|登場|開幕|予定|スタート|解禁|出荷|納期|時点|現在|以降|以前|まで|から|より|付け?(?:の|で)?)|\s?(?:\(|（)\d)/;
+  var RE_DATE_CTX_BEFORE = /(?:日付|期日|期限|締切|締め切り|発売日|公開日|開催日|発表日|予定日|リリース日|配信日|開始日|終了日|更新日|投稿日|〆|来週|再来週|今週|先週|来月|今月|先月|本日|今日|明日|明後日|昨日|当日|翌日|同日|米国時間|日本時間|現地時間|東部時間|太平洋時間|(?:^|[^A-Za-z])(?:date|dated|deadline|due|on|by|until|till|since|from|before|after|today|tomorrow|yesterday|starting|starts|ends|as of|effective|week of))[\s:：は]{0,3}$/i;
+  var RE_DATE_CTX_AFTER = /^(?:\s?[(（][月火水木金土日祝](?:曜日?)?[)）]|\s?[月火水木金土日]曜|(?:の|に|には|は)?(?:発表|発売|公開|開催|開始|リリース|実施|施行|配信|終了|締切|締め切り|期限|登場|開幕|予定|スタート|解禁|出荷|納期|時点|現在|以降|以前|まで|から|より|付け?(?:の|で)?)|(?:に|には|にも)(?!達|到|近|なる|なった|相当|匹敵|対し|比べ|とどま)|\s?(?:\(|（)\d|\s?(?:event|launch|release|keynote|conference|summit|meeting|webinar|deadline|sale|update|expo|show|day|ship|ships|starts?|ends?|opens?)(?![A-Za-z]))/i;
 
   function readNumbers(t) {
     // 桁区切りカンマ(1,200 → 1200)
@@ -738,6 +752,16 @@
       return +mo >= 1 && +mo <= 12 ? pre + y + "年" + (+mo) + "月" : m;
     });
     t = t.replace(/(^|[^\d])24\/7(?![\d\/])/g, "$124時間365日");
+    // 「4.5/5点」は点数: 「5点満点中4.5点」(小数の分子で、分母以下の時だけ。整数の「3/5点」は従来どおり分数)
+    t = t.replace(/(^|[^\d\/.\-:])(\d{1,3}\.\d{1,2})\/(\d{1,3})\s?点/g, function (m, pre, a, b) {
+      return +a <= +b && +b > 0 ? pre + b + "点満点中" + a + "点" : m;
+    });
+    // 「4/5〜4/7」は日付の範囲(終わりが始まりより後、または年またぎ)。「1/4〜1/2」のような分数の並びは対象外
+    t = t.replace(/(^|[^\d\/.\-:])(\d{1,2})\/(\d{1,2})\s?[〜~\-–−―‐]\s?(\d{1,2})\/(\d{1,2})(?![\d\/])/g, function (m, pre, m1, d1, m2, d2) {
+      if (!validMD(+m1, +d1) || !validMD(+m2, +d2)) return m;
+      var ordered = +m2 > +m1 || (+m2 === +m1 && +d2 > +d1) || (+m1 >= 11 && +m2 <= 2);
+      return ordered ? pre + (+m1) + "月" + (+d1) + "日から" + (+m2) + "月" + (+d2) + "日" : m;
+    });
     // 年の無い n/n は「4/5(分数・評価値)」と区別できないので、月日の文脈語が前後にある時だけ日付にする。
     // 単独の n/n は日付にせず、後段で「n分のn」と読む。
     t = t.replace(/(^|[^\d\/.\-:])(\d{1,2})\/(\d{1,2})(?![\d\/])/g, function (m, pre, mo, d, off, str) {
@@ -776,8 +800,8 @@
   // ---------- clean ----------
   var CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳";
   var RE_EMOJI = /[\p{Extended_Pictographic}\p{Emoji_Modifier}‍️︎⃣\u{1F1E6}-\u{1F1FF}\u{E0020}-\u{E007F}]/gu;
-  var RE_URL = /(?:https?:\/\/|www\.)[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]*[A-Za-z0-9\-_~\/=%#]|\b(?:[A-Za-z0-9\-]+\.)+(?:com|net|org|io|ai|dev|app|jp|co|me|ly|gl|us|uk|tv|xyz|info|biz)(?:\/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]*[A-Za-z0-9\-_~\/=%#])?(?![A-Za-z0-9])/g;
-  var RE_EMAIL = /[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}/g;
+  var RE_URL = /(?:https?:\/\/|www\.)[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]*[A-Za-z0-9\-_~\/=%#]|\b(?:[A-Za-z0-9\-]{1,63}\.){1,10}(?:com|net|org|io|ai|dev|app|jp|co|me|ly|gl|us|uk|tv|xyz|info|biz)(?:\/[A-Za-z0-9\-._~:\/?#\[\]@!$&'()*+,;=%]*[A-Za-z0-9\-_~\/=%#])?(?![A-Za-z0-9])/g;
+  var RE_EMAIL = /[A-Za-z0-9._%+\-]{1,64}@[A-Za-z0-9.\-]{1,255}\.[A-Za-z]{2,}/g; // 長さに上限を付け、長い連続英数字でも線形時間にする
   var JPC = "぀-ヿ㐀-䶿一-鿿";
 
   function handleReading(name, names) {
@@ -845,8 +869,8 @@
 
     // 記号の置換
     t = t.replace(/&/g, "アンド").replace(/=/g, "イコール").replace(/\+/g, "プラス");
-    t = t.replace(/(\d+):(\d+)/g, "$1対$2");
-    t = t.replace(/(\d+)\/(\d+)/g, "$2分の$1");
+    t = t.replace(/(\d{1,20}):(\d{1,20})/g, "$1対$2");
+    t = t.replace(/(\d{1,20})\/(\d{1,20})/g, "$2分の$1");
     t = t.replace(/[\/|]/g, "、").replace(/[:;,]/g, "、").replace(/[【「『]/g, " ").replace(/[】」』]/g, "、");
     t = t.replace(/%/g, "パーセント").replace(/°/g, "度");
     t = t.replace(/\.{2,}|…+/g, "、").replace(/!+/g, "!").replace(/\?+/g, "?").replace(/[!]/g, "！").replace(/[?]/g, "？");
@@ -1115,7 +1139,7 @@
     };
   }
 
-  return { clean: clean, split: split, utterances: utterances, pickVoice: pickVoice, createPlayer: createPlayer, DICT: DICT, extendDict: extendDict };
+  return { clean: clean, split: split, utterances: utterances, pickVoice: pickVoice, createPlayer: createPlayer, DICT: DICT, extendDict: extendDict, dictSig: dictSig };
 });
 /*TTS:END*/
 </script>
@@ -1164,7 +1188,9 @@ async function sbCount(path) {
   return Number.isFinite(total) ? total : 0;
 }
 
-let loadFailed = false; // beta: 直近の読み込みが失敗(オフライン等)。今日タブに「通信できません。再読み込み」を出す
+let loadFailed = false; // beta: 直近の読み込みが失敗(オフライン等)。今日タブに「取得できませんでした。再読み込み」を出す
+let postsLoading = true; // beta: 読み込み中(起動直後の最初の取得を含む)。今日タブは「聴く0件」と断定せず「読み込み中…」を出す
+let lastLoadedAt = 0; // beta: 最後に取得できた時刻(自動更新の判定用)
 let allPosts = []; // 取得した生データ。postsは低情報フィルタ適用後の表示対象(recomputeVisiblePosts参照)
 let posts = [];
 let digestData = null; // 更新ダイジェスト（fetch_runs/digest_summaries/集計件数）のキャッシュ
@@ -1261,18 +1287,81 @@ async function patchIsRead(urls, markRead) {
   });
 }
 
+// 既読の再送キュー(AdminQueueと同型): 聴く/流す/これは不要の既読化が通信できず失敗しても黙って捨てず、
+// 端末(localStorage)に {url, via, at} で積み、online・画面復帰・60秒ごとに再送する。サーバーが受理した後にだけ削除する。
+// 積むのは送信の前(書き込み先行)なので、送信中にページが破棄されても失われない。同じURLは二重に積まない。
+const LS_KEY_READ_QUEUE = "xdash_read_queue";
+const ReadQueue = (() => {
+  let busy = null;
+  const load = () => { try { const a = JSON.parse(localStorage.getItem(LS_KEY_READ_QUEUE) || "[]"); return Array.isArray(a) ? a.filter((x) => x && typeof x.url === "string" && x.url) : []; } catch (e) { return []; } };
+  const changed = () => { try { document.dispatchEvent(new CustomEvent("xdash:readq")); } catch (e) { /* ignore */ } };
+  const save = (a, quiet) => { try { localStorage.setItem(LS_KEY_READ_QUEUE, JSON.stringify(a)); } catch (e) { /* ignore */ } if (!quiet) changed(); };
+  function add(url, via, quiet) {
+    const a = load();
+    if (a.some((x) => x.url === url)) return;
+    a.push({ url, via: via || "user", at: Date.now() });
+    save(a, quiet);
+  }
+  function remove(url, quiet) { const a = load(); const b = a.filter((x) => x.url !== url); if (b.length !== a.length) save(b, quiet); }
+  // 1件を送る(RPC mark_read、失敗したら従来のPATCH)。サーバーが受理したらtrue
+  async function send(url, via) {
+    if (await rpcMarkRead(url, via)) return true;
+    try { await patchIsRead([url], true); return true; } catch (err) { return false; }
+  }
+  // 既読にして送る。失敗したらキューに残す(成功したら消す)。通信できたかを返す
+  async function mark(url, via) {
+    add(url, via, true);
+    const ok = await send(url, via);
+    if (ok) remove(url, true); // 送信中に変わったかもしれないので成功時に外す(帯は一度も出さない)
+    changed();
+    return ok;
+  }
+  function flush() {
+    if (busy) return busy;
+    busy = (async () => {
+      const skipped = new Set();
+      let fails = 0;
+      for (;;) {
+        const it = load().find((x) => !skipped.has(x.url));
+        if (!it) break;
+        if (await send(it.url, it.via)) remove(it.url);
+        else { skipped.add(it.url); if (++fails >= 3) break; } // 圏外などで続けて失敗したら今回は打ち切る
+      }
+    })().finally(() => { busy = null; });
+    return busy;
+  }
+  // 読み込んだ投稿へ反映: サーバーが既に既読なら外し、未読のままなら端末ではローカルで既読として扱う
+  function applyLocal(list) {
+    const q = load();
+    if (!q.length) return;
+    const by = new Map();
+    for (const p of list || []) by.set(p.post_url, p);
+    const keep = [];
+    for (const it of q) {
+      const p = by.get(it.url);
+      if (p && p.is_read) continue; // サーバー側で既に既読(受理済み)
+      if (p) { p.is_read = true; p.read_via = it.via; p.read_at = new Date(it.at).toISOString(); }
+      keep.push(it);
+      if (typeof ReadQueue.onLocal === "function") { try { ReadQueue.onLocal(it.url); } catch (e) { /* ignore */ } }
+    }
+    if (keep.length !== q.length) save(keep);
+  }
+  const flushSoon = () => { setTimeout(() => { flush().catch(() => {}); }, 30); };
+  window.addEventListener("online", flushSoon);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") flushSoon(); });
+  setInterval(() => { if (load().length) flushSoon(); }, 60000);
+  return { add, remove, mark, flush, applyLocal, count: () => load().length, list: load, onLocal: null };
+})();
+
 // 聴く/流すモード用: 画面全体の再描画(render)は走らせず、ローカル状態とDBだけ更新する。
-// 一覧の再描画は一覧モードへ入る時にまとめて行う(listDirty)。
+// 一覧の再描画は一覧モードへ入る時にまとめて行う(listDirty)。失敗した既読は ReadQueue に残る。
 let listDirty = false;
 async function markReadQuiet(url, via) {
-  if (typeof snapMarkRead === "function") snapMarkRead(url);
+  if (typeof ReadQueue.onLocal === "function") { try { ReadQueue.onLocal(url); } catch (e) { /* ignore */ } } // 端末に確保したカードも既読へ
   const p = allPosts.find((x) => x.post_url === url);
   if (p) { p.is_read = true; p.read_via = via; p.read_at = new Date().toISOString(); }
   listDirty = true;
-  if (!(await rpcMarkRead(url, via))) {
-    try { await patchIsRead([url], true); } catch (err) { console.error("read state update failed", err); return false; }
-  }
-  return true;
+  return ReadQueue.mark(url, via);
 }
 
 async function setReadState(postUrls, markRead, via = "user") {
@@ -2168,12 +2257,15 @@ async function load() {
   historyBrowsingSavedUnread = null;
   restoreFilterState();
   document.getElementById("status").textContent = "読み込み中...";
+  postsLoading = true;
+  if (typeof onPostsLoading === "function") onPostsLoading(); // beta: 今日タブを「読み込み中…」へ
   const oneMonthAgo = new Date(Date.now() - 30*24*60*60*1000).toISOString();
   const filter = `or=(posted_at.gte.${oneMonthAgo},posted_at.is.null)`;
   try {
     const data = await sbFetch(`x_posts?select=*&${filter}&order=fetched_at.desc`);
     allPosts = data || [];
-    loadFailed = false;
+    loadFailed = false; postsLoading = false; lastLoadedAt = Date.now();
+    ReadQueue.applyLocal(allPosts); // 送れていない既読は、サーバーが未読のままでも端末では既読として扱う
     recomputeVisiblePosts();
     document.getElementById("status").textContent = `${posts.length}件`;
     render();
@@ -2181,7 +2273,7 @@ async function load() {
     if (typeof onPostsLoaded === "function") onPostsLoaded(); // beta: 今日タブの再計算
   } catch (err) {
     document.getElementById("status").textContent = "読み込みエラー: " + err.message;
-    loadFailed = true;
+    loadFailed = true; postsLoading = false;
     if (typeof onPostsLoaded === "function") onPostsLoaded(); // beta: 端末に確保済みの聴き残しは通信できなくても出す
   }
 }
@@ -2728,7 +2820,6 @@ const AdminQueue = (() => {
 
   return { add, flush, call, list, discard, clearDead, getToken, setToken, stats, onChange, newOpId };
 })();
-window.AdminQueue = AdminQueue;
 
 // 「これ聴く」で既読を戻すPATCH(is_read:false)が失敗した分を端末に積み、通信が戻ったら再送する
 const UnreadQueue = (() => {
@@ -2762,11 +2853,10 @@ const UnreadQueue = (() => {
   setInterval(() => { if (load().length) flushSoon(); }, 60000);
   return { add, flush, count: () => load().length, list: load };
 })();
-window.UnreadQueue = UnreadQueue;
 
 function updateUnsentBand() {
   const st = AdminQueue.stats();
-  const n = st.pending + UnreadQueue.count();
+  const n = st.pending + UnreadQueue.count() + ReadQueue.count();
   TopBand.set("unsent", n > 0 ? { text: `📤 未送信の操作が${n}件あります${st.needLogin ? "(ログインが必要です・設定タブ)" : ""}`, onClick: () => Tabs.show("settings") } : null);
 }
 
@@ -2790,9 +2880,11 @@ const TopBand = (() => {
   });
   return { set, render, current: () => ORDER.find((k) => flags[k]) || null };
 })();
-window.TopBand = TopBand;
 
 AdminQueue.onChange(() => { updateUnsentBand(); });
+document.addEventListener("xdash:readq", () => { updateUnsentBand(); });
+// 端末に確保したカード(snapshot)も、送れていない既読は既読として扱う(通信できないまま再読込しても「聴く」に戻らない)
+ReadQueue.onLocal = (url) => { snapMarkRead(url); };
 
 // ================================================================ ビュー切替・タブ
 function setView(v) {
@@ -2822,7 +2914,6 @@ const Tabs = {
     document.dispatchEvent(new CustomEvent("xdash:tab", { detail: { tab: name } }));
   },
 };
-window.Tabs = Tabs;
 document.querySelectorAll("#tabBar button").forEach((b) => b.addEventListener("click", () => Tabs.show(b.dataset.tab)));
 
 // ================================================================ カードのデータ処理
@@ -2843,12 +2934,25 @@ function rankCmp(a, b) {
 function titleOf(p) { return String(p.speech_title || p.gist || p.content || "").replace(/\s+/g, " ").trim().slice(0, 60); }
 function bodyOf(p) { return String(p.speech_body || p.summary || "").trim(); }
 
+// 読み上げ文は投稿ごと・辞書の版ごとに1回だけ作る(refreshToday が投稿数×複数回 clean しないように)
+const utterMemo = new WeakMap();
 function utterOf(p) {
-  if (window.TTS && typeof TTS.utterances === "function") { try { return TTS.utterances(p) || []; } catch (e) { /* fallthrough */ } }
-  const out = [];
-  const t = titleOf(p), b = bodyOf(p);
-  if (t) out.push({ kind: "title", text: t });
-  if (b) out.push({ kind: "body", text: b });
+  const hasTts = !!(window.TTS && typeof TTS.utterances === "function");
+  let sig = null;
+  if (p && typeof p === "object") {
+    sig = [p.speech_title, p.gist, p.speech_body, p.summary, p.content, hasTts ? 1 : 0, hasTts && typeof TTS.dictSig === "function" ? TTS.dictSig() : ""].join("\u0001");
+    const m = utterMemo.get(p);
+    if (m && m.sig === sig) return m.out;
+  }
+  let out = null;
+  if (hasTts) { try { out = TTS.utterances(p) || []; } catch (e) { out = null; } }
+  if (!out) {
+    out = [];
+    const t = titleOf(p), b = bodyOf(p);
+    if (t) out.push({ kind: "title", text: t });
+    if (b) out.push({ kind: "body", text: b });
+  }
+  if (sig !== null) utterMemo.set(p, { sig, out });
   return out;
 }
 // 読み上げる文章が1つも無いカード(要約・gistが空で本文がURLのみ等)。聴く対象からは外す
@@ -2865,7 +2969,14 @@ function cardItems(p) {
   return items;
 }
 const itemsChars = (items) => items.reduce((n, it) => n + String(it.text || "").length, 0);
-const cardSec = (p, speed) => itemsChars(cardItems(p)) / (CPS * speed);
+// 所要時間の見積もり: 文字数÷(6.5×速度) + 文ごとの待ち100ms + 見出し→本文の間400ms(待ちは速度に依らない)
+const GAP_SENT_SEC = 0.1, GAP_KIND_SEC = 0.4;
+function itemsSec(items, speed) {
+  let gaps = 0;
+  for (let i = 0; i < items.length; i++) { gaps += GAP_SENT_SEC; if (i > 0 && items[i].kind !== items[i - 1].kind) gaps += GAP_KIND_SEC; }
+  return itemsChars(items) / (CPS * speed) + gaps;
+}
+const cardSec = (p, speed) => itemsSec(cardItems(p), speed);
 const minutesLabel = (sec) => Math.max(1, Math.round(sec / 60));
 
 // 今日の区分(降格・失効を反映した現在値)
@@ -2952,25 +3063,35 @@ function refreshToday() {
   // 主ボタン / 案内
   const sess = loadSession();
   const rs = resumable(sess);
-  $("offlineBox").hidden = !loadFailed;
+  // 読み込み中・取得失敗の間は「聴く0件/まだありません」と断定しない(データが1件も無い時だけ)
+  const noData = allPosts.length === 0;
+  const loadingNow = noData && postsLoading;
+  const failedNow = noData && !postsLoading && loadFailed;
+  $("offlineBox").hidden = !loadFailed || loadingNow;
   $("resumeBox").hidden = rs.n === 0;
   if (rs.n > 0) $("resumeSub").textContent = rs.cards.length ? `残り${rs.cards.length}件` : "";
+  // 中断中は「続きから再生」だけを主ボタンにする(▶聴く は副に下げ、+10分聴く は中断が片付くまで隠す)
+  $("btnResume").classList.toggle("primary", rs.n > 0);
+  $("btnListen").classList.toggle("primary", rs.n === 0);
   const hasListen = T.listen.length > 0;
   $("btnListen").hidden = !hasListen;
   $("btnListen").textContent = `▶聴く(約${T.listenMin}分)`;
   $("listenGuide").hidden = hasListen;
-  if (!hasListen) {
+  if (loadingNow) $("listenGuide").textContent = "読み込み中…";
+  else if (failedNow) $("listenGuide").textContent = "取得できませんでした。上の「再読み込み」を押してください。";
+  else if (!hasListen) {
     $("listenGuide").textContent = (T.skim.length || T.hold.length
       ? "今日の「聴く」カードはありません。「流す」または「一覧」で見られます。"
       : "今日の「聴く」カードはまだありません。新しい投稿が区分されるとここに出ます。")
       + (T.silent.length ? `(読み上げる文章がない${T.silent.length}件は「流す」に入れています)` : "");
   }
-  const showExtra = !hasListen && T.skimHigh.length > 0;
+  const showExtra = !hasListen && T.skimHigh.length > 0 && rs.n === 0;
   $("btnExtraToday").hidden = !showExtra;
   if (showExtra) $("btnExtraToday").textContent = `上限で流すに回った${LISTEN_THRESHOLD}点以上が${T.skimHigh.length}件 ・ +10分聴く`;
 
   // 内訳
-  $("breakdown").innerHTML = `聴く<b>${T.listen.length}</b>件・約<b>${T.listenMin}</b>分 / 流す<b>${T.skim.length}</b>件 / 保留<b>${T.hold.length}</b>件`
+  $("breakdown").innerHTML = loadingNow ? `<span class="muted">読み込み中…</span>` : failedNow ? `<span class="muted">取得できませんでした</span>`
+    : `聴く<b>${T.listen.length}</b>件・約<b>${T.listenMin}</b>分 / 流す<b>${T.skim.length}</b>件 / 保留<b>${T.hold.length}</b>件`
     + (T.silent.length && hasListen ? `<div class="sub">読み上げる文章がない${T.silent.length}件は「流す」に入れています</div>` : "");
   $("btnFlow").textContent = `🌊 流す(${T.skim.length})`;
   $("btnFlow").disabled = T.skim.length === 0;
@@ -3046,6 +3167,7 @@ function updateBands(T, sess, rs) {
 }
 
 window.onPostsLoaded = function () { refreshToday(); loadDigestDaily(); };
+window.onPostsLoading = function () { if (todayCache) refreshToday(); };
 window.onDigestRendered = function () { if (todayCache) refreshToday(); };
 
 // ================================================================ 昇格/降格(端末キュー経由)
@@ -3055,6 +3177,7 @@ function localPromote(p) {
 }
 function promoteCard(p) {
   const wasRead = !!p.is_read;
+  ReadQueue.remove(p.post_url); // 未送信の既読があれば取り消す(これから聴くカードなので)
   localPromote(p);
   AdminQueue.add("tier_set", { post_url: p.post_url, how: "promote" });
   if (wasRead) { // 既読化済み(流すで2秒超など)は未読へ戻す(anonでis_readは書き込める)
@@ -3461,7 +3584,7 @@ function rejectCurrent() {
 
 function showToast(p) {
   $("plToastMsg").textContent = `「${titleOf(p).slice(0, 24)}」を保留へ降格しました`;
-  $("plUndo").textContent = "取り消し(5秒)";
+  $("plUndo").textContent = "取り消し";
   $("plToast").hidden = false;
 }
 function hideToast() { $("plToast").hidden = true; }
@@ -3474,7 +3597,7 @@ function commitPendingDemote() {
   lsDel(K.pendingDemote);
   hideToast();
   AdminQueue.add("tier_set", { post_url: u.url, how: "demote" });
-  rpcMarkRead(u.url, "user").then((ok) => { if (!ok) patchIsRead([u.url], true).catch(() => {}); });
+  ReadQueue.mark(u.url, "user").catch(() => {}); // 失敗しても既読再送キューに残る
 }
 // 画面が裏に回っている間は取り消しの猶予を進めない(確定を保留し、復帰時に「残り時間」で確定する)
 function pauseDemoteClock() {
@@ -3496,7 +3619,7 @@ function flushPendingDemoteFromLastPage() {
   lsDel(K.pendingDemote);
   if (!o || !o.url) return;
   AdminQueue.add("tier_set", { post_url: o.url, how: "demote" });
-  rpcMarkRead(o.url, "user").then((ok) => { if (!ok) patchIsRead([o.url], true).catch(() => {}); });
+  ReadQueue.mark(o.url, "user").catch(() => {});
 }
 
 function undoDemote() {
@@ -3621,7 +3744,7 @@ $("flSecUp").addEventListener("click", () => setFlowSec(Math.min(20, flowSec() +
 // ================================================================ 今日タブのボタン
 $("btnListen").addEventListener("click", startListenNormal);
 $("btnResume").addEventListener("click", () => { beep(); startResume(); });
-$("btnOffline").addEventListener("click", () => { $("btnOffline").textContent = "⏳ 読み込み中…"; Promise.resolve(load()).finally(() => { $("btnOffline").textContent = "⚠️ 通信できません。再読み込み"; refreshToday(); }); });
+$("btnOffline").addEventListener("click", () => { $("btnOffline").textContent = "⏳ 読み込み中…"; Promise.resolve(load()).finally(() => { $("btnOffline").textContent = "⚠️ 取得できませんでした。再読み込み"; refreshToday(); }); });
 $("btnExtraToday").addEventListener("click", startExtraTen);
 $("btnFlow").addEventListener("click", startFlow);
 $("btnList").addEventListener("click", () => setView("list"));
@@ -3663,13 +3786,34 @@ renderSettings();
   updateUnsentBand();
   flushPendingDemoteFromLastPage();
   UnreadQueue.flush().catch(() => {});
+  ReadQueue.applyLocal(allPosts); // 端末に確保したカードにも、送れていない既読を反映
+  ReadQueue.flush().catch(() => {});
   refreshToday(); // 投稿の読み込みが先に終わっていた場合・通信できない場合(確保済みの続きを出す)も含め、まず描画
   if (allPosts.length) loadDigestDaily();
   AdminQueue.flush().catch(() => {});
 })();
 
-// テスト・第2段向けの公開
-window.Beta = { computeToday, rankCmp, dayKey, dayStartMs, cardItems, listenSpeed, setView, refreshToday, startListenNormal, startFlow, LP, FL, DG, K, UnreadQueue };
+// 自動更新: 画面が見える状態に戻った時、最後の取得から30分超、または日(02:00 JST区切り)が変わっていたら再取得して再描画する。
+// 再生中(聴く/流す/一覧の画面・読み上げ中)は再取得しない(画面が入れ替わるため)。
+const AUTO_REFRESH_MS = 30 * 60 * 1000;
+function maybeAutoRefresh() {
+  if (document.visibilityState !== "visible") return;
+  if (document.body.dataset.view !== "tabs") return;
+  if (LP.active && LP.state === "playing") return;
+  try { if (window.speechSynthesis && speechSynthesis.speaking) return; } catch (e) { /* ignore */ }
+  if (postsLoading) return;
+  const now = Date.now();
+  const stale = !lastLoadedAt || now - lastLoadedAt > AUTO_REFRESH_MS || dayKey(now) !== dayKey(lastLoadedAt);
+  if (stale) load(); // 終わると onPostsLoaded が今日タブを描き直す
+}
+document.addEventListener("visibilitychange", maybeAutoRefresh);
+
+// 第2段(次の<script>)へ渡す部品。window に常駐させない: 第2段が起動時に1度だけ受け取って消す。
+window.__xdBridge = { AdminQueue, TopBand, Tabs, UnreadQueue, ReadQueue, Beta: { listenSpeed, dayKey } };
+// テスト用の公開は単一の名前空間 window.__XD_TEST__ だけ。URLのハッシュに #test がある時だけ作る(本番の画面では何も公開しない)。
+if (/(^#|[#&,;])test([&,;]|$)/.test(location.hash)) {
+  window.__XD_TEST__ = { AdminQueue, TopBand, Tabs, UnreadQueue, ReadQueue, Beta: { computeToday, rankCmp, dayKey, dayStartMs, cardItems, listenSpeed, setView, refreshToday, startListenNormal, startFlow, maybeAutoRefresh, LP, FL, DG, K, UnreadQueue, ReadQueue } };
+}
 })();
 </script>
 <script>
@@ -3679,6 +3823,9 @@ window.Beta = { computeToday, rankCmp, dayKey, dayStartMs, cardItems, listenSpee
 // =====================================================================
 (function () {
 "use strict";
+// 第1段から1度だけ受け取る(window には残さない)
+const { AdminQueue, TopBand, Tabs, UnreadQueue, ReadQueue, Beta } = window.__xdBridge;
+delete window.__xdBridge;
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => escapeHtml(String(s == null ? "" : s));
@@ -3771,7 +3918,7 @@ const Reader = (() => {
   let player = null, key = null;
   const available = () => !!(window.TTS && typeof TTS.createPlayer === "function" && window.speechSynthesis && window.SpeechSynthesisUtterance);
   const getVoice = () => { try { const vs = speechSynthesis.getVoices ? speechSynthesis.getVoices() : []; return TTS.pickVoice ? TTS.pickVoice(vs, lsGet(VOICE_KEY, "high") === "standard" ? "standard" : "high") : null; } catch (e) { return null; } };
-  const rate = () => { try { return window.Beta && Beta.listenSpeed ? Beta.listenSpeed() : 1.2; } catch (e) { return 1.2; } };
+  const rate = () => { try { return Beta.listenSpeed(); } catch (e) { return 1.2; } };
   function sync() {
     document.querySelectorAll("[data-reader]").forEach((b) => {
       const on = b.dataset.reader === key;
@@ -4174,7 +4321,8 @@ function renderQueue(note) {
   if (!sxActive()) { el.innerHTML = ""; return; }
   const st = AdminQueue.stats();
   const ops = AdminQueue.list();
-  const unread = window.UnreadQueue ? UnreadQueue.count() : 0;
+  const unread = UnreadQueue.count();
+  const readq = ReadQueue.count();
   const rows = ops.map((op) => {
     const p = op.payload || {};
     const sub = [fmtAt(op.at), op.tries ? `試行${op.tries}回` : "", op.last_error ? `エラー ${op.last_error}` : "", op.kind === "tier_set" ? String(p.post_url || "").replace(/^https?:\/\//, "") : ""].filter(Boolean).join(" ・ ");
@@ -4186,7 +4334,8 @@ function renderQueue(note) {
     <div id="sxQSummary" style="font-variant-numeric:tabular-nums">未送信 <b>${st.pending}</b>件${st.dead ? ` ・ 保留中(失敗) <b>${st.dead}</b>件` : ""}${!st.hasToken && ops.length ? " ・ ログインすると送信されます" : st.needLogin ? " ・ ログインが必要です" : ""}</div>
     ${rows || `<div class="muted" style="padding:8px 0">未送信の操作はありません。</div>`}
     ${unread ? `<div class="sub" id="sxUnreadQ" style="margin-top:6px">↩️ 「これ聴く」で未読に戻す操作の再送待ち ${unread}件(通信できると自動で送ります)</div>` : ""}
-    ${ops.length ? `<div style="margin-top:8px"><button type="button" class="btn" data-q="flush" style="width:100%">📨 今すぐ送る</button></div>` : ""}
+    ${readq ? `<div class="sub" id="sxReadQ" style="margin-top:6px">✅ 聴いた・次へ進んだ分の既読の再送待ち <b>${readq}</b>件(通信できると自動で送ります。それまでもこの端末では既読として扱います)</div>` : ""}
+    ${ops.length || readq ? `<div style="margin-top:8px"><button type="button" class="btn" data-q="flush" style="width:100%">📨 今すぐ送る</button></div>` : ""}
     ${st.dead ? `<div style="margin-top:8px"><button type="button" class="btn small" data-q="cleardead">失敗したものを全て破棄</button></div>` : ""}
     <div class="fmsg" id="sxQMsg" role="status">${esc(note || "")}</div></div>`;
 }
@@ -4206,12 +4355,14 @@ $("sx-queue").addEventListener("click", async (e) => {
     b.disabled = true; setMsg($("sxQMsg"), "送信中…", "");
     let res = null;
     try { res = await AdminQueue.flush(); } catch (err) { res = { reason: "network" }; }
-    const left = AdminQueue.stats().pending;
+    try { await ReadQueue.flush(); } catch (err) { /* あとで再送 */ }
+    const left = AdminQueue.stats().pending + ReadQueue.count();
     renderQueue(res && res.reason === "auth" ? "ログインが必要です。" : res && res.reason === "no_token" ? "ログインすると送信されます。" : res && (res.reason === "network" || res.reason === "retry_later") ? "送れませんでした。あとで自動で再送します。" : left ? `一部を送れませんでした(残り${left}件)。` : "✅ 送信しました。");
   }
 });
 AdminQueue.onChange(() => { if ($("sx-queue")) renderQueue(); });
 document.addEventListener("xdash:unread", () => { if ($("sx-queue")) renderQueue(); });
+document.addEventListener("xdash:readq", () => { if ($("sx-queue")) renderQueue(); });
 
 // ================================================================ 週次: レポート
 const Wk = { weeks: 4 };
@@ -4314,7 +4465,7 @@ function lbParts(it) {
 }
 const LABEL_CREATE_KEY = "xdash_label_creates";
 const LABEL_MAX_PER_DAY = 3; // 答え合わせのリスト作成は同じ日(02:00 JST区切り)に3回まで
-const lbDay = () => (window.Beta && Beta.dayKey ? Beta.dayKey(Date.now()) : new Date().toISOString().slice(0, 10));
+const lbDay = () => { try { return Beta.dayKey(Date.now()); } catch (e) { return new Date().toISOString().slice(0, 10); } };
 function lbCreatesToday() { try { const o = JSON.parse(lsGet(LABEL_CREATE_KEY, "null")); return o && o.day === lbDay() ? Number(o.n) || 0 : 0; } catch (e) { return 0; } }
 const lbCreatesLeft = () => Math.max(0, LABEL_MAX_PER_DAY - lbCreatesToday());
 function lbRender() {
@@ -4353,13 +4504,13 @@ function lbRender() {
     return;
   }
   const left = lbCreatesLeft();
-  const limitNote = `<div class="sub" id="lbLimit" style="margin-top:6px">${left > 0 ? `今日はあと${left}回作れます(1日${LABEL_MAX_PER_DAY}回まで)。` : `今日は${LABEL_MAX_PER_DAY}回作りました。続きは明日お願いします。`}</div>`;
+  const limitNote = `<div class="sub" id="lbLimit" style="margin-top:6px">${left > 0 ? `今日はあと${left}回作れます。1日${LABEL_MAX_PER_DAY}回まで(端末内)。` : `今日は${LABEL_MAX_PER_DAY}回作りました。続きは明日お願いします。`}</div>`;
   if (LB.phase === "done") {
     el.innerHTML = `${head}<div style="padding:6px 0;line-height:1.7">🎉 今回の分は終わりました。ありがとうございます。</div>
       ${left > 0 ? `<button type="button" class="btn primary" id="lbMore" style="width:100%">📋 次の${LABEL_N}件を作る</button>` : ""}${limitNote}${msg}`;
     return;
   }
-  el.innerHTML = `${head}<div class="sub" style="margin-bottom:8px">AIの点数や投稿者名は見えない状態で、${LABEL_N}件ずつ「聴く価値」を付けます(同じ日に最大${LABEL_MAX_PER_DAY}回)。</div>
+  el.innerHTML = `${head}<div class="sub" style="margin-bottom:8px">AIの点数や投稿者名は見えない状態で、${LABEL_N}件ずつ「聴く価値」を付けます。1日${LABEL_MAX_PER_DAY}回まで(端末内)。</div>
     ${left > 0 ? `<button type="button" class="btn primary" id="lbStart" style="width:100%">📋 答え合わせを始める(${LABEL_N}件)</button>` : ""}${limitNote}${msg}`;
 }
 async function lbLoad(listNo) {
@@ -4529,7 +4680,8 @@ $("btnCostReload").addEventListener("click", loadCost);
   onTab(Tabs.current);
 })();
 
-window.Admin2 = { api, Auth, Reader, loadWeekly, loadCost, loadSettings, refreshAuth, LB, Cf, Pf };
+// テスト用(#test のハッシュがある時だけ第1段が名前空間を作っている)
+if (window.__XD_TEST__) window.__XD_TEST__.Admin2 = { api, Auth, Reader, loadWeekly, loadCost, loadSettings, refreshAuth, LB, Cf, Pf };
 })();
 </script>
 </body>
