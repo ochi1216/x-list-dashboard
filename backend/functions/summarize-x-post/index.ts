@@ -11,6 +11,7 @@ const FN = "summarize-x-post";
 const TIME_BUDGET_MS = 100_000;
 const CONCURRENCY = 4;
 const LOCK_SECONDS = 170;
+const MAX_ATTEMPTS = 3; // 要約に失敗し続ける投稿を5分ごとに再試行して費用を使い続けないための上限
 
 Deno.serve(async (req: Request) => {
   const supabase = createClient(
@@ -56,11 +57,11 @@ Deno.serve(async (req: Request) => {
 
     let query = supabase
       .from("x_posts")
-      .select("post_url, author_handle, author_name, content, image_urls");
+      .select("post_url, author_handle, author_name, content, image_urls, summary_attempts");
     if (body.post_url) {
       query = query.eq("post_url", body.post_url);
     } else {
-      query = query.is("gist", null).limit(limit);
+      query = query.is("gist", null).lt("summary_attempts", MAX_ATTEMPTS).limit(limit);
     }
     const { data: posts, error: fetchError } = await query;
 
@@ -77,6 +78,13 @@ Deno.serve(async (req: Request) => {
 
     const { results, skipped } = await runPool(posts, CONCURRENCY, async (post) => {
       if (guardStop) return "skipped" as const;
+      let guardHit = false;
+      const countFailure = async () => {
+        if (guardHit || body.post_url) return; // 費用ガードによる停止は試行回数に数えない
+        await supabase.from("x_posts")
+          .update({ summary_attempts: ((post as { summary_attempts?: number }).summary_attempts ?? 0) + 1 })
+          .eq("post_url", post.post_url);
+      };
       const outcome = await summarizeOne(post, {
         gen: async (parts, opts) => {
           const r = await callGemini(
@@ -90,12 +98,13 @@ Deno.serve(async (req: Request) => {
             },
           );
           if (r.ok) return { ok: true as const, json: r.json };
-          if (r.kind === "guard") guardStop = true;
+          if (r.kind === "guard") { guardStop = true; guardHit = true; }
           return { ok: false as const, error: r.error, kind: r.kind };
         },
       });
       if (!outcome.ok) {
         errors[post.post_url] = sanitize(outcome.error, [geminiKey]);
+        await countFailure();
         return "failed" as const;
       }
       const { error: upErr } = await supabase
@@ -104,6 +113,7 @@ Deno.serve(async (req: Request) => {
         .eq("post_url", post.post_url);
       if (upErr) {
         errors[post.post_url] = sanitize(upErr.message, [geminiKey]);
+        await countFailure();
         return "failed" as const;
       }
       processed++;
@@ -126,7 +136,8 @@ Deno.serve(async (req: Request) => {
       const { count, error: cErr } = await supabase
         .from("x_posts")
         .select("post_url", { count: "exact", head: true })
-        .is("gist", null);
+        .is("gist", null)
+        .lt("summary_attempts", MAX_ATTEMPTS);
       if (!cErr && typeof count === "number") remaining = count;
     }
 

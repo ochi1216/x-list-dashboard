@@ -224,7 +224,7 @@ export class MockSupabase {
       list_name: "FollowList-AI", author_handle: `user${n}`, author_name: `User ${n}`, content: "", post_url: `https://x.com/user${n}/status/${1000 + n}`,
       posted_at: new Date().toISOString(), fetched_at: new Date().toISOString(), is_starred: false, is_read: false,
       summary: null, gist: null, summarized_at: null, tags: null, image_urls: [], score: null, score_state: null,
-      score_attempts: 0, dup_key: null, listen_tier: null, speech_body: null, speech_at: null, manual_action: null, ...p,
+      score_attempts: 0, summary_attempts: 0, dup_key: null, listen_tier: null, speech_body: null, speech_at: null, manual_action: null, ...p,
     });
   }
 
