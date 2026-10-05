@@ -6,6 +6,7 @@ export const MAX_ATTEMPTS = 3;
 
 export interface Cfg {
   scoreEnabled: boolean;
+  tierAssignEnabled: boolean;
   killSwitch: boolean;
   backfillEnabled: boolean;
   tierScopeFrom: string | null;
@@ -38,6 +39,7 @@ export function parseCfg(rows: { key: string; value: unknown }[]): Cfg {
   const text = typeof prof.text === "string" ? prof.text.trim() : "";
   return {
     scoreEnabled: bool(m.get("score_enabled"), true),
+    tierAssignEnabled: bool(m.get("tier_assign_enabled"), true),
     killSwitch: bool(m.get("kill_switch"), false),
     backfillEnabled: bool(m.get("backfill_enabled"), false),
     tierScopeFrom: isoOrNull(m.get("tier_scope_from")),
@@ -144,6 +146,17 @@ export async function mapPool<T>(
     }
   };
   await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
+}
+
+// 読み下しの結果の扱い: 保存 / 失敗を記録して再試行しない / 費用ガードで中断(何も記録しない)
+export type SpeechDecision = "save" | "record_failure" | "guard_stop";
+export function speechDecision(
+  call: { ok: true } | { ok: false; kind: string },
+  parsedOk: boolean,
+  numbersOk: boolean,
+): SpeechDecision {
+  if (!call.ok) return call.kind === "guard" ? "guard_stop" : "record_failure";
+  return parsedOk && numbersOk ? "save" : "record_failure";
 }
 
 export interface SpeechRow { speech_title: string; speech_body: string; speech_model: string; speech_at: string }

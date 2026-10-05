@@ -30,6 +30,8 @@ async function callGemini(
     maxOutputTokens: 600,
   });
   if (!res.ok) throw new Error(`gemini ${res.kind}${res.status ? ` http ${res.status}` : ""}: ${res.error}`);
+  // 出力が上限で途切れた要約は保存しない(次回の呼び出しでやり直す)
+  if (res.truncated) throw new Error("gemini output truncated (MAX_TOKENS)");
   return (res.json ?? JSON.parse(res.text)) as { bullets: string[] };
 }
 

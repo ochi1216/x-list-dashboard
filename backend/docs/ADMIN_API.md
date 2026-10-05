@@ -7,8 +7,9 @@
 ## 共通
 - 認証前: `setup` / `login` / `me`。それ以外は `x-admin-token` 必須(無し・改ざん・期限切れ・鍵版違い → 401 `invalid_token`、setup未完了 → 401 `setup_required`)。
 - **トークン更新**: 成功応答に `token` が付いたら端末は置き換える(残り29日未満のとき。`change_passphrase` は常に新トークン)。
-- **待ち時間**: パスフレーズ(または setup コード)の失敗が5回以上で `2^(n-5)` 分(上限15分)。待ち中の `login` / setup / パスフレーズ再入力は **429** `{error:"rate_limited", retry_after:秒}`(`Retry-After` ヘッダ付き)。正解でも待ち中は429。成功で失敗回数を0に戻す。**発行済みトークンは待ち中も有効**。n回目の失敗で待ちに入った場合、その401にも `retry_after` が付く。
+- **待ち時間**: パスフレーズ(または setup コード)の失敗が5回以上で `2^(n-5)` 分(上限15分)。待ち中の `login` / setup / パスフレーズ再入力は **429** `{error:"rate_limited", retry_after:秒}`(`Retry-After` ヘッダ付き)。正解でも待ち中は429。成功で失敗回数を0に戻す。**発行済みトークンは待ち中も有効**で、待ち時間はパスフレーズを入力する経路(`login`/`setup`/再入力が要る操作)にだけ適用する(有効トークンでの通常操作・緊急停止は影響を受けない)。n回目の失敗で待ちに入った場合、その401にも `retry_after` が付く。
 - **passphrase再入力**: 要求項目は `passphrase`。無し → 400 `passphrase_required`、誤り → 401 `bad_passphrase`(失敗に数える)。
+  - 例外(**緊急停止はロックアウトに阻まれない**): 有効なトークンだけで通る「安全側」の `config_set`/`config_undo` は再入力不要 = `kill_switch` を **true にする**、`monthly_cap_jpy`/`daily_cap_jpy`/`hourly_call_cap`/`ti_daily_call_cap` を現在値より **下げる**(現在値が未設定のときは下げか不明なので再入力必須)。`kill_switch` を false にする・上限を上げる・`pipeline_auth_mode`・`auto_expire_enabled`・`healthcheck`・`profile` は従来どおり再入力必須。
 - **op_id 冪等**: `admin_ops` に記録。同じ `op_id` の再送は `{ok:true, duplicate:true}`(`label_submit` は `remaining` も付く)。失敗した操作の `op_id` は解放され再送できる。
 - 500: `{ok:false,error:"server_error"}`(原因は返さない・ログにも詳細を出さない)。鍵が読めない場合 503 `server_not_ready`。
 - エラーコード: `bad_request, unknown_action, invalid_token, setup_required, setup_done, setup_unavailable, setup_code_invalid, setup_code_expired, passphrase_too_short, invalid_passphrase, passphrase_required, bad_passphrase, rate_limited, op_id_required, not_found, key_not_allowed, invalid_value, cannot_undo, not_configured, server_error`。
@@ -25,7 +26,7 @@
 | action | リクエスト | 応答 |
 |---|---|---|
 | `tier_set` | `{op_id, post_url, how:"promote"\|"demote"}` | `{ok}` / `{ok, duplicate:true}` / 404 `not_found`。promote: `listen_tier=listen, manual_action=promote, manual_at, tier_reason=manual_promote, tier_assigned_at`。demote: `listen_tier=hold, is_read=true, read_via=user, read_at, manual_action=demote, manual_at, tier_reason=manual_demote, tier_assigned_at` |
-| `label_create` | `{n?:20}`(1〜100) | `{ok, list_no, created}`(SQL `create_label_list(p_n)` の戻り) |
+| `label_create` | `{n?:20}`(1〜60。APIで検査) | `{ok, list_no, created}`(SQL `create_label_list(p_n)` の戻り) |
 | `label_next` | `{list_no?}`(省略=最新list) | `{ok, list_no, items:[{id, content, summary, image_urls:string[]}], remaining, total}`。**未回答の全件**を、idのハッシュ順(枠の並びが推測できない順)で返す。AI点・投稿者・枠・post_url は返さない。listが無ければ `list_no:null, items:[]` |
 | `label_submit` | `{op_id, id, score:1-5, cls:"announce"\|"ref_only"\|"opinion"\|"other"}` | `{ok, remaining}` / `{ok, duplicate:true, remaining}` |
 
@@ -51,7 +52,7 @@
 
 履歴は `tuning_config_history(key, old_value, new_value, source)`。`config_set` の source は `"admin"`。
 
-許可キーと値域(値の型は厳密: 数値は数値・真偽は真偽・文字列は文字列)。`*` は passphrase 再入力必須。
+許可キーと値域(値の型は厳密: 数値は数値・真偽は真偽・文字列は文字列)。`*` は passphrase 再入力必須(ただし `kill_switch=true` と、`monthly_cap_jpy`/`daily_cap_jpy`/`hourly_call_cap`/`ti_daily_call_cap` を下げる変更は再入力不要。上の「passphrase再入力」の例外を参照)。
 - 費用: `monthly_cap_jpy*` 整数100〜50000 / `daily_cap_jpy*` 整数50〜5000 / `hourly_call_cap*` 整数50〜5000 / `ti_daily_call_cap*` 整数10〜5000 / `cap_warn_ratio*` 0.3〜1 / `cap_stop_extra_ratio*` 0.5〜3 / `cap_stop_all_ratio*` 1〜5 / `usd_jpy` 50〜500
 - 安全: `pipeline_auth_mode*` `"log"|"enforce"` / `kill_switch*` `auto_expire_enabled*`(bool) / `auto_expire_max_per_run` 整数1〜2000
 - 機能スイッチ(bool): `score_enabled, tier_assign_enabled, cap_opinion, backfill_enabled, speech_enabled`
@@ -70,7 +71,11 @@
 | `profile_set` | `{text, approve:boolean, passphrase}` | `{ok, version, status}`。text は trim 後 1〜600字。版を+1。approve=true のときだけ approved。履歴は `tuning_config_history`(key=interest_profile) |
 | `ops_events` | `{limit?:50}`(最大200) | `{ok, events:[{id,at,level,kind,message,suppressed}]}`(新しい順。`data` は返さない) |
 
+## 関連: digest(admin-apiの外。generate-digest-summary と tuning_config)
+- 「今週の流れ」(`digest_week`)は日次再生成(x_daily が毎日 `period_type:"week"` を呼ぶ)。入力は直近7日(今日を含む)の `digest_daily`(status=ok のみ)、`days_covered` はその日数(0〜7)。`days_covered<3` は `status='accumulating'`(UIは「蓄積中 n/7」)、3以上でテーマ生成。`week_start` は現在の週の月曜(JST 02:00区切り)で行のキー。したがって「今週」はカレンダー週ではなく**直近7日**の流れを指し、週の初めは前週の日も含む(n/7 の n はその窓の日数)。
+- 今日の要点(`today`)は生成の試行ごとに `tuning_config.digest_last_attempt_at`(ISO文字列)を更新する(SQL `digest_due` が30分のバックオフに使う)。
+
 ## SQL側に必要な関数(別担当)
-- `create_label_list(p_n int)` → `{list_no, created}`(1行のテーブルでも jsonb でも可)
+- `create_label_list(p_n int)`(`p_n` は 1〜60。APIも60で検査) → `{list_no, created}`(1行のテーブルでも jsonb でも可)
 - `author_scoreboard(p_weeks int)` → 行の配列(列: author_handle, author_name, n, low_n, high_n, low_rate, high_rate, low_lo, high_hi, mean, verdict)
 - 既存の `get_secret/set_secret/cost_guard/get_model_state/refresh_cost_monthly/notify_test/ops_event(p_level,p_kind,p_message,p_data,p_dedupe_minutes)` を使用。`weekly_reports(week_start, body, text_ja)` を直接参照。

@@ -4,11 +4,22 @@
 export const BASE = "https://generativelanguage.googleapis.com/v1beta";
 export const HTTP_TIMEOUT_MS = 40_000; // 1回のHTTP要求の上限(無いと応答しない相手で関数全体の150秒上限まで固まる)
 export const GONE_BODY_RE = /not found|no longer|deprecated|retired|decommission|discontinued/i;
+export const REHEARSE_MIN_POSTS = 20; // 予行演習の最小件数(commit の根拠になる標本の大きさ)
+export const COMMIT_MIN_RATE = 0.9;
 const MODEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._\-]{0,80}$/;
 
 export type Rpc = (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }>;
 
-export interface PostRow { content: string | null; image_urls?: string[] | null }
+export interface PostRow { content: string | null; summary?: string | null; image_urls?: string[] | null }
+
+// 本番の採点(_shared/scoring.ts の buildScorePrompt / SCORE_SCHEMA / parseScoreResult)を注入する。
+// 共通部品を import しない(Nodeの単体テストでも動かす)ため、index.ts が渡す。
+export interface ScoringDeps {
+  buildPrompt: (profileText: string, post: PostRow) => string;
+  schema: Record<string, unknown>;
+  parse: (json: unknown) => unknown | null; // 有効な採点なら非null
+  maxOutputTokens: number; // 本番の採点と同じ値
+}
 
 export interface HealthDeps {
   rpc: Rpc;
@@ -20,6 +31,8 @@ export interface HealthDeps {
   saveHealth: (health: Record<string, unknown>, atIso: string) => Promise<void>;
   loadRecentPosts: (n: number) => Promise<PostRow[]>;
   commitConfig: (model: string, genConfig: Record<string, unknown>, atIso: string) => Promise<void>;
+  scoring?: ScoringDeps; // rehearse(本番の採点プロンプトで試す)に必要
+  loadProfile?: () => Promise<string>; // 関心プロファイル本文(DBのみに在る。rehearse に必要)
   timeBudgetMs?: number; // rehearse の打ち切り(既定100秒)
   baseUrl?: string; // 例 "https://generativelanguage.googleapis.com/v1beta"(未指定ならBASE。結合試験でモックへ向ける用)
 }
@@ -36,9 +49,21 @@ export function sanitize(input: unknown, apiKey = ""): string {
   return s.length > 200 ? s.slice(0, 200) : s;
 }
 
+// 404 は常に。400/410 は本文が提供終了を示し、かつ本文に "model" を含むときだけ(別原因の400で切り替えない)。
 export function isGone(status: number, body: string): boolean {
   if (status === 404) return true;
-  return (status === 400 || status === 410) && GONE_BODY_RE.test(body);
+  return (status === 400 || status === 410) && /model/i.test(body) && GONE_BODY_RE.test(body);
+}
+
+// kill_switch の確認(cost_guard 側は変えず、関数側で見る)。取得に失敗したら止める側(unknown)。
+export async function killSwitchState(deps: HealthDeps): Promise<"on" | "off" | "unknown"> {
+  try {
+    const r = await deps.rpc("cfg", { p_key: "kill_switch", p_default: false });
+    if (r.error) return "unknown";
+    return r.data === true || r.data === "true" ? "on" : "off";
+  } catch {
+    return "unknown";
+  }
 }
 
 // ---------- モデル一覧 ----------
@@ -79,6 +104,7 @@ export interface CallOut {
   text: string;
   json: unknown | null;
   thought_part: boolean;
+  truncated?: boolean; // finishReason=MAX_TOKENS(出力が上限で途切れた)
   usage: { prompt: number; output: number; thoughts: number };
   latency_ms: number;
   error?: string;
@@ -145,6 +171,7 @@ export async function genCall(deps: HealthDeps, o: CallOpts): Promise<CallOut> {
         text,
         json: parsed,
         thought_part: thoughtPart,
+        truncated: j?.candidates?.[0]?.finishReason === "MAX_TOKENS",
         usage: { prompt: num(um.promptTokenCount), output: num(um.candidatesTokenCount), thoughts: num(um.thoughtsTokenCount) },
         latency_ms: latency,
         error: text.length > 0 ? undefined : `empty response (finishReason=${j?.candidates?.[0]?.finishReason ?? "?"})`,
@@ -183,7 +210,10 @@ export async function genCall(deps: HealthDeps, o: CallOpts): Promise<CallOut> {
       error: out.ok ? null : out.error ?? null,
       post_url: o.postUrl ?? null,
     });
-  } catch { /* 記録失敗で処理は止めない */ }
+  } catch (e) {
+    // 記録失敗で処理は止めないが、記録漏れに気づけるよう残す(キーは伏せる)
+    console.error(`llm_usage insert failed (model-health ${o.purpose}): ${sanitize(e, deps.apiKey)}`);
+  }
   return out;
 }
 
@@ -212,7 +242,7 @@ export interface ProbeResult {
   model: string;
   role: "current" | "next";
   ok: boolean;
-  skipped?: string;
+  skipped?: string; // "guard" | "kill_switch" | "config_unavailable"
   http_status?: number;
   gone?: boolean;
   json_ok?: boolean;
@@ -251,6 +281,40 @@ async function opsEvent(deps: HealthDeps, level: string, kind: string, message: 
   } catch { /* 記録失敗で処理は止めない */ }
 }
 
+// 現行・次候補の probe。kill_switch 中(または設定が読めない)は Gemini を呼ばない。
+async function runProbes(
+  deps: HealthDeps, state: ModelStateData, current: string, next: string | null, currentListed: boolean | null,
+): Promise<{ probes: ProbeResult[]; reported: unknown }> {
+  const probes: ProbeResult[] = [];
+  let reported: unknown = null;
+  const ks = await killSwitchState(deps);
+  if (ks !== "off") {
+    const skipped = ks === "on" ? "kill_switch" : "config_unavailable";
+    probes.push({ model: current, role: "current", ok: false, skipped });
+    if (next) probes.push({ model: next, role: "next", ok: false, skipped });
+    return { probes, reported };
+  }
+  const cur = await probeModel(deps, state, current, "current");
+  probes.push(cur);
+  if (cur.skipped !== "guard") {
+    if (cur.ok) {
+      await deps.rpc("model_report_ok", { p_model: current });
+    } else if (cur.gone) {
+      if (currentListed === true) {
+        cur.gone = false; // 一覧に在るのでgone扱いにしない
+        await opsEvent(deps, "warn", "model_probe_failed", `現行モデル ${current} のprobeが404相当ですが一覧には在ります`, { model: current, http_status: cur.http_status }, 360);
+      } else {
+        const r = await deps.rpc("model_report_gone", { p_model: current, p_reason: `probe gone (http ${cur.http_status})` });
+        reported = r.error ? { error: sanitize(r.error.message) } : r.data;
+      }
+    } else {
+      await opsEvent(deps, "warn", "model_probe_failed", `現行モデル ${current} のprobeに失敗: ${cur.error ?? ""}`, { model: current, http_status: cur.http_status }, 360);
+    }
+  }
+  if (next) probes.push(await probeModel(deps, state, next, "next"));
+  return { probes, reported };
+}
+
 // ---------- 日次ヘルスチェック ----------
 
 export async function runHealth(deps: HealthDeps): Promise<Record<string, unknown>> {
@@ -270,26 +334,7 @@ export async function runHealth(deps: HealthDeps): Promise<Record<string, unknow
     await opsEvent(deps, "warn", "model_missing", `現行モデル ${current} がモデル一覧に有りません`, { model: current, candidates_listed: candidatesListed }, 1440);
   }
 
-  const probes: ProbeResult[] = [];
-  const cur = await probeModel(deps, state, current, "current");
-  probes.push(cur);
-  let reported: unknown = null;
-  if (cur.skipped !== "guard") {
-    if (cur.ok) {
-      await deps.rpc("model_report_ok", { p_model: current });
-    } else if (cur.gone) {
-      if (currentListed === true) {
-        cur.gone = false; // 一覧に在るのでgone扱いにしない
-        await opsEvent(deps, "warn", "model_probe_failed", `現行モデル ${current} のprobeが404相当ですが一覧には在ります`, { model: current, http_status: cur.http_status }, 360);
-      } else {
-        const r = await deps.rpc("model_report_gone", { p_model: current, p_reason: `probe gone (http ${cur.http_status})` });
-        reported = r.error ? { error: sanitize(r.error.message) } : r.data;
-      }
-    } else {
-      await opsEvent(deps, "warn", "model_probe_failed", `現行モデル ${current} のprobeに失敗: ${cur.error ?? ""}`, { model: current, http_status: cur.http_status }, 360);
-    }
-  }
-  if (next) probes.push(await probeModel(deps, state, next, "next"));
+  const { probes, reported } = await runProbes(deps, state, current, next, currentListed);
 
   const atIso = new Date(deps.now()).toISOString();
   const health = {
@@ -317,25 +362,17 @@ export const SUMMARY_SCHEMA = {
   properties: { gist: { type: "STRING" }, summary: { type: "STRING" } },
   required: ["gist", "summary"],
 };
-export const SCORE_PROMPT = `あなたはX(Twitter)の投稿の重要度を採点する評価者です。次の投稿を読み、AI・技術の情報収集の観点で「聴く価値」を1〜5の整数で採点してください(5=非常に有益、1=価値なし)。
-kindは次のいずれか1つ: announce, ref_only, primary, news, numbers, howto, explain, opinion, none。
-reasonは50字以内の理由。
-
-必ず次のJSON形式のみで出力してください:
-{"score": 3, "kind": "news", "reason": "..."}`;
-export const SCORE_SCHEMA = {
-  type: "OBJECT",
-  properties: { score: { type: "INTEGER" }, kind: { type: "STRING" }, reason: { type: "STRING" } },
-  required: ["score", "kind", "reason"],
-};
 export function summaryValid(j: unknown): boolean {
   const o = j as { gist?: unknown; summary?: unknown } | null;
   return !!o && typeof o.gist === "string" && o.gist.length > 0 && typeof o.summary === "string" && o.summary.length > 0;
 }
-export function scoreValid(j: unknown): boolean {
-  const o = j as { score?: unknown; kind?: unknown; reason?: unknown } | null;
-  return !!o && Number.isInteger(o.score) && (o.score as number) >= 1 && (o.score as number) <= 5 &&
-    typeof o.kind === "string" && typeof o.reason === "string";
+// 用途別の gen_config(default に用途別を重ねる。callGemini と同じ解決)。
+export function purposeGenConfig(state: ModelStateData, model: string, purpose: string): Record<string, unknown> {
+  const gc = state.configs?.[model]?.gen_config;
+  const o = gc && typeof gc === "object" ? gc as Record<string, unknown> : {};
+  const def = o.default && typeof o.default === "object" ? o.default as Record<string, unknown> : {};
+  const per = o[purpose] && typeof o[purpose] === "object" ? o[purpose] as Record<string, unknown> : {};
+  return { ...def, ...per };
 }
 
 // 思考指定の探索候補(thinkingLevel系/thinkingBudget系)。null=指定なし。
@@ -378,7 +415,20 @@ export interface RehearseOpts { model: string; n: number; commit: boolean }
 
 export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Record<string, unknown>> {
   if (!MODEL_NAME_RE.test(o.model ?? "")) return { ok: false, error: "model is invalid" };
-  const n = Math.min(50, Math.max(1, Math.floor(o.n) || 20));
+  // 標本が小さいと成功率(90%)が意味を持たない。20件未満の予行演習は受け付けない。
+  if (!(typeof o.n === "number" && Number.isFinite(o.n)) || Math.floor(o.n) < REHEARSE_MIN_POSTS) {
+    return { ok: false, error: `n must be at least ${REHEARSE_MIN_POSTS}` };
+  }
+  const n = Math.min(50, Math.floor(o.n));
+  // kill_switch 中は Gemini を呼ばない(cost_guard の probe 用途は止まらないため、関数側で見る)
+  const ks = await killSwitchState(deps);
+  if (ks !== "off") return { ok: false, error: ks === "on" ? "kill_switch is on" : "kill_switch state unavailable" };
+  // 本番の採点プロンプトで試すので、採点の部品と関心プロファイルが要る
+  if (!deps.scoring || !deps.loadProfile) return { ok: false, error: "scoring is not configured" };
+  const scoring = deps.scoring;
+  let profileText = "";
+  try { profileText = (await deps.loadProfile()).trim(); } catch (e) { return { ok: false, error: `profile unavailable: ${sanitize(e, deps.apiKey)}` }; }
+  if (!profileText) return { ok: false, error: "interest_profile is not set" };
   const st = await deps.rpc("get_model_state", {});
   const state = st.error ? null : parseState(st.data);
   if (!state) return { ok: false, error: `get_model_state failed: ${st.error ? sanitize(st.error.message) : "bad shape"}` };
@@ -389,16 +439,23 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
   const base = defaultGenConfig(state, model);
   const ex = await exploreThinking(deps, state, model, base, deadline);
   const chosenCfg = ex.chosen ? ex.chosen.config : null;
-  const useExtra = { ...base };
-  delete useExtra.thinkingConfig;
-  if (chosenCfg) useExtra.thinkingConfig = chosenCfg;
+  // 用途ごと(要約・採点)の実際の設定(default+用途別)に、探索で選んだ思考指定を重ねる
+  const extraFor = (purpose: string): Record<string, unknown> => {
+    const e = purposeGenConfig(state, model, purpose);
+    delete e.thinkingConfig;
+    if (chosenCfg) e.thinkingConfig = chosenCfg;
+    if (purpose === "score" && e.temperature === undefined) e.temperature = 0; // 本番の採点と同じ(温度0)
+    return e;
+  };
+  const extraSummary = extraFor("summary");
+  const extraScore = extraFor("score");
 
   const posts = (await deps.loadRecentPosts(n)).filter((p) => (p.content ?? "").trim().length > 0);
 
-  type Task = { kind: "summary" | "score"; content: string };
+  type Task = { kind: "summary" | "score"; post: PostRow };
   const tasks: Task[] = [];
   for (const p of posts) {
-    tasks.push({ kind: "summary", content: p.content as string }, { kind: "score", content: p.content as string });
+    tasks.push({ kind: "summary", post: p }, { kind: "score", post: p });
   }
   const stat = {
     calls: 0, json_ok: 0, summary_calls: 0, summary_ok: 0, score_calls: 0, score_ok: 0,
@@ -417,14 +474,16 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
       const isSum = t.kind === "summary";
       const r = await genCall(deps, {
         model, purpose: "probe",
-        prompt: `${isSum ? SUMMARY_PROMPT : SCORE_PROMPT}\n\n本文:\n${t.content.slice(0, 3000)}`,
-        schema: isSum ? SUMMARY_SCHEMA : SCORE_SCHEMA,
-        maxOutputTokens: isSum ? 800 : 400,
-        extraConfig: useExtra, state: stateOk,
+        // 採点は本番と同じプロンプト・スキーマ・出力上限(scoring.ts)。要約は従来の予行演習用プロンプト。
+        prompt: isSum ? `${SUMMARY_PROMPT}\n\n本文:\n${t.post.content!.slice(0, 3000)}` : scoring.buildPrompt(profileText, t.post),
+        schema: isSum ? SUMMARY_SCHEMA : scoring.schema,
+        maxOutputTokens: isSum ? 800 : scoring.maxOutputTokens,
+        extraConfig: isSum ? extraSummary : extraScore, state: stateOk,
       });
       if (r.guard) { guard = true; return; }
       stat.calls++;
-      const valid = isSum ? summaryValid(r.json) : scoreValid(r.json);
+      // 出力が上限で途切れた(truncated)ものは成功に数えない
+      const valid = r.ok && !r.truncated && (isSum ? summaryValid(r.json) : scoring.parse(r.json) !== null);
       if (isSum) { stat.summary_calls++; if (valid) stat.summary_ok++; } else { stat.score_calls++; if (valid) stat.score_ok++; }
       if (valid) stat.json_ok++;
       if (r.thought_part) stat.thought_part_calls++;
@@ -473,7 +532,8 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
     if (guard) reasons.push("cost guard stopped");
     if (stat.calls === 0) reasons.push("no calls");
     if (skipped > 0) reasons.push("incomplete");
-    if (rate < 0.9) reasons.push("json success rate below 0.9");
+    if (posts.length < REHEARSE_MIN_POSTS) reasons.push(`fewer than ${REHEARSE_MIN_POSTS} posts`);
+    if (rate < COMMIT_MIN_RATE) reasons.push("json success rate below 0.9");
     if (leak) reasons.push("thought parts leaked");
     if (reasons.length > 0) {
       result.commit_blocked = reasons;

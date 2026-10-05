@@ -2,6 +2,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { checkPipelineAuth } from "./_auth.ts";
 import { resolveGeminiBase } from "./_gemini.ts";
+import { buildScorePrompt, parseScoreResult, SCORE_MAX_OUTPUT_TOKENS, SCORE_SCHEMA } from "./_scoring.ts";
 import { runHealth, runRehearse, sanitize } from "./logic.ts";
 import type { HealthDeps } from "./logic.ts";
 
@@ -24,7 +25,8 @@ Deno.serve(async (req: Request) => {
   const auth = await checkPipelineAuth(req, { db: { rpc }, mode: "enforce", allow: ["cron"], fn: "model-health" });
   if (!auth.ok) return json({ ok: false, error: "unauthorized" }, 401);
 
-  const apiKey = Deno.env.get("GEMINI_API_KEY");
+  // X系は専用キー(GEMINI_API_KEY_X)があればそれを使う(summarize-x-post / score-x-posts と同じ)
+  const apiKey = Deno.env.get("GEMINI_API_KEY_X") || Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) return json({ ok: false, error: "GEMINI_API_KEY secret is not set on this Supabase project." }, 500);
 
   let body: { action?: string; model?: string; n?: number; commit?: boolean };
@@ -56,12 +58,25 @@ Deno.serve(async (req: Request) => {
     loadRecentPosts: async (n) => {
       const { data, error } = await supabase
         .from("x_posts")
-        .select("content, image_urls")
+        .select("content, summary, image_urls")
         .not("content", "is", null)
         .order("fetched_at", { ascending: false })
         .limit(n * 2); // 本文が空の投稿を除いた後でn件に近づけるため多めに取得
       if (error) throw new Error(error.message);
       return (data ?? []).filter((p) => (p.content ?? "").trim().length > 0).slice(0, n);
+    },
+    // 本番の採点と同じプロンプト・スキーマ・出力上限(score-x-posts の scoreWithLlm と揃える)
+    scoring: {
+      buildPrompt: (profileText, post) => buildScorePrompt(profileText, post),
+      schema: SCORE_SCHEMA,
+      parse: (j) => parseScoreResult(j),
+      maxOutputTokens: SCORE_MAX_OUTPUT_TOKENS,
+    },
+    loadProfile: async () => {
+      const { data, error } = await supabase.from("tuning_config").select("value").eq("key", "interest_profile").maybeSingle();
+      if (error) throw new Error(error.message);
+      const t = (data?.value as { text?: unknown } | null)?.text;
+      return typeof t === "string" ? t : "";
     },
     commitConfig: async (model, genConfig, atIso) => {
       const { error } = await supabase

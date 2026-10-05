@@ -30,6 +30,8 @@ async function callGemini(
     maxOutputTokens: 600,
   });
   if (!res.ok) throw new Error(`gemini ${res.kind}${res.status ? ` http ${res.status}` : ""}: ${res.error}`);
+  // 出力が上限で途切れた要約は保存しない(次回の呼び出しでやり直す)
+  if (res.truncated) throw new Error("gemini output truncated (MAX_TOKENS)");
   return (res.json ?? JSON.parse(res.text)) as { bullets: string[] };
 }
 
@@ -56,7 +58,9 @@ Deno.serve(async (req: Request) => {
     body = {};
   }
   const MAX_ITEMS = 30; // 追加: 1回の呼び出しで処理する上限
-  const items = (body.items ?? []).slice(0, MAX_ITEMS);
+  const allItems = Array.isArray(body.items) ? body.items : [];
+  const items = allItems.slice(0, MAX_ITEMS);
+  const dropped = Math.max(0, allItems.length - MAX_ITEMS); // 上限超過分は処理しない。無通知で落とさず件数を返す
   if (items.length === 0) {
     return new Response(
       JSON.stringify({ ok: false, error: "body.items must be a non-empty array of {title, source}" }),
@@ -93,7 +97,7 @@ Deno.serve(async (req: Request) => {
   }
 
   return new Response(
-    JSON.stringify({ ok: true, results, errors, ...(deferred > 0 ? { deferred } : {}) }),
+    JSON.stringify({ ok: true, results, errors, dropped, ...(deferred > 0 ? { deferred } : {}) }),
     { headers: { "Content-Type": "application/json" } },
   );
 });

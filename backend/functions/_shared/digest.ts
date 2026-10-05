@@ -90,15 +90,34 @@ export function parseKanjiNumeral(seq: string): number | null {
 }
 
 // 数値(算用数字+単位・漢数字)を抽出し、抽出した部分を取り除いた残りも返す。
-export function numberTokens(text: string): { toks: NumTok[]; rest: string } {
-  const toks: NumTok[] = [];
-  let t = norm(text);
-  t = t.replace(NUM_RE, (...args) => {
-    const m = args.slice(0, args.length - 2) as unknown as RegExpMatchArray;
+// 「1万2000」のような万・億・兆の直後に続く小さい数は、足した値(12000)で数える。
+//  merged=false(本文コーパス): 部分(10000, 2000)と合算(12000)をすべて数える
+//  merged=true(主張): 合算だけを数える(本文が「12,000円」でも「1万2000円」でも通す)
+export function numberTokens(text: string, merged = false): { toks: NumTok[]; rest: string } {
+  const t0 = norm(text);
+  interface Item { v: number; pct: boolean; big: number; start: number; end: number }
+  const items: Item[] = [];
+  for (const m of t0.matchAll(NUM_RE)) {
     const base = parseFloat(m[1]);
-    if (Number.isFinite(base)) toks.push({ v: base * unitProduct(m[2]), pct: !!m[3] });
-    return " ";
-  });
+    if (!Number.isFinite(base)) continue;
+    const units = m[2] ?? "";
+    const lastUnit = units.length > 0 ? units[units.length - 1] : "";
+    const start = m.index ?? 0;
+    items.push({ v: base * unitProduct(units), pct: !!m[3], big: KNUM_BIG[lastUnit] ?? 0, start, end: start + m[0].length });
+  }
+  const toks: NumTok[] = [];
+  for (let i = 0; i < items.length; i++) {
+    let acc = items[i];
+    while (acc.big > 0 && !acc.pct && i + 1 < items.length) {
+      const nx = items[i + 1];
+      if (!/^\s*$/.test(t0.slice(acc.end, nx.start)) || nx.v >= acc.big) break;
+      if (!merged) toks.push({ v: acc.v, pct: false });
+      acc = { v: acc.v + nx.v, pct: nx.pct, big: nx.big, start: acc.start, end: nx.end };
+      i++;
+    }
+    toks.push({ v: acc.v, pct: acc.pct });
+  }
+  let t = t0.replace(NUM_RE, " ");
   t = t.replace(KNUM_RE, (...args) => {
     const m0 = args[0] as string;
     const off = args[args.length - 2] as number;
@@ -238,7 +257,7 @@ export interface ClaimOpts {
 export function checkClaim(claim: string, c: Corpus, opts: ClaimOpts = {}): { ok: boolean; reason?: string } {
   const { dates, rest } = extractDates(claim);
   for (const dt of dates) if (!dateOk(dt, c)) return { ok: false, reason: "date" };
-  const nt = numberTokens(rest);
+  const nt = numberTokens(rest, true);
   for (const n of nt.toks) if (!numOk(n, c)) return { ok: false, reason: "number" };
   for (const w of extractLatin(rest)) if (!c.text.includes(w)) return { ok: false, reason: "latin" };
   for (const w of extractKatakana(rest)) if (!c.text.includes(w)) return { ok: false, reason: "katakana" };

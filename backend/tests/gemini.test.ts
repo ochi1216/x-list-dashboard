@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { callGemini, resolveGeminiBase, sanitize } from "../functions/_shared/gemini.ts";
+import { callGemini, isGoneResponse, resolveGeminiBase, sanitize } from "../functions/_shared/gemini.ts";
 import type { GeminiCtx } from "../functions/_shared/gemini.ts";
 
 const KEY = "AIzaSyFAKEFAKEFAKEFAKEFAKEFAKE0123456789";
@@ -111,15 +111,118 @@ test("成功: キーはヘッダのみ・URLに無い・usage記録と費用計�
   assert.deepEqual(guard.args, { p_purpose: "summary", p_grp: "x" });
 });
 
-test("schema無しならresponseMimeTypeを付けずjsonはnull。req.temperature/seedはモデル設定より優先", async () => {
+test("schema無しならresponseMimeTypeを付けずjsonはnull", async () => {
   const h = harness([{ status: 200, body: okBody("plain text") }]);
-  const r = await callGemini(h.ctx, { ...REQ, temperature: 0, seed: 1 });
+  const r = await callGemini(h.ctx, { ...REQ, purpose: "other" });
   assert.equal(r.ok && r.json, null);
   assert.equal(r.ok && r.text, "plain text");
-  const gc = h.fetches[0].body.generationConfig;
-  assert.equal(gc.responseMimeType, undefined);
-  assert.equal(gc.temperature, 0);
-  assert.equal(gc.seed, 1);
+  assert.equal(h.fetches[0].body.generationConfig.responseMimeType, undefined);
+});
+
+test("temperature/seed: モデル設定(default・用途別)に有ればそれが正。リクエストの値はモデル設定に無いときの既定値", async () => {
+  // m1: default.temperature=0.5, summary.seed=7 → リクエストの temperature:0 / seed:1 は使われない
+  const h1 = harness([{ status: 200, body: okBody("x") }]);
+  await callGemini(h1.ctx, { ...REQ, temperature: 0, seed: 1 });
+  assert.equal(h1.fetches[0].body.generationConfig.temperature, 0.5);
+  assert.equal(h1.fetches[0].body.generationConfig.seed, 7);
+  // モデル設定に temperature/seed が無ければリクエストの値を使う
+  const st = makeState();
+  (st.configs as any).m1.gen_config = { default: { thinkingConfig: { thinkingBudget: 0 } } };
+  const h2 = harness([{ status: 200, body: okBody("x") }], { state: st });
+  await callGemini(h2.ctx, { ...REQ, temperature: 0.2, seed: 3 });
+  assert.equal(h2.fetches[0].body.generationConfig.temperature, 0.2);
+  assert.equal(h2.fetches[0].body.generationConfig.seed, 3);
+  // 用途別の設定が default より優先(従来どおり)
+  const st3 = makeState();
+  (st3.configs as any).m1.gen_config = { default: { temperature: 0.9 }, score: { temperature: 0 } };
+  const h3 = harness([{ status: 200, body: okBody("x") }], { state: st3 });
+  await callGemini(h3.ctx, { ...REQ, purpose: "score", temperature: 0.7 });
+  assert.equal(h3.fetches[0].body.generationConfig.temperature, 0);
+});
+
+test("maxOutputTokens が未指定・0以下・非数なら、Geminiを呼ぶ前に例外(guard等の結果にはしない)", async () => {
+  for (const bad of [undefined, 0, -5, Number.NaN, "600"]) {
+    const h = harness([{ status: 200, body: okBody("x") }]);
+    await assert.rejects(() => callGemini(h.ctx, { ...REQ, maxOutputTokens: bad as never }), /maxOutputTokens/);
+    assert.equal(h.fetches.length, 0);
+    assert.equal(h.rpcCalls.length, 0);
+    assert.equal(h.usage.length, 0);
+  }
+});
+
+test("モデル状態・cost_guard の取得失敗は kind=guard / level=state_error(gone と混同しない)。fetchしない", async () => {
+  const h1 = harness([{ status: 200, body: okBody("x") }], { state: { nonsense: true } });
+  const r1 = await callGemini(h1.ctx, REQ);
+  assert.deepEqual(r1.ok ? null : [r1.kind, r1.level], ["guard", "state_error"]);
+  assert.equal(h1.fetches.length, 0);
+  assert.ok(!h1.rpcCalls.some((c) => c.name === "model_report_gone"));
+  // get_model_state が例外
+  const h2 = harness([{ status: 200, body: okBody("x") }]);
+  h2.ctx.db.rpc = async (name) => { if (name === "get_model_state") throw new Error("db down"); return { data: null, error: null }; };
+  const r2 = await callGemini(h2.ctx, REQ);
+  assert.deepEqual(r2.ok ? null : [r2.kind, r2.level], ["guard", "state_error"]);
+  // cost_guard が取得できない
+  const h3 = harness([{ status: 200, body: okBody("x") }]);
+  const orig = h3.ctx.db.rpc.bind(h3.ctx.db);
+  h3.ctx.db.rpc = async (name, args) => name === "cost_guard" ? { data: null, error: { message: "boom" } } : orig(name, args);
+  const r3 = await callGemini(h3.ctx, REQ);
+  assert.deepEqual(r3.ok ? null : [r3.kind, r3.level], ["guard", "state_error"]);
+  assert.equal(h3.fetches.length, 0);
+});
+
+test("提供終了の判定: 404は常に。400/410は本文に model を含み提供終了を示すときだけ", async () => {
+  assert.equal(isGoneResponse(404, ""), true);
+  assert.equal(isGoneResponse(400, "models/x is no longer available"), true);
+  assert.equal(isGoneResponse(410, "The model has been deprecated"), true);
+  assert.equal(isGoneResponse(400, "Requested entity was not found"), false); // model の語が無い
+  assert.equal(isGoneResponse(410, "resource deprecated"), false);
+  assert.equal(isGoneResponse(400, "model parameter invalid"), false); // 提供終了の語が無い
+  assert.equal(isGoneResponse(500, "model not found"), false);
+  const h = harness([{ status: 400, body: { error: { message: "Requested entity was not found" } } }]);
+  const r = await callGemini(h.ctx, REQ);
+  assert.equal(!r.ok && r.kind, "http");
+  assert.ok(!h.rpcCalls.some((c) => c.name === "model_report_gone"));
+});
+
+test("finishReason=MAX_TOKENS: 失敗(parse)にせず text を返し truncated=true。使用量は記録・model_report_ok", async () => {
+  const body = { candidates: [{ content: { parts: [{ text: '{"gist":"途中で切' }] }, finishReason: "MAX_TOKENS" }], usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 600, thoughtsTokenCount: 0 } };
+  const h = harness([{ status: 200, body }]);
+  const r = await callGemini(h.ctx, { ...REQ, schema: SCHEMA });
+  assert.equal(r.ok, true);
+  if (r.ok) {
+    assert.equal(r.truncated, true);
+    assert.equal(r.text, '{"gist":"途中で切');
+    assert.equal(r.json, null);
+  }
+  assert.equal(h.usage.length, 1);
+  assert.equal(h.usage[0].status, "ok");
+  assert.ok(h.rpcCalls.some((c) => c.name === "model_report_ok"));
+  // 通常終了(STOP)では truncated は付かない
+  const h2 = harness([{ status: 200, body: okBody('{"gist":"g"}') }]);
+  const r2 = await callGemini(h2.ctx, { ...REQ, schema: SCHEMA });
+  assert.equal(r2.ok && r2.truncated, undefined);
+  // schema無し(本文テキスト)でも truncated
+  const h3 = harness([{ status: 200, body: { candidates: [{ content: { parts: [{ text: "長い要約の途中" }] }, finishReason: "MAX_TOKENS" }] } }]);
+  const r3 = await callGemini(h3.ctx, REQ);
+  assert.equal(r3.ok && r3.truncated, true);
+});
+
+test("再実行(再試行・提供終了後の新モデル再実行)は合計1回まで: 切替後の429は再試行しない", async () => {
+  const h = harness(
+    [{ status: 404, body: "models/m1 not found" }, { status: 429, body: "quota" }],
+    { gone: [{ current_model: "m2", switched: true, streak: 3 }] },
+  );
+  const orig = h.ctx.db.rpc.bind(h.ctx.db);
+  let gone = false;
+  h.ctx.db.rpc = async (name, args) => {
+    if (name === "model_report_gone") gone = true;
+    if (name === "get_model_state" && gone) return { data: makeState({ current_model: "m2" }), error: null };
+    return orig(name, args);
+  };
+  const r = await callGemini(h.ctx, REQ);
+  assert.equal(h.fetches.length, 2);
+  assert.equal(!r.ok && r.kind, "http");
+  assert.deepEqual(h.sleeps, []);
 });
 
 test("思考part(thought:true)は除外し、残りのtextを全て結合する", async () => {
@@ -330,12 +433,38 @@ test("get_model_stateは30秒キャッシュ(同一db)", async () => {
   assert.equal(h.rpcCalls.filter((c) => c.name === "get_model_state").length, 2);
 });
 
-test("insertUsageが例外でも呼び出し結果は返る(usageId=null)", async () => {
+test("insertUsageが例外でも呼び出し結果は返る(usageId=null)。失敗は console.error に残り、キーは載らない", async () => {
   const h = harness([{ status: 200, body: okBody("a") }]);
-  h.ctx.db.insertUsage = async () => { throw new Error("db down"); };
-  const r = await callGemini(h.ctx, REQ);
-  assert.equal(r.ok, true);
-  if (r.ok) assert.equal(r.usageId, null);
+  h.ctx.db.insertUsage = async () => { throw new Error(`db down key=${KEY}`); };
+  const logs: string[] = [];
+  const orig = console.error;
+  console.error = (...a: unknown[]) => { logs.push(a.map(String).join(" ")); };
+  try {
+    const r = await callGemini(h.ctx, REQ);
+    assert.equal(r.ok, true);
+    if (r.ok) assert.equal(r.usageId, null);
+  } finally {
+    console.error = orig;
+  }
+  assert.equal(logs.length, 1);
+  assert.ok(logs[0].includes("llm_usage insert failed"));
+  assert.ok(!logs[0].includes("AIza") && !logs[0].includes(KEY));
+  // idが返らない(null)場合も記録漏れとして残す
+  const h2 = harness([{ status: 200, body: okBody("a") }]);
+  h2.ctx.db.insertUsage = async () => null;
+  const logs2: string[] = [];
+  console.error = (...a: unknown[]) => { logs2.push(a.map(String).join(" ")); };
+  try { await callGemini(h2.ctx, REQ); } finally { console.error = orig; }
+  assert.equal(logs2.length, 1);
+});
+
+test("費用が算出できない行(単価なし・usageなし)は status=unpriced / no_usage のまま cost_usd=null", async () => {
+  const st = makeState();
+  (st.configs as any).m1.in_usd = null;
+  const h = harness([{ status: 200, body: okBody("a") }, { status: 200, body: okBody("b", null) }], { state: st });
+  await callGemini(h.ctx, REQ);
+  await callGemini(h.ctx, REQ);
+  assert.deepEqual(h.usage.map((u) => [u.status, u.cost_usd]), [["unpriced", null], ["no_usage", null]]);
 });
 
 test("sanitize: キー・key=・長さ・Error対応", () => {

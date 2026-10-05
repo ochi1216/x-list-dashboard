@@ -5,13 +5,17 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import { callGemini, makeGeminiDb, resolveGeminiBase, sanitize } from "./_gemini.ts";
 import { checkPipelineAuth } from "./_auth.ts";
 import { createBudget, jsonResponse, newBatchId, runPool } from "./_util.ts";
-import { checkUnauthRestrictions, RESPONSE_SCHEMA, resolveLimit, summarizeOne } from "./logic.ts";
+import { checkUnauthRestrictions, isPermanentFailure, RESPONSE_SCHEMA, resolveLimit, summarizeOne } from "./logic.ts";
 
 const FN = "summarize-x-post";
-const TIME_BUDGET_MS = 100_000;
+// 時間予算(実行上限は約150秒)。「新しい投稿に着手してよい期限」で、着手済みの処理は完了を待つ。
+// 1投稿の最悪 = 画像取得10秒(並列) + callGemini 41.5秒(要求20秒 + 待ち1.5秒 + 再実行は合計1回まで20秒)
+// = 51.5秒。期限直前に着手しても 80 + 51.5 = 131.5秒で、ロック解放・応答に十分な余裕がある(150秒以内)。
+const TIME_BUDGET_MS = 80_000;
+const GEMINI_TIMEOUT_MS = 20_000;
 const CONCURRENCY = 4;
 const LOCK_SECONDS = 170;
-const MAX_ATTEMPTS = 3; // 要約に失敗し続ける投稿を5分ごとに再試行して費用を使い続けないための上限
+const MAX_ATTEMPTS = 3; // 恒久的な失敗(isPermanentFailure)を繰り返す投稿を5分ごとに再試行して費用を使い続けないための上限
 
 Deno.serve(async (req: Request) => {
   const supabase = createClient(
@@ -78,9 +82,8 @@ Deno.serve(async (req: Request) => {
 
     const { results, skipped } = await runPool(posts, CONCURRENCY, async (post) => {
       if (guardStop) return "skipped" as const;
-      let guardHit = false;
-      const countFailure = async () => {
-        if (guardHit || body.post_url) return; // 費用ガードによる停止は試行回数に数えない
+      const countPermanentFailure = async () => {
+        if (body.post_url) return; // 手動指定は試行回数に数えない
         await supabase.from("x_posts")
           .update({ summary_attempts: ((post as { summary_attempts?: number }).summary_attempts ?? 0) + 1 })
           .eq("post_url", post.post_url);
@@ -88,7 +91,7 @@ Deno.serve(async (req: Request) => {
       const outcome = await summarizeOne(post, {
         gen: async (parts, opts) => {
           const r = await callGemini(
-            { db, apiKey: geminiKey, fn: FN, grp: "x", batchId, baseUrl: geminiBase, timeoutMs: 25_000 },
+            { db, apiKey: geminiKey, fn: FN, grp: "x", batchId, baseUrl: geminiBase, timeoutMs: GEMINI_TIMEOUT_MS },
             {
               purpose: "summary",
               parts,
@@ -97,14 +100,15 @@ Deno.serve(async (req: Request) => {
               postUrl: post.post_url,
             },
           );
+          if (r.ok && r.truncated) return { ok: false as const, error: "summary output truncated (MAX_TOKENS)", kind: "parse" };
           if (r.ok) return { ok: true as const, json: r.json };
-          if (r.kind === "guard") { guardStop = true; guardHit = true; }
-          return { ok: false as const, error: r.error, kind: r.kind };
+          if (r.kind === "guard") guardStop = true; // 費用ガード・状態取得失敗: 全体を止める(試行回数は数えない)
+          return { ok: false as const, error: r.error, kind: r.kind, status: r.status };
         },
       });
       if (!outcome.ok) {
         errors[post.post_url] = sanitize(outcome.error, [geminiKey]);
-        await countFailure();
+        if (isPermanentFailure(outcome)) await countPermanentFailure();
         return "failed" as const;
       }
       const { error: upErr } = await supabase
@@ -112,8 +116,8 @@ Deno.serve(async (req: Request) => {
         .update({ gist: outcome.gist, summary: outcome.summary, summarized_at: new Date().toISOString() })
         .eq("post_url", post.post_url);
       if (upErr) {
+        // 保存の失敗は一時的なものとして試行回数に数えない
         errors[post.post_url] = sanitize(upErr.message, [geminiKey]);
-        await countFailure();
         return "failed" as const;
       }
       processed++;

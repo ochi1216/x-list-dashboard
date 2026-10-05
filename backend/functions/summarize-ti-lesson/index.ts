@@ -69,6 +69,8 @@ async function callGemini(ctx: GeminiCtx, transcriptText: string): Promise<strin
     maxOutputTokens: 4000,
   });
   if (!res.ok) throw new Error(`gemini ${res.kind}${res.status ? ` http ${res.status}` : ""}: ${res.error}`);
+  // 途中で切れた要約を成功として保存しない(保存すると、次回以降も「要約済み」として再生成されない)
+  if (res.truncated) throw new Error("gemini output truncated (MAX_TOKENS): summary not saved");
   return res.text;
 }
 

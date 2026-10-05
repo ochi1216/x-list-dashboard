@@ -153,6 +153,20 @@ export function isProtectedConfigKey(key: string): boolean {
   return CONFIG_SPECS[key]?.protected === true;
 }
 
+// 緊急停止がロックアウトに阻まれないよう、有効なトークンだけで通せる「安全側」の変更。
+//  - kill_switch を true にする
+//  - 上限(monthly_cap_jpy / daily_cap_jpy / hourly_call_cap / ti_daily_call_cap)を現在値より下げる
+// これ以外(false にする・上げる・同値・旧値なし・他の保護キー)はパスフレーズ再入力が必要。
+const LOWER_ONLY_KEYS = ["monthly_cap_jpy", "daily_cap_jpy", "hourly_call_cap", "ti_daily_call_cap"];
+export function reauthNeeded(key: string, oldValue: unknown, newValue: unknown): boolean {
+  if (!isProtectedConfigKey(key)) return false;
+  if (key === "kill_switch") return newValue !== true;
+  if (LOWER_ONLY_KEYS.includes(key)) {
+    return !(typeof oldValue === "number" && typeof newValue === "number" && newValue < oldValue);
+  }
+  return true;
+}
+
 /** 値域検査。OK なら null、NG なら "invalid_value"。型は厳密(数値は数値、真偽は真偽、文字列は文字列)。 */
 export function validateConfigValue(key: string, value: unknown): string | null {
   const s = CONFIG_SPECS[key];
@@ -469,7 +483,7 @@ const HANDLERS: Record<string, Handler> = {
 
   async label_create(ctx, req) {
     const n = req.n === undefined ? 20 : toInt(req.n);
-    if (n === null || n < 1 || n > 100) return err(400, "bad_request");
+    if (n === null || n < 1 || n > 60) return err(400, "bad_request");
     const r = await ctx.deps.db.rpc("create_label_list", { p_n: n });
     if (r.error) return err(500, "server_error");
     const d = Array.isArray(r.data) ? r.data[0] : r.data;
@@ -576,11 +590,11 @@ const HANDLERS: Record<string, Handler> = {
     const key = req.key;
     const bad = validateConfigValue(key, req.value);
     if (bad) return err(400, bad, { key });
-    if (isProtectedConfigKey(key)) {
+    const old = await ctx.deps.db.getConfigValue(key);
+    if (reauthNeeded(key, old, req.value)) {
       const r = await reauth(ctx, req.passphrase);
       if (r) return r;
     }
-    const old = await ctx.deps.db.getConfigValue(key);
     if (old !== null && deepEqual(old, req.value)) return ok({ unchanged: true });
     const hid = await ctx.deps.db.setConfig(key, old, req.value, "admin");
     return ok({ history_id: hid });
@@ -595,11 +609,11 @@ const HANDLERS: Record<string, Handler> = {
     if (h.old_value === null || h.old_value === undefined || validateConfigValue(h.key, h.old_value)) {
       return err(400, "cannot_undo");
     }
-    if (isProtectedConfigKey(h.key)) {
+    const cur = await ctx.deps.db.getConfigValue(h.key);
+    if (reauthNeeded(h.key, cur, h.old_value)) {
       const r = await reauth(ctx, req.passphrase);
       if (r) return r;
     }
-    const cur = await ctx.deps.db.getConfigValue(h.key);
     const newId = await ctx.deps.db.setConfig(h.key, cur, h.old_value, `undo:${hid}`);
     return ok({ history_id: newId, key: h.key, value: h.old_value });
   },

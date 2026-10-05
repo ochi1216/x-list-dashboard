@@ -124,7 +124,7 @@ export type SummaryPart = { text: string } | { inlineData: InlineImage };
 export type SummaryGen = (
   parts: SummaryPart[],
   opts: { maxOutputTokens: number },
-) => Promise<{ ok: true; json: unknown } | { ok: false; error: string; kind?: string }>;
+) => Promise<{ ok: true; json: unknown } | { ok: false; error: string; kind?: string; status?: number }>;
 
 export interface SummaryPost {
   post_url: string;
@@ -135,7 +135,17 @@ export interface SummaryPost {
 }
 export type SummarizeOutcome =
   | { ok: true; gist: string; summary: string; usedGemini: boolean }
-  | { ok: false; error: string; kind?: string };
+  | { ok: false; error: string; kind?: string; status?: number };
+
+// summary_attempts に数える「恒久的な失敗」か。
+// 数える: Gemini の 4xx(429以外=要求自体が通らない) / 応答が空 / JSONや形が不正(parse・empty)。
+// 数えない: 通信失敗(network)・429/5xx・提供終了(gone)・モデル状態/費用ガードの取得失敗や拒否(guard)・
+//   DB保存の失敗など、再試行すれば通る可能性があるもの(試行回数を消費して投稿が永久に未処理になるのを防ぐ)。
+export function isPermanentFailure(f: { kind?: string; status?: number }): boolean {
+  if (f.kind === "parse" || f.kind === "empty") return true;
+  if (f.kind === "http") return typeof f.status === "number" && f.status >= 400 && f.status < 500 && f.status !== 429;
+  return false;
+}
 
 function readSummaryJson(json: unknown): { gist: string; summary: string } | null {
   if (!json || typeof json !== "object") return null;
@@ -165,7 +175,7 @@ export async function summarizeOne(
     const r = await deps.gen(parts, {
       maxOutputTokens: images.length > 0 ? MAX_OUTPUT_TOKENS_IMAGE : MAX_OUTPUT_TOKENS_TEXT,
     });
-    if (!r.ok) return { ok: false, error: r.error, kind: r.kind };
+    if (!r.ok) return { ok: false, error: r.error, kind: r.kind, ...(r.status !== undefined ? { status: r.status } : {}) };
     const s = readSummaryJson(r.json);
     if (!s) return { ok: false, error: "unexpected summary shape", kind: "parse" };
     return { ok: true, gist: s.gist, summary: s.summary, usedGemini: true };

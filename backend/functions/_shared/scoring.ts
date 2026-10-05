@@ -3,6 +3,7 @@
 
 export const PROMPT_VERSION = "score-v1";
 export const SPEECH_PROMPT_VERSION = "speech-v1";
+export const SCORE_MAX_OUTPUT_TOKENS = 300; // 採点1回の出力上限(model-health の予行演習も同じ値で試す)
 
 export type ScoreKind =
   | "duplicate" | "announce" | "ref_only" | "primary" | "news"
@@ -334,26 +335,95 @@ export function parseSpeechResult(json: unknown): { title: string; body: string 
   return { title, body };
 }
 
-// 数値の取り出し。カンマ除去・万/億/兆を展開(3万5000 → 35000)。%や単位は無視して値だけ比べる。
-export function extractNumbers(text: string): number[] {
+// ---------- 読み下しの数値検査 ----------
+
+const KANJI_DIGIT: Record<string, number> = {
+  "〇": 0, "零": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9,
+};
+const SMALL_UNIT: Record<string, number> = { "十": 10, "百": 100, "千": 1000 };
+const BIG_UNIT: Record<string, number> = { "万": 1e4, "億": 1e8, "兆": 1e12 };
+const RUN_RE = /(?:\d+(?:\.\d+)?|[〇零一二三四五六七八九十百千万億兆])+/g;
+const TOKEN_RE = /\d+(?:\.\d+)?|[〇零一二三四五六七八九十百千万億兆]/g;
+
+// 数の並び(例: 3万5千 / 1.5億 / 三百 / 二〇二六 / 35000)を値にする。
+function runValue(run: string): number {
+  let total = 0; // 万・億・兆で確定した分
+  let section = 0; // 次の万・億・兆までの千の位以下
+  let cur: number | null = null; // 直前の数字(単位待ち)
+  let prevKanjiDigit = false;
+  for (const tok of run.match(TOKEN_RE) ?? []) {
+    if (/^\d/.test(tok)) {
+      if (cur !== null) section += cur;
+      cur = Number(tok);
+      prevKanjiDigit = false;
+    } else if (tok in KANJI_DIGIT) {
+      if (cur !== null && prevKanjiDigit) cur = cur * 10 + KANJI_DIGIT[tok]; // 位取り(二〇二六)
+      else {
+        if (cur !== null) section += cur;
+        cur = KANJI_DIGIT[tok];
+      }
+      prevKanjiDigit = true;
+    } else if (tok in SMALL_UNIT) {
+      section += (cur ?? 1) * SMALL_UNIT[tok];
+      cur = null;
+      prevKanjiDigit = false;
+    } else {
+      const block = section + (cur ?? 0);
+      total += (block === 0 && cur === null ? 1 : block) * BIG_UNIT[tok];
+      section = 0;
+      cur = null;
+      prevKanjiDigit = false;
+    }
+  }
+  return Math.round((total + section + (cur ?? 0)) * 1e6) / 1e6;
+}
+
+export interface NumberOpts {
+  // true: 漢数字だけの並び(三百・二〇二六)も数として取り出す。元の投稿側(緩く)で使う。
+  // false(既定): アラビア数字を含む並びだけ。読み下し側で使う(「一方」「万一」の「一」「万」を数と誤認しない)。
+  kanji?: boolean;
+}
+
+// 数値の取り出し。カンマ除去・万/億/兆・千/百/十の展開(3万5000 → 35000、3万5千 → 35000)。%や単位は無視して値だけ比べる。
+export function extractNumbers(text: string, opts: NumberOpts = {}): number[] {
   const s = String(text ?? "").normalize("NFKC").replace(/(\d),(?=\d{3}(?!\d))/g, "$1");
-  const re = /(?:(\d+(?:\.\d+)?)兆)?(?:(\d+(?:\.\d+)?)億)?(?:(\d+(?:\.\d+)?)万)?(\d+(?:\.\d+)?)?/g;
   const out: number[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(s)) !== null) {
-    if (m[0] === "") { re.lastIndex++; continue; }
-    const v = (m[1] ? Number(m[1]) * 1e12 : 0) + (m[2] ? Number(m[2]) * 1e8 : 0) +
-      (m[3] ? Number(m[3]) * 1e4 : 0) + (m[4] ? Number(m[4]) : 0);
-    out.push(Math.round(v * 1e6) / 1e6);
+  for (const m of s.matchAll(RUN_RE)) {
+    const run = m[0];
+    if (!opts.kanji && !/\d/.test(run)) continue;
+    out.push(runValue(run));
   }
   return out;
 }
 
+const MONTHS: [RegExp, number][] = [
+  [/\bjan(?:uary)?\b/i, 1], [/\bfeb(?:ruary)?\b/i, 2], [/\bmar(?:ch)?\b/i, 3], [/\bapr(?:il)?\b/i, 4],
+  [/\bmay\b/i, 5], [/\bjun(?:e)?\b/i, 6], [/\bjul(?:y)?\b/i, 7], [/\baug(?:ust)?\b/i, 8],
+  [/\bsep(?:t(?:ember)?)?\b/i, 9], [/\boct(?:ober)?\b/i, 10], [/\bnov(?:ember)?\b/i, 11], [/\bdec(?:ember)?\b/i, 12],
+];
+const DATE_RE = /(?<![\d.])(\d{4})[./\-](\d{1,2})(?:[./\-](\d{1,2}))?(?![\d])/g;
+
+// 元の投稿から「読み下しに現れてよい数」を集める: 数値・漢数字・日付の分解(2026.10.9 → 2026,10,9)・英語の月名(Oct → 10)。
+function sourceNumbers(text: string): number[] {
+  const t = String(text ?? "").normalize("NFKC");
+  const out = extractNumbers(t, { kanji: true });
+  // 日付表記は小数と区別できないので、小数としての値(上)に加えて分解した値も許す
+  for (const m of t.matchAll(DATE_RE)) {
+    for (const g of [m[1], m[2], m[3]]) if (g) out.push(Number(g));
+  }
+  for (const [re, n] of MONTHS) if (re.test(t)) out.push(n);
+  return out;
+}
+
+// 読み下し側からは、順序を表す数(1件目・2つ目・3番目)を除く(原文に無くても読み上げの整理として正当)。
+const ORDINAL_RE = /\d+(?=\s*(?:件目|番目|つ目|つめ|点目|個目|人目|行目|項目|段落目))/g;
+
 export function missingSpeechNumbers(speech: string, sourceTexts: string[]): number[] {
   const src = new Set<number>();
-  for (const t of sourceTexts) for (const n of extractNumbers(t)) src.add(n);
+  for (const t of sourceTexts) for (const n of sourceNumbers(t)) src.add(n);
   const missing: number[] = [];
-  for (const n of extractNumbers(speech)) if (!src.has(n)) missing.push(n);
+  const sp = String(speech ?? "").normalize("NFKC").replace(ORDINAL_RE, " ");
+  for (const n of extractNumbers(sp)) if (!src.has(n)) missing.push(n);
   return missing;
 }
 
@@ -372,7 +442,7 @@ export interface LlmReq {
   postUrl?: string;
 }
 export type LlmRes =
-  | { ok: true; json: unknown | null; text: string; model: string; usageId: number | null }
+  | { ok: true; json: unknown | null; text: string; model: string; usageId: number | null; truncated?: boolean }
   | { ok: false; kind: string; error: string; status?: number };
 
 export interface RunRow {
@@ -399,6 +469,7 @@ export type ScoreOutcome =
       reason: string;
       capReason: string | null;
       runs: RunRow[];
+      guardStopped?: boolean; // 再採点が費用ガードで止まった(呼び出し側は以後の着手を止める)
     }
   | { ok: false; failKind: string; error: string; stop: boolean };
 
@@ -408,6 +479,11 @@ export interface ScoreDeps {
   capOpinion: boolean;
   // 初回の点とモデル名から、再採点するか
   wantRescore: (model: string, score: number) => boolean;
+  // 聴く閾値 T。再採点が完了しなかった(guard停止・通信失敗・時間切れ)とき、境界の点 T は据え置かず T-1(=流す)に倒す。
+  // 未指定なら据え置き(単体テスト用)。
+  threshold?: number;
+  // 時間予算切れ。true なら再採点を始めない(1投稿で複数回呼ぶため、予算超過を防ぐ)。
+  timeUp?: () => boolean;
 }
 
 export async function scoreWithLlm(deps: ScoreDeps, post: PostLike & { post_url?: string }): Promise<ScoreOutcome> {
@@ -417,13 +493,15 @@ export async function scoreWithLlm(deps: ScoreDeps, post: PostLike & { post_url?
     purpose,
     parts: [{ text: prompt }],
     schema: SCORE_SCHEMA,
-    maxOutputTokens: 300,
+    maxOutputTokens: SCORE_MAX_OUTPUT_TOKENS,
     temperature: 0,
     postUrl: post.post_url,
   });
   const once = async (purpose: "score" | "rescore", attempt: number) => {
     const r = await deps.call(mk(purpose));
     if (!r.ok) return { ok: false as const, r };
+    // 出力が上限で途中切れの採点は信用しない
+    if (r.truncated) return { ok: false as const, r: { ok: false as const, kind: "parse", error: "truncated_score_output" } };
     const p = parseScoreResult(r.json);
     if (!p) return { ok: false as const, r: { ok: false as const, kind: "parse", error: "invalid_score_json" } };
     const caps = applyCaps({ raw: p.raw, kind: p.kind, evidence: p.evidence, input, flags: { capOpinion: deps.capOpinion } });
@@ -441,26 +519,45 @@ export async function scoreWithLlm(deps: ScoreDeps, post: PostLike & { post_url?
   }
   const runs: RunRow[] = [first.row];
   let score = first.caps.score;
+  let rep = first; // 最終点の元になった試行(キャップ理由・種別などはここから取る)
+  let capReason = first.caps.capReason;
+  let guardStopped = false;
   if (deps.wantRescore(first.model, first.caps.score)) {
-    const scores = [first.caps.score];
-    for (const attempt of [2, 3]) {
+    const done = [first];
+    let incomplete = false;
+    for (const attempt of [2, 3] as const) {
+      if (deps.timeUp?.()) { incomplete = true; break; }
       const x = await once("rescore", attempt);
-      if (!x.ok) break;
+      if (!x.ok) {
+        incomplete = true;
+        if (x.r.kind === "guard") guardStopped = true;
+        break;
+      }
       runs.push(x.row);
-      scores.push(x.caps.score);
+      done.push(x);
     }
-    if (scores.length === 3) score = median3(scores[0], scores[1], scores[2]);
+    if (!incomplete && done.length === 3) {
+      score = median3(done[0].caps.score, done[1].caps.score, done[2].caps.score);
+      // 中央値になった試行のキャップ結果で cap_reason を更新する(初回の理由が残らないように)
+      rep = done.find((d) => d.caps.score === score) ?? first;
+      capReason = rep.caps.capReason;
+    } else if (deps.threshold !== undefined && first.caps.score === deps.threshold) {
+      // 境界の点 T を再採点で確かめられなかった: 据え置くと未確認のまま「聴く」に入るので、T-1(流す)に倒す
+      score = deps.threshold - 1;
+      capReason = "rescore_incomplete";
+    }
   }
   return {
     ok: true,
     model: first.model,
     score,
     firstScore: first.caps.score,
-    raw: first.p.raw,
-    kind: first.p.kind,
-    interest: first.p.interest,
-    reason: first.p.reason,
-    capReason: first.caps.capReason,
+    raw: rep.p.raw,
+    kind: rep.p.kind,
+    interest: rep.p.interest,
+    reason: rep.p.reason,
+    capReason,
     runs,
+    ...(guardStopped ? { guardStopped: true } : {}),
   };
 }

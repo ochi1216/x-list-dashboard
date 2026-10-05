@@ -1,7 +1,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 // デプロイ時は backend/build.sh が _shared/*.ts を _<名前>.ts としてこのフォルダへコピーする
-import { callGemini, resolveGeminiBase } from "./_gemini.ts";
+import { callGemini, makeGeminiDb, resolveGeminiBase } from "./_gemini.ts";
 import { checkPipelineAuth } from "./_auth.ts";
 import {
   buildSpeechPrompt, checkSpeechNumbers, classifyForScoring, dupKey, normalizeBody,
@@ -9,17 +9,22 @@ import {
 } from "./_scoring.ts";
 import {
   type Cfg, failureClass, failureUpdate, hasEarlierDuplicate, mapPool, parseCfg, ruleFields,
-  sanitize, speechSaveFields, targetFrom, wantRescore,
+  sanitize, speechDecision, speechSaveFields, targetFrom, wantRescore,
 } from "./logic.ts";
 
 const FN = "score-x-posts";
 const CONCURRENCY = 4;
-const SCORE_BUDGET_MS = 100_000;
-const SPEECH_BUDGET_MS = 105_000; // 実行上限150秒。着手後の呼び出し(1回25秒×最大2回+待ち1.5秒)の完了を待つ余裕を残す
-const GEMINI_TIMEOUT_MS = 25_000;
+// 時間予算(実行上限は約150秒)。予算は「新しい処理を始めてよい期限」で、着手済みの呼び出しは完了を待つ。
+// 1回の callGemini の最悪は 20秒(要求) + 1.5秒(待ち) + 20秒(再実行は合計1回まで) = 41.5秒。
+// 採点は再採点(最大2回)の前にも期限を確かめるので、期限直前に着手した投稿の最悪は
+// 80 + 41.5 = 121.5秒。読み下しも同じ期限で着手を止めるので 80 + 41.5 = 121.5秒。
+// 区分確定(finalize_tiers)など DB 処理を数秒見込んでも 150秒を超えない。
+const SCORE_BUDGET_MS = 80_000;
+const SPEECH_BUDGET_MS = 80_000;
+const GEMINI_TIMEOUT_MS = 20_000;
 const BATCH_LIMIT = 200;
 const CFG_KEYS = [
-  "score_enabled", "kill_switch", "backfill_enabled", "tier_scope_from", "score_backfill_from",
+  "score_enabled", "tier_assign_enabled", "kill_switch", "backfill_enabled", "tier_scope_from", "score_backfill_from",
   "listen_threshold", "cap_opinion", "speech_enabled", "speech_max_per_run", "interest_profile",
 ];
 
@@ -33,22 +38,14 @@ Deno.serve(async (req: Request) => {
     Deno.env.get("SUPABASE_URL")!,
     Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
   );
-  const db = {
-    async rpc(name: string, args?: Record<string, unknown>) {
-      const r = await supabase.rpc(name, args ?? {});
-      return { data: r.data as unknown, error: r.error ? { message: r.error.message } : null };
-    },
-    async insertUsage(row: Record<string, unknown>): Promise<number | null> {
-      const r = await supabase.from("llm_usage").insert(row).select("id").single();
-      return r.error ? null : (r.data as { id: number }).id;
-    },
-  };
+  const db = makeGeminiDb(supabase); // insert 失敗は callGemini が console.error に残す(キー伏せ)
 
   // 認証: cron専用・必須(modeに関わらず)
   const auth = await checkPipelineAuth(req, { db, mode: "enforce", allow: ["cron"] });
   if (!auth.ok) return json({ ok: false, error: "unauthorized" }, 401);
 
-  const apiKey = Deno.env.get("GEMINI_API_KEY");
+  // X系は専用キー(GEMINI_API_KEY_X)があればそれを使う(summarize-x-post と同じ)
+  const apiKey = Deno.env.get("GEMINI_API_KEY_X") || Deno.env.get("GEMINI_API_KEY");
   if (!apiKey) return json({ ok: false, error: "no_api_key" }, 500);
 
   const batchId = crypto.randomUUID();
@@ -68,7 +65,6 @@ Deno.serve(async (req: Request) => {
     if (cfgError) return json({ ok: false, error: "config_unavailable" }, 500);
     const cfg: Cfg = parseCfg((cfgRows ?? []) as { key: string; value: unknown }[]);
     if (cfg.killSwitch) return json({ ok: true, skipped: "kill_switch" });
-    if (!cfg.scoreEnabled) return json({ ok: true, skipped: "score_disabled" });
 
     const gem = {
       db, apiKey, fn: FN, grp: "x" as const, batchId, timeoutMs: GEMINI_TIMEOUT_MS,
@@ -87,7 +83,9 @@ Deno.serve(async (req: Request) => {
       return q;
     };
 
-    if (!cfg.profileText) {
+    if (!cfg.scoreEnabled) {
+      // 採点と読み下しは飛ばす。区分確定は tier_assign_enabled なら実行する(下)
+    } else if (!cfg.profileText) {
       await db.rpc("ops_event", {
         p_level: "warn", p_kind: "score_no_profile", p_message: "関心プロファイルが未設定のため採点をスキップ",
         p_data: {}, p_dedupe_minutes: 360,
@@ -160,6 +158,8 @@ Deno.serve(async (req: Request) => {
             profileText: cfg.profileText,
             capOpinion: cfg.capOpinion,
             wantRescore: (model, score) => wantRescore(genOf(model), score, cfg.listenThreshold),
+            threshold: cfg.listenThreshold,
+            timeUp: () => Date.now() > scoreDeadline,
           }, p);
 
           if (!out.ok) {
@@ -173,6 +173,7 @@ Deno.serve(async (req: Request) => {
             return;
           }
           transportFails = 0;
+          if (out.guardStopped) stop = true; // 再採点が費用ガードで止まった: 以後の着手をやめる(この投稿は T-1 で確定済み)
 
           await supabase.from("score_runs").insert(out.runs.map((r) => ({
             post_url: p.post_url, purpose: r.purpose, attempt: r.attempt, model: r.model,
@@ -199,21 +200,24 @@ Deno.serve(async (req: Request) => {
       }
     }
 
-    // 区分確定
+    // 区分確定(score_enabled=false でも、tier_assign_enabled=true なら実行する)
     let tiers: unknown = null;
-    try {
-      const r = await db.rpc("finalize_tiers", { p_force: false });
-      tiers = r.error ? { error: sanitize(r.error.message) } : r.data;
-    } catch (e) {
-      tiers = { error: sanitize((e as Error).message) };
+    if (cfg.tierAssignEnabled) {
+      try {
+        const r = await db.rpc("finalize_tiers", { p_force: false });
+        tiers = r.error ? { error: sanitize(r.error.message) } : r.data;
+      } catch (e) {
+        tiers = { error: sanitize((e as Error).message) };
+      }
     }
 
     // 読み下し(聴く確定済みで未生成のもの)
-    if (cfg.speechEnabled && cfg.speechMaxPerRun > 0 && Date.now() < speechDeadline) {
+    if (cfg.scoreEnabled && cfg.speechEnabled && cfg.speechMaxPerRun > 0 && Date.now() < speechDeadline) {
       const { data: sp } = await supabase.from("x_posts")
         .select("id,post_url,content,summary,image_urls")
         .eq("listen_tier", "listen").is("speech_body", null).is("speech_at", null).eq("is_read", false)
         .order("score", { ascending: false }).limit(cfg.speechMaxPerRun);
+      let speechStop = false;
       await mapPool((sp ?? []) as { id: number; post_url: string; content: string | null; summary: string | null; image_urls: string[] | null }[],
         CONCURRENCY, async (p) => {
           try {
@@ -221,19 +225,21 @@ Deno.serve(async (req: Request) => {
               purpose: "speech", parts: [{ text: buildSpeechPrompt(p) }], schema: SPEECH_SCHEMA,
               maxOutputTokens: 600, temperature: 0.2, postUrl: p.post_url,
             });
-            if (!r.ok) return;
-            const s = parseSpeechResult(r.json);
+            const s = r.ok && !r.truncated ? parseSpeechResult(r.json) : null;
+            const numbersOk = !!s && checkSpeechNumbers(s.title + " " + s.body, [p.content ?? "", p.summary ?? ""]);
+            const decision = speechDecision(r, !!s, numbersOk);
+            if (decision === "guard_stop") { speechStop = true; return; } // 費用ガード: 記録せず次のtickで再開
             const now = new Date().toISOString();
-            // 失敗(形式不正・数値不一致)は speech_at だけ記録して再試行しない(費用の無限消費を防ぐ)
-            if (!s || !checkSpeechNumbers(s.title + " " + s.body, [p.content ?? "", p.summary ?? ""])) {
-              await supabase.from("x_posts").update({ speech_at: now, speech_model: r.model }).eq("id", p.id);
+            if (decision === "record_failure") {
+              // 失敗(通信・形式不正・数値不一致・parse失敗)は speech_at だけ記録して再試行しない(費用の無限消費を防ぐ)
+              await supabase.from("x_posts").update({ speech_at: now, speech_model: r.ok ? r.model : (r.model ?? null) }).eq("id", p.id);
               return;
             }
             const { error } = await supabase.from("x_posts")
-              .update(speechSaveFields(s.title, s.body, r.model, now)).eq("id", p.id);
+              .update(speechSaveFields(s!.title, s!.body, (r as { model: string }).model, now)).eq("id", p.id);
             if (!error) counts.speech++;
-          } catch (_e) { /* 次のtickで再試行 */ }
-        }, () => Date.now() > speechDeadline);
+          } catch (_e) { /* 想定外の例外(DB等)は次のtickで再試行 */ }
+        }, () => speechStop || Date.now() > speechDeadline);
     }
 
     let remaining: number | null = null;
@@ -242,7 +248,7 @@ Deno.serve(async (req: Request) => {
       remaining = count ?? null;
     }
 
-    return json({ ok: true, ...counts, remaining, tiers });
+    return json({ ok: true, ...counts, remaining, tiers, ...(cfg.scoreEnabled ? {} : { skipped: "score_disabled" }) });
   } catch (e) {
     return json({ ok: false, error: sanitize((e as Error)?.message) }, 500);
   } finally {

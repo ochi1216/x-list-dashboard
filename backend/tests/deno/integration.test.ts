@@ -370,9 +370,34 @@ Deno.test({ name: "generate-digest-summary", ...T }, async (t) => {
       assert(row.topics.every((x: any) => x.card_urls.length > 0 && x.card_urls.every((u: string) => supa.rows("x_posts").some((p) => p.post_url === u))), "card_urls");
       eq(gem.calls.length, 2, "見出し不合格で再生成1回");
       assert(supa.rows("llm_usage").every((u) => u.purpose === "digest"), "purpose");
+      const att = supa.rows("tuning_config").find((x) => x.key === "digest_last_attempt_at");
+      assert(att && typeof att.value === "string" && Number.isFinite(Date.parse(att.value)), "試行開始を digest_last_attempt_at に記録");
+      assert(gem.calls[0].body.generationConfig.maxOutputTokens === 1500 + 80 * 3, "maxOutputTokens は 1500+80×カード数");
       const r2 = await f.call({ period_type: "today" }, CRON);
       eq(r2.json.skipped, true, "二度目はスキップ");
       eq(gem.calls.length, 2, "Geminiは増えない");
+    });
+  });
+
+  await t.step("today: Gemini失敗は failed 行を保存し試行を記録。ok 行がある日は上書きしない", async () => {
+    fresh();
+    seedCards(3);
+    await withFn(env, "generate-digest-summary", {}, async (f) => {
+      gem.failNext = [{ status: 400, body: JSON.stringify({ error: { code: 400, message: "bad request" } }) }];
+      const r = await f.call({ period_type: "today" }, CRON);
+      eq(r.status, 500, "失敗は500");
+      eq(r.json.ok, false, "ok:false");
+      eq(supa.rows("digest_daily").map((x) => x.status), ["failed"], "failed 行を保存");
+      assert(supa.rows("tuning_config").some((x) => x.key === "digest_last_attempt_at"), "試行を記録");
+      assertNoKey(JSON.stringify(r.json) + f.logs(), "応答・ログ");
+      // ok 行がある日: 失敗しても壊さない
+      supa.rows("digest_daily")[0].status = "ok";
+      supa.rows("digest_daily")[0].topics = [{ headline: "正常な要点" }];
+      supa.rows("digest_daily")[0].generated_at = new Date(Date.now() - 8 * 3600_000).toISOString();
+      gem.failNext = [{ status: 400, body: JSON.stringify({ error: { code: 400, message: "bad request" } }) }];
+      const r2 = await f.call({ period_type: "today" }, CRON);
+      eq(r2.json.ok, false, "失敗");
+      eq([supa.rows("digest_daily")[0].status, supa.rows("digest_daily")[0].topics[0].headline], ["ok", "正常な要点"], "ok 行は保持");
     });
   });
 
@@ -437,6 +462,54 @@ Deno.test({ name: "generate-digest-summary", ...T }, async (t) => {
       assert(Array.isArray(rows.find((x) => x.period_type === "last_run")!.body.highlights), "last_run形式");
       assert(Array.isArray(rows.find((x) => x.period_type === "7d")!.body.daily), "7d形式");
       assert(supa.rows("llm_usage").map((u) => u.purpose).sort().join() === "digest,digest24,digest7", "purpose");
+    });
+  });
+
+  await t.step("旧モード: 秘密なしは10分に1回(ロック)・cron秘密は制限なし・enforceなら秘密必須", async () => {
+    fresh();
+    const now = Date.now();
+    supa.insert("fetch_runs", { list_name: "FollowList-AI", started_at: new Date(now - 600_000).toISOString(), finished_at: new Date(now - 300_000).toISOString() });
+    supa.addPost({ content: "テスト投稿", gist: "テーマA", fetched_at: new Date(now - 400_000).toISOString(), posted_at: new Date(now - 4000_000).toISOString() });
+    await withFn(env, "generate-digest-summary", {}, async (f) => {
+      const r1 = await f.call({ period_type: "24h" });
+      eq([r1.status, r1.json.ok, r1.json.skipped], [200, true, undefined], "初回は実行");
+      eq(gem.calls.length, 1, "Gemini1回");
+      const lk = supa.locks.get("digest-legacy-24h");
+      assert(lk && lk.until - Date.now() > 590_000 && lk.until - Date.now() <= 600_000, "ロックは10分(解放しない)");
+      const r2 = await f.call({ period_type: "24h" });
+      eq([r2.status, r2.json], [200, { ok: true, skipped: "busy" }], "10分以内の再呼び出しはbusy");
+      eq(gem.calls.length, 1, "Geminiは増えない");
+      const r3 = await f.call({ period_type: "7d" });
+      eq(r3.json.ok, true, "別の period は別ロック");
+      // cron の秘密があれば制限なし(ロックも不要)
+      const r4 = await f.call({ period_type: "24h" }, CRON);
+      eq([r4.status, r4.json.skipped], [200, undefined], "cronは実行");
+      eq(gem.calls.length, 3, "Gemini実行");
+      // win の秘密は許可外(401)
+      eq((await f.call({ period_type: "24h" }, WIN)).status, 401, "win は許可外");
+      // enforce: 秘密なしは401、cronは通る
+      supa.setCfg("pipeline_auth_mode", "enforce");
+      supa.locks.clear();
+      const e1 = await f.call({ period_type: "24h" });
+      eq([e1.status, e1.json.error], [401, "unauthorized"], "enforce・秘密なし");
+      eq((await f.call({ period_type: "24h" }, CRON)).status, 200, "enforce・cron");
+      eq(supa.locks.has("digest-legacy-24h"), false, "enforceでは制限用ロックを使わない");
+    });
+  });
+
+  await t.step("GEMINI_API_KEY_X があれば X専用キーを使う(無ければ GEMINI_API_KEY)", async () => {
+    fresh();
+    const now = Date.now();
+    supa.insert("fetch_runs", { list_name: "FollowList-AI", started_at: new Date(now - 600_000).toISOString(), finished_at: new Date(now - 300_000).toISOString() });
+    supa.addPost({ content: "テスト投稿", gist: "テーマA", fetched_at: new Date(now - 400_000).toISOString(), posted_at: new Date(now - 4000_000).toISOString() });
+    await withFn(env, "generate-digest-summary", { GEMINI_API_KEY: "AIzaSyWRONG_KEY_000000000000000000000000", GEMINI_API_KEY_X: gem.apiKey }, async (f) => {
+      const r = await f.call({ period_type: "last_run" }, CRON);
+      eq([r.status, r.json.ok], [200, true], "X専用キーで成功");
+      assertKeyOnlyInHeader();
+    });
+    await withFn(env, "generate-digest-summary", { GEMINI_API_KEY: "AIzaSyWRONG_KEY_000000000000000000000000", GEMINI_API_KEY_X: null }, async (f) => {
+      const r = await f.call({ period_type: "last_run" }, CRON);
+      eq(r.status, 500, "X専用キーが無く共通キーが不正なら失敗");
     });
   });
 });
@@ -680,6 +753,17 @@ Deno.test({ name: "admin-api", ...T }, async (t) => {
       eq(w.status, 429, "正解でも待ち中は429");
       assert(Number(w.headers.get("retry-after")) > 0, "Retry-After ヘッダ");
       eq((await call({ action: "cost_summary" }, token)).status, 200, "トークンは待ち中も有効");
+      // 緊急停止は待ち中・パスフレーズなしでも通る(kill_switch=true / 上限を下げる)。解除・引き上げは再入力経路なので429
+      supa.setCfg("kill_switch", false);
+      eq((await call({ action: "config_set", key: "kill_switch", value: true }, token)).json.ok, true, "kill_switch=true は再入力不要");
+      eq(supa.cfg("kill_switch"), true, "kill_switch反映");
+      eq((await call({ action: "config_set", key: "monthly_cap_jpy", value: 3000 }, token)).json.ok, true, "上限を下げるのは再入力不要");
+      eq(supa.cfg("monthly_cap_jpy"), 3000, "上限反映");
+      eq((await call({ action: "config_set", key: "monthly_cap_jpy", value: 4000, passphrase: NEWPASS }, token)).status, 429, "引き上げは再入力経路(待ち中429)");
+      eq((await call({ action: "config_set", key: "kill_switch", value: false, passphrase: NEWPASS }, token)).status, 429, "解除は再入力経路(待ち中429)");
+      eq((await call({ action: "config_set", key: "listen_threshold", value: 4 }, token)).json.ok, true, "通常設定は待ち中も可");
+      eq((await call({ action: "label_create", n: 61 }, token)).status, 400, "label_create n は60まで");
+      supa.setCfg("kill_switch", false);
     });
 
     await t.step("秘密(署名鍵・パスフレーズ)が応答・ログに出ない", () => {

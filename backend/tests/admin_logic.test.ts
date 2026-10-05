@@ -265,7 +265,7 @@ test("config_set: 通常キーはpassphrase不要・履歴にadminで記録・�
 
 test("config_set: 保護キーはpassphrase再入力が必須(誤りは拒否・失敗カウント)", async () => {
   const keys = ["monthly_cap_jpy", "daily_cap_jpy", "hourly_call_cap", "pipeline_auth_mode", "kill_switch", "auto_expire_enabled"];
-  const vals: any = { monthly_cap_jpy: 5000, daily_cap_jpy: 500, hourly_call_cap: 700, pipeline_auth_mode: "enforce", kill_switch: true, auto_expire_enabled: true };
+  const vals: any = { monthly_cap_jpy: 5000, daily_cap_jpy: 500, hourly_call_cap: 700, pipeline_auth_mode: "enforce", kill_switch: false, auto_expire_enabled: true };
   const { db, call, token } = await loggedIn();
   for (const k of keys) {
     assert.equal((await call({ action: "config_set", key: k, value: vals[k] }, token)).body.error, "passphrase_required", k);
@@ -279,6 +279,54 @@ test("config_set: 保護キーはpassphrase再入力が必須(誤りは拒否・
     assert.equal((await call({ action: "config_set", key: k, value: vals[k], passphrase: PASS }, token)).status, 200, k);
     assert.equal(db.s.config.get(k), vals[k]);
   }
+});
+
+test("config_set: 緊急停止(kill_switch=true・上限を下げる)は有効トークンだけで通る。戻す/上げるは再入力必須", async () => {
+  const { db, call, token } = await loggedIn({
+    config: { kill_switch: false, monthly_cap_jpy: 4000, daily_cap_jpy: 400, hourly_call_cap: 600, ti_daily_call_cap: 500, cap_warn_ratio: 0.8 },
+  });
+  const set = (key: string, value: unknown, extra: any = {}) => call({ action: "config_set", key, value, ...extra }, token);
+  // 安全側: パスフレーズなしで通る(誤ったパスフレーズが付いていても検証しない=失敗に数えない)
+  assert.equal((await set("kill_switch", true)).status, 200);
+  assert.equal(db.s.config.get("kill_switch"), true);
+  for (const [k, nv] of [["monthly_cap_jpy", 3000], ["daily_cap_jpy", 300], ["hourly_call_cap", 100], ["ti_daily_call_cap", 50]] as const) {
+    assert.equal((await set(k, nv)).status, 200, k);
+    assert.equal(db.s.config.get(k), nv, k);
+  }
+  assert.equal(db.s.auth.failed_count, 0);
+  assert.equal(db.s.history.length, 5);
+  assert.equal(db.s.history[1].source, "admin");
+  // 危険側(解除・引き上げ・同値・他の保護キー)は再入力が必要
+  assert.equal((await set("kill_switch", false)).body.error, "passphrase_required");
+  for (const [k, nv] of [["monthly_cap_jpy", 3500], ["daily_cap_jpy", 300], ["hourly_call_cap", 700], ["ti_daily_call_cap", 60]] as const) {
+    assert.equal((await set(k, nv)).body.error, "passphrase_required", k);
+  }
+  assert.equal((await set("cap_warn_ratio", 0.5)).body.error, "passphrase_required"); // 下げても対象外のキー
+  assert.equal((await set("pipeline_auth_mode", "log")).body.error, "passphrase_required");
+  assert.equal((await set("auto_expire_enabled", true)).body.error, "passphrase_required");
+  assert.equal((await set("kill_switch", false, { passphrase: PASS })).status, 200);
+  assert.equal(db.s.config.get("kill_switch"), false);
+  // 値域は変わらない(下げでも範囲外は拒否)
+  assert.equal((await set("monthly_cap_jpy", 50)).body.error, "invalid_value");
+  // 旧値が未設定のときは下げかどうか分からないので再入力必須
+  const fresh = await loggedIn();
+  assert.equal((await fresh.call({ action: "config_set", key: "monthly_cap_jpy", value: 1000 }, fresh.token)).body.error, "passphrase_required");
+  assert.equal((await fresh.call({ action: "config_set", key: "kill_switch", value: true }, fresh.token)).status, 200);
+});
+
+test("config_set: ログイン失敗の待ち時間中でも有効トークンの通常操作・緊急停止は通り、再入力経路だけ429", async () => {
+  const { db, call, token } = await loggedIn({ config: { kill_switch: false, monthly_cap_jpy: 4000, listen_threshold: 4 } });
+  for (let i = 0; i < 6; i++) await call({ action: "login", passphrase: "wrong-wrong-wrong" });
+  assert.equal(db.s.auth.failed_count, 5); // 5回目で待ちに入り、以降は429で数えない
+  assert.equal((await call({ action: "login", passphrase: PASS })).status, 429);
+  assert.equal((await call({ action: "config_set", key: "kill_switch", value: true }, token)).status, 200);
+  assert.equal((await call({ action: "config_set", key: "monthly_cap_jpy", value: 2000 }, token)).status, 200);
+  assert.equal((await call({ action: "config_set", key: "listen_threshold", value: 3 }, token)).status, 200);
+  assert.equal((await call({ action: "config_get" }, token)).status, 200);
+  assert.equal((await call({ action: "me" }, token)).body.authed, true);
+  const r = await call({ action: "config_set", key: "kill_switch", value: false, passphrase: PASS }, token); // 解除は再入力経路 → 待ち中は429
+  assert.equal(r.status, 429);
+  assert.equal(db.s.config.get("kill_switch"), true);
 });
 
 test("config_get: 許可キーだけ(interest_profile等は出さない)", async () => {
@@ -395,7 +443,10 @@ test("label_create: create_label_list(p_n)を呼ぶだけ", async () => {
   await call({ action: "label_create", n: 5 }, token);
   assert.equal(db.s.rpcs.at(-1).args.p_n, 5);
   assert.equal((await call({ action: "label_create", n: 0 }, token)).status, 400);
+  assert.equal((await call({ action: "label_create", n: 61 }, token)).status, 400);
   assert.equal((await call({ action: "label_create", n: 101 }, token)).status, 400);
+  assert.equal((await call({ action: "label_create", n: 60 }, token)).status, 200);
+  assert.equal(db.s.rpcs.at(-1).args.p_n, 60);
 });
 
 // ---- レポート・費用 ---------------------------------------------------------------------
