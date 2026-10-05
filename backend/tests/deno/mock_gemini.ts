@@ -27,6 +27,9 @@ export class MockGemini {
   usage = { promptTokenCount: 100, candidatesTokenCount: 50, thoughtsTokenCount: 0 };
   includeUsage = true;
   delayMs = 0;
+  speechBody: string | null = null; // 読み下しの応答本文を差し替える(数値不一致などの失敗の再現用)
+  speechFailStatus: number | null = null; // 読み下しの要求だけHTTPエラーにする
+  finishReason = "STOP"; // 2xx応答の finishReason(MAX_TOKENS で途切れの再現)
   server!: Deno.HttpServer;
   url = "";
 
@@ -47,6 +50,9 @@ export class MockGemini {
     this.todayHallucinate = false;
     this.includeUsage = true;
     this.delayMs = 0;
+    this.speechBody = null;
+    this.speechFailStatus = null;
+    this.finishReason = "STOP";
   }
 
   async handle(req: Request): Promise<Response> {
@@ -82,13 +88,17 @@ export class MockGemini {
       call.status = fail.status;
       return new Response(fail.body, { status: fail.status, headers: { "Content-Type": "application/json" } });
     }
+    if (this.speechFailStatus && body?.generationConfig?.responseSchema?.properties?.speech_title) {
+      call.status = this.speechFailStatus;
+      return Response.json({ error: { code: this.speechFailStatus, message: "speech failure (test)" } }, { status: this.speechFailStatus });
+    }
     const ms = this.modelStatus.get(model);
     if (ms) {
       call.status = ms;
       return Response.json({ error: { code: ms, message: `models/${model} is not found for API version v1beta` } }, { status: ms });
     }
     const out = this.answer(body);
-    const resp: Any = { candidates: [{ content: { parts: [{ text: out }], role: "model" }, finishReason: "STOP" }] };
+    const resp: Any = { candidates: [{ content: { parts: [{ text: out }], role: "model" }, finishReason: this.finishReason }] };
     if (this.includeUsage) resp.usageMetadata = this.usage;
     return Response.json(resp);
   }
@@ -109,7 +119,7 @@ export class MockGemini {
       return JSON.stringify({ kind: "news", evidence: text.slice(0, 12), score: sc, interest: "W1", reason: "テスト理由" });
     }
     if (has("score", "kind", "reason")) return JSON.stringify({ score: 3, kind: "news", reason: "テスト" });
-    if (has("speech_title", "speech_body")) return JSON.stringify({ speech_title: "読み下し見出し", speech_body: "要点を読み上げます。" });
+    if (has("speech_title", "speech_body")) return JSON.stringify({ speech_title: "読み下し見出し", speech_body: this.speechBody ?? "要点を読み上げます。" });
     if (has("ok", "msg")) return JSON.stringify({ ok: true, msg: "こんにちは" });
     if (has("topics")) {
       const cards = [...prompt.matchAll(/URL: (\S+)\n要旨: (.*)\n要約: (.*)\n本文: (.*)/g)];

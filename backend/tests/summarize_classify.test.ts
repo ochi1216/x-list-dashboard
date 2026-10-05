@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  buildFullPrompt, checkUnauthRestrictions, classifyContent, fetchImageAsInlineData, IMAGE_PROMPT,
+  buildFullPrompt, checkUnauthRestrictions, classifyContent, fetchImageAsInlineData, IMAGE_PROMPT, isPermanentFailure,
   needsImageAnalysis, resolveLimit, RESPONSE_SCHEMA, SHORT_EN_PROMPT, summarizeOne, SUMMARY_PROMPT, toSmallVariant,
 } from "../functions/summarize-x-post/logic.ts";
 import { newBatchId, runPool, createBudget, clampInt } from "../functions/_shared/util.ts";
@@ -191,4 +191,28 @@ test("newBatchId / createBudget / clampInt", () => {
   assert.equal(b.remaining(), 0);
   assert.equal(clampInt("7", 1, 1, 5), 5);
   assert.equal(clampInt(undefined, 3, 1, 5), 3);
+});
+
+test("isPermanentFailure: 数えるのは Gemini の4xx(429以外)・parse・empty だけ", () => {
+  // 数える
+  for (const status of [400, 401, 403, 422]) assert.equal(isPermanentFailure({ kind: "http", status }), true, `http ${status}`);
+  assert.equal(isPermanentFailure({ kind: "parse" }), true);
+  assert.equal(isPermanentFailure({ kind: "empty" }), true);
+  // 数えない: 429・5xx・通信・提供終了・費用ガード/状態取得失敗・不明
+  for (const status of [429, 500, 502, 503, 504]) assert.equal(isPermanentFailure({ kind: "http", status }), false, `http ${status}`);
+  assert.equal(isPermanentFailure({ kind: "http" }), false);
+  assert.equal(isPermanentFailure({ kind: "network" }), false);
+  assert.equal(isPermanentFailure({ kind: "gone", status: 404 }), false);
+  assert.equal(isPermanentFailure({ kind: "guard" }), false);
+  assert.equal(isPermanentFailure({}), false);
+});
+
+test("summarizeOne: Gemini失敗の kind/status が結果に引き継がれる(試行回数の判定に使う)", async () => {
+  const r = await summarizeOne(post({ content: "あ".repeat(80) }), { gen: async () => ({ ok: false as const, error: "bad", kind: "http", status: 400 }) });
+  assert.deepEqual(r, { ok: false, error: "bad", kind: "http", status: 400 });
+  assert.equal(r.ok === false && isPermanentFailure(r), true);
+  const r2 = await summarizeOne(post({ content: "あ".repeat(80) }), { gen: async () => ({ ok: false as const, error: "quota", kind: "http", status: 429 }) });
+  assert.equal(r2.ok === false && isPermanentFailure(r2), false);
+  const shape = await summarizeOne(post({ content: "あ".repeat(80) }), fakeGenDeps({ gist: "x" }));
+  assert.equal(shape.ok === false && isPermanentFailure(shape), true); // 形が不正=parse
 });

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  failureClass, failureUpdate, hasEarlierDuplicate, mapPool, parseCfg, ruleFields, sanitize, targetFrom, wantRescore,
+  failureClass, failureUpdate, hasEarlierDuplicate, mapPool, parseCfg, ruleFields, sanitize, speechDecision, targetFrom, wantRescore,
 } from "../functions/score-x-posts/logic.ts";
 
 test("parseCfg と targetFrom", () => {
@@ -70,4 +70,22 @@ test("mapPool: 並列上限と停止", async () => {
   let n = 0;
   await mapPool([1, 2, 3, 4, 5, 6], 1, async () => { n++; }, () => n >= 2);
   assert.equal(n, 2);
+});
+
+test("parseCfg: tier_assign_enabled は既定true(区分確定を止めない)、falseなら止める", () => {
+  assert.equal(parseCfg([]).tierAssignEnabled, true);
+  assert.equal(parseCfg([{ key: "tier_assign_enabled", value: false }]).tierAssignEnabled, false);
+  assert.equal(parseCfg([{ key: "tier_assign_enabled", value: "false" }]).tierAssignEnabled, true); // 型違いは既定
+  assert.equal(parseCfg([{ key: "score_enabled", value: false }]).scoreEnabled, false);
+});
+
+test("speechDecision: guard停止のときだけ記録しない。それ以外の失敗(通信・parse・形式不正・数値不一致)は記録して再試行しない", () => {
+  assert.equal(speechDecision({ ok: true }, true, true), "save");
+  assert.equal(speechDecision({ ok: true }, false, false), "record_failure"); // 形式不正
+  assert.equal(speechDecision({ ok: true }, true, false), "record_failure"); // 数値不一致
+  assert.equal(speechDecision({ ok: false, kind: "parse" }, false, false), "record_failure");
+  assert.equal(speechDecision({ ok: false, kind: "empty" }, false, false), "record_failure");
+  assert.equal(speechDecision({ ok: false, kind: "http" }, false, false), "record_failure");
+  assert.equal(speechDecision({ ok: false, kind: "network" }, false, false), "record_failure");
+  assert.equal(speechDecision({ ok: false, kind: "guard" }, false, false), "guard_stop");
 });

@@ -141,6 +141,56 @@ Deno.test({ name: "summarize-x-post", ...T }, async (t) => {
     });
   });
 
+  await t.step("summary_attempts は恒久的な失敗(4xx(429以外)・parse・empty)だけ数える。通信・429/5xx・gone・状態取得失敗・guard は数えない", async () => {
+    const attemptsAfter = async (setup: () => void, extra: Record<string, string | null> = {}) => {
+      fresh();
+      const p = supa.addPost({ content: JA_LONG });
+      setup();
+      let out = -1;
+      await withFn(env, "summarize-x-post", extra, async (f) => {
+        await f.call({});
+        out = p.summary_attempts;
+        eq(p.gist, null, "失敗した投稿は未処理のまま");
+        eq(supa.locks.size, 0, "ロック解放");
+      });
+      return out;
+    };
+    const err = (status: number, message = "x") => ({ status, body: JSON.stringify({ error: { message } }) });
+    // 数える
+    eq(await attemptsAfter(() => { gem.failNext = [err(400, "bad request")]; }), 1, "400");
+    eq(await attemptsAfter(() => { gem.failNext = [err(403, "permission denied")]; }), 1, "403");
+    eq(await attemptsAfter(() => { gem.failNext = [{ status: 200, body: JSON.stringify({ candidates: [{ content: { parts: [{ text: "not json {" }] }, finishReason: "STOP" }] }) }]; }), 1, "parse(JSON不正)");
+    eq(await attemptsAfter(() => { gem.failNext = [{ status: 200, body: JSON.stringify({ candidates: [{ content: { parts: [{ text: " " }] }, finishReason: "STOP" }] }) }]; }), 1, "empty");
+    // 数えない
+    eq(await attemptsAfter(() => { gem.failNext = [err(500), err(500)]; }), 0, "500(再試行も500)");
+    eq(await attemptsAfter(() => { gem.failNext = [err(429, "quota"), err(429, "quota")]; }), 0, "429");
+    eq(await attemptsAfter(() => { gem.failNext = [err(503), err(503)]; }), 0, "503");
+    eq(await attemptsAfter(() => { gem.failNext = [err(404, "models/x is not found")]; }), 0, "gone(404)");
+    eq(await attemptsAfter(() => { gem.failNext = [err(400, "models/x is no longer available")]; }), 0, "gone(400+model+提供終了)");
+    eq(await attemptsAfter(() => { denyByCost(); }), 0, "費用ガード拒否");
+    eq(await attemptsAfter(() => { supa.failRpc.set("get_model_state", Infinity); }), 0, "モデル状態の取得失敗");
+    eq(await attemptsAfter(() => { supa.failRpc.set("cost_guard", Infinity); }), 0, "cost_guardの取得失敗");
+    eq(await attemptsAfter(() => { supa.failTable.set("PATCH x_posts", Infinity); gem.failNext = []; }), 0, "DB保存の失敗(一時的)");
+    // 恒久失敗が3回で対象外になる
+    fresh();
+    const q = supa.addPost({ content: JA_LONG });
+    await withFn(env, "summarize-x-post", {}, async (f) => {
+      for (let i = 0; i < 4; i++) { gem.failNext = [err(400, "bad request")]; await f.call({}); }
+      eq(q.summary_attempts, 3, "3回で打ち止め(4回目は対象外)");
+    });
+  });
+
+  await t.step("X専用キー GEMINI_API_KEY_X があればそれを使う(無ければ GEMINI_API_KEY)", async () => {
+    fresh();
+    const a = supa.addPost({ content: JA_LONG });
+    await withFn(env, "summarize-x-post", { GEMINI_API_KEY: "AIzaWRONGWRONGWRONGWRONGWRONG0000", GEMINI_API_KEY_X: gem.apiKey }, async (f) => {
+      const r = await f.call({});
+      eq(r.json.processed, 1, "Xキーで成功");
+      assert(a.gist, "gist");
+      assertKeyOnlyInHeader();
+    });
+  });
+
   await t.step("提供終了(404)×3で次候補へ切替し、同じ要求を新モデルで再実行する", async () => {
     fresh();
     for (let i = 0; i < 3; i++) supa.addPost({ content: JA_LONG + String(i === 0 ? "" : "。続報" + "あ".repeat(i)) });
@@ -331,6 +381,87 @@ Deno.test({ name: "score-x-posts", ...T }, async (t) => {
       const failed = supa.rows("x_posts").filter((p) => p.score_state === "failed");
       assert(failed.length >= 1, "3回失敗したものは failed になり以後の対象外");
       assert(failed.every((p) => p.score_attempts === 3), "failed は3回");
+    });
+  });
+
+  await t.step("読み下しの失敗(数値不一致・HTTPエラー)は speech_at を記録して再試行しない。費用ガード停止のときだけ記録しない", async () => {
+    const run = async (setup: () => void, post: () => ReturnType<typeof supa.addPost>) => {
+      fresh();
+      const p = post();
+      setup();
+      const result: { speechCalls: number[]; p: ReturnType<typeof supa.addPost> } = { speechCalls: [], p };
+      await withFn(env, "score-x-posts", {}, async (f) => {
+        await f.call({}, CRON);
+        result.speechCalls.push(gem.calls.filter((c) => c.body.generationConfig.responseSchema.properties.speech_title).length);
+        gem.failNext = [];
+        await f.call({}, CRON); // 2回目: 再試行されない
+        result.speechCalls.push(gem.calls.filter((c) => c.body.generationConfig.responseSchema.properties.speech_title).length);
+      });
+      return result;
+    };
+    const mkPost = () => supa.addPost({ author_handle: "s", summary: "要約", content: `SCORE=5 ${JA_LONG}` });
+    // 数値不一致(原文に無い 999)
+    let r = await run(() => { gem.speechBody = "価格は999ドルです。"; }, mkPost);
+    eq([r.p.speech_body, r.p.listen_tier, !!r.p.speech_at], [null, "listen", true], "数値不一致: 保存せず speech_at 記録");
+    eq(r.speechCalls, [1, 1], "再試行しない");
+    // HTTPエラー(400)
+    r = await run(() => { gem.speechFailStatus = 400; }, mkPost);
+    eq([r.p.speech_body, !!r.p.speech_at], [null, true], "HTTPエラー: speech_at 記録");
+    eq(r.speechCalls, [1, 1], "再試行しない");
+    // 成功なら保存
+    r = await run(() => {}, mkPost);
+    assert(r.p.speech_body && r.p.speech_at, "成功は保存");
+    // 費用ガード停止: 記録しない(次のtickで再開)。採点1回で使用量が1行になり、hourly_call_cap=1 で読み下しだけ拒否される
+    r = await run(() => { supa.setCfg("hourly_call_cap", 1); }, mkPost);
+    eq([r.p.listen_tier, r.p.speech_body, r.p.speech_at], ["listen", null, null], "guard: speech_at を記録しない");
+  });
+
+  await t.step("score_enabled=false: 採点・読み下しは飛ばすが、tier_assign_enabled=true なら finalize_tiers は実行する", async () => {
+    fresh();
+    supa.setCfg("score_enabled", false);
+    const scored = supa.addPost({ author_handle: "d", summary: "s", content: JA_LONG, score: 5, score_state: "scored" });
+    const unscored = supa.addPost({ author_handle: "e", summary: "s", content: `SCORE=5 ${JA_LONG}2` });
+    await withFn(env, "score-x-posts", {}, async (f) => {
+      const r = await f.call({}, CRON);
+      eq([r.status, r.json.ok, r.json.skipped], [200, true, "score_disabled"], "応答");
+      eq([r.json.scored, r.json.speech], [0, 0], "採点・読み下しはしない");
+      eq(gem.calls.length, 0, "Gemini未呼び出し");
+      eq(unscored.score_state, null, "未採点のまま");
+      eq(scored.listen_tier, "listen", "区分確定は実行された");
+      assert(supa.rpcCalls.some((c) => c.name === "finalize_tiers"), "finalize_tiers");
+      eq(r.json.tiers.batches[0].listen, 1, "tiers を返す");
+      eq(supa.locks.size, 0, "ロック解放");
+      // tier_assign_enabled=false なら区分確定もしない
+      supa.rpcCalls.length = 0;
+      supa.setCfg("tier_assign_enabled", false);
+      const r2 = await f.call({}, CRON);
+      assert(!supa.rpcCalls.some((c) => c.name === "finalize_tiers"), "tier_assign_enabled=false では実行しない");
+      eq(r2.json.tiers, null, "tiers=null");
+    });
+  });
+
+  await t.step("再採点が費用ガードで止まったら境界の点T(4)は T-1(3)に下げて確定(cap_reason=rescore_incomplete)", async () => {
+    fresh();
+    supa.rows("model_config").find((m) => m.model === "gemini-2.5-flash")!.gen_config = { default: {}, rescore: true };
+    const a = supa.addPost({ author_handle: "r", summary: "s", content: `SCORE=4 ${JA_LONG}` });
+    supa.setCfg("hourly_call_cap", 1); // 初回の採点だけ通り、再採点は guard
+    await withFn(env, "score-x-posts", {}, async (f) => {
+      const r = await f.call({}, CRON);
+      eq(r.json.scored, 1, "scored");
+      eq([a.score, a.score_raw, a.cap_reason, a.listen_tier], [3, 4, "rescore_incomplete", "skim"], "T-1 で確定(据え置かない)");
+      eq(supa.rows("score_runs").length, 1, "完了した試行だけ記録");
+      eq(supa.locks.size, 0, "ロック解放");
+    });
+  });
+
+  await t.step("X専用キー GEMINI_API_KEY_X があればそれを使う", async () => {
+    fresh();
+    const { p1 } = mk();
+    await withFn(env, "score-x-posts", { GEMINI_API_KEY: "AIzaWRONGWRONGWRONGWRONGWRONG0000", GEMINI_API_KEY_X: gem.apiKey }, async (f) => {
+      const r = await f.call({}, CRON);
+      eq(r.json.scored, 3, "Xキーで採点できた");
+      eq(p1.score, 5, "p1");
+      assertKeyOnlyInHeader();
     });
   });
 });
