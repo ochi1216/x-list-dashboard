@@ -532,3 +532,87 @@ test("player: 文字列配列も受け付ける", () => {
   assert.equal(e.spoken[1].text, "い。");
   assert.equal(e.player.state().total, 2);
 });
+
+// ---------- レビュー指摘の修正(所有格・分数と日付・速度の持ち越し) ----------
+test("所有格 's: 辞書語のあとは読まない(OpenAI's → オープンエーアイ、ズにならない)", () => {
+  assert.equal(TTS.clean("OpenAI's new model"), "オープンエーアイ new model。");
+  assert.ok(TTS.clean("Google’s Gemini").startsWith("グーグル ジェミニ"));
+  assert.ok(TTS.clean("NVIDIA's GPUs").startsWith("エヌビディア ジーピーユー"));
+  assert.ok(TTS.clean("the CEO's plan").includes("シーイーオー plan"));
+  assert.ok(!/[ァ-ヶー]s(?![A-Za-z])/.test(TTS.clean("OpenAI's AI's Apple's Meta's")), TTS.clean("OpenAI's AI's Apple's Meta's"));
+  assert.ok(!/'/.test(TTS.clean("ソニー's 新製品")), "カタカナ語のあとの 's も除く");
+  assert.equal(TTS.clean("Sam's idea"), "Sam's idea。", "辞書にない固有名の 's はそのまま");
+});
+
+test("日付: 4/5・1/3 のような分数・評価値は日付にしない(単独のn/nは「n分のn」)", () => {
+  assert.ok(TTS.clean("評価は4/5でした").includes("5分の4"));
+  assert.ok(TTS.clean("1/3のユーザーが").startsWith("3分の1"));
+  assert.ok(TTS.clean("4/5 stars").startsWith("5分の4"));
+  assert.ok(TTS.clean("7/10").startsWith("10分の7"));
+  assert.ok(TTS.clean("スコア3/5点").includes("5分の3点"));
+  assert.ok(!/月/.test(TTS.clean("成功率は1/3、残りは2/3")), TTS.clean("成功率は1/3、残りは2/3"));
+});
+
+test("日付: 年付き・月日の文脈語(発売/発表/曜日/締切など)があれば日付にする", () => {
+  assert.ok(TTS.clean("2026/4/5に発売").startsWith("4月5日に"));
+  assert.ok(TTS.clean("4/5(月)に開催").startsWith("4月5日に"));
+  assert.ok(TTS.clean("4/5にリリース").startsWith("4月5日にリリース"));
+  assert.ok(TTS.clean("10/12の発表").startsWith("10月12日の発表"));
+  assert.ok(TTS.clean("発売日 4/5").includes("発売日 4月5日"));
+  assert.ok(TTS.clean("締切は12/31").includes("12月31日"));
+  assert.ok(TTS.clean("due 4/5").includes("due 4月5日"));
+  assert.ok(TTS.clean("2026/10").startsWith("2026年10月"));
+});
+
+test("player: play() し直したら前の再生で setRate した速度を持ち越さない(速度はgetRateが正)", () => {
+  const e = makeEnv();
+  e.player.play(ITEMS);
+  e.clock.advance(100);
+  e.spoken[0].onstart();
+  e.player.setRate(1.8);
+  e.clock.advance(100);
+  assert.equal(e.spoken[1].rate, 1.8);
+  e.setRate(1.1); // 設定画面で速度を変えた
+  e.player.stop();
+  e.player.play(ITEMS);
+  e.clock.advance(100);
+  assert.equal(e.spoken[e.spoken.length - 1].rate, 1.1, "新しい再生は設定の速度");
+});
+
+test("player: 停止中に setRate → 再開時にその速度で読み直す(LPは停止中も setRate を呼ぶ)", () => {
+  const e = makeEnv();
+  e.player.play(ITEMS);
+  e.clock.advance(100);
+  e.spoken[0].onstart();
+  e.player.setRate(1.5); // 再生中に変更
+  e.clock.advance(100);
+  e.player.pause();
+  e.player.setRate(1.9); // 停止中に変更
+  e.player.resume();
+  e.clock.advance(100);
+  assert.equal(e.spoken[e.spoken.length - 1].rate, 1.9);
+});
+
+// ---------- 古いiOS Safariを壊す構文が無いこと(index_beta.html と ui/tts.js) ----------
+import { readFileSync } from "node:fs";
+const ROOT_DIR = new URL("../../", import.meta.url);
+const BETA_HTML = readFileSync(new URL("index_beta.html", ROOT_DIR), "utf8");
+const TTS_SRC = readFileSync(new URL("ui/tts.js", ROOT_DIR), "utf8");
+
+test("後読み正規表現 (?<=...) (?<!...) が index_beta.html と ui/tts.js に1つも無い(iOS 16.3以前で構文エラー)", () => {
+  assert.equal((BETA_HTML.match(/\(\?<[=!]/g) || []).length, 0, "index_beta.html");
+  assert.equal((TTS_SRC.match(/\(\?<[=!]/g) || []).length, 0, "ui/tts.js");
+});
+
+test("名前付きキャプチャ・CSS inset・新しいAPIなど新しすぎる構文を使っていない", () => {
+  assert.equal((BETA_HTML.match(/\(\?<[A-Za-z_]/g) || []).length, 0, "名前付きキャプチャ");
+  assert.ok(!/[\s;{]inset\s*:/.test(BETA_HTML), "CSS inset はSafari14.1以降");
+  assert.ok(!/overflow-wrap\s*:\s*anywhere\s*;(?![^}]*word-break)/.test(BETA_HTML), "overflow-wrap:anywhere は word-break:break-word を併記する");
+  assert.ok(!/\.replaceAll\(|\.matchAll\(|\.at\(-?\d|Object\.fromEntries|structuredClone|\.findLast\(/.test(BETA_HTML), "新しいAPI");
+});
+
+test("index_beta.html に展開された TTS は ui/tts.js と一致(ui_build.sh を流し忘れていない)", () => {
+  const m = BETA_HTML.match(/\/\*TTS:BEGIN\*\/\n([\s\S]*?)\n\/\*TTS:END\*\//);
+  assert.ok(m, "マーカーがある");
+  assert.equal(m![1], TTS_SRC.replace(/\n+$/, "").replace(/<\/script/g, "<\\/script"));
+});

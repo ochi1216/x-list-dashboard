@@ -73,7 +73,7 @@
       } else plain.push([x, d[x]]);
     });
     var mk = function (arr, flags) {
-      return arr.length ? new RegExp("(^|[^A-Za-z0-9])(" + arr.join("|") + ")s?(?![A-Za-z])", flags) : null;
+      return arr.length ? new RegExp("(^|[^A-Za-z0-9])(" + arr.join("|") + ")(?:'s|s)?(?![A-Za-z])", flags) : null;
     };
     var c = { ins: mk(ins, "gi"), sens: mk(sens, "g"), plain: plain, map: map, mapL: mapL };
     dictCache = { sig: sig, c: c };
@@ -147,6 +147,9 @@
   var SINGLE_UNITS = { W: 1, V: 1, A: 1, m: 1, g: 1, G: 1 };
 
   function validMD(m, d) { return m >= 1 && m <= 12 && d >= 1 && d <= 31; }
+  // 月日の文脈語(日付・期日・曜日・発表/発売/開催などの直前直後)
+  var RE_DATE_CTX_BEFORE = /(?:日付|期日|期限|締切|締め切り|発売日|公開日|開催日|発表日|予定日|リリース日|配信日|開始日|終了日|更新日|投稿日|〆|date|dated|deadline|due|on|by|until|since|from|before|after)[\s:：は]{0,3}$/i;
+  var RE_DATE_CTX_AFTER = /^(?:\s?[(（][月火水木金土日祝](?:曜日?)?[)）]|\s?[月火水木金土日]曜|(?:の|に|には|は)?(?:発表|発売|公開|開催|開始|リリース|実施|施行|配信|終了|締切|締め切り|期限|登場|開幕|予定|スタート|解禁|出荷|納期|時点|現在|以降|以前|まで|から|より|付け?(?:の|で)?)|\s?(?:\(|（)\d)/;
 
   function readNumbers(t) {
     // 桁区切りカンマ(1,200 → 1200)
@@ -159,8 +162,13 @@
       return +mo >= 1 && +mo <= 12 ? pre + y + "年" + (+mo) + "月" : m;
     });
     t = t.replace(/(^|[^\d])24\/7(?![\d\/])/g, "$124時間365日");
-    t = t.replace(/(^|[^\d\/.\-:])(\d{1,2})\/(\d{1,2})(?![\d\/])/g, function (m, pre, mo, d) {
-      return validMD(+mo, +d) ? pre + (+mo) + "月" + (+d) + "日" : m;
+    // 年の無い n/n は「4/5(分数・評価値)」と区別できないので、月日の文脈語が前後にある時だけ日付にする。
+    // 単独の n/n は日付にせず、後段で「n分のn」と読む。
+    t = t.replace(/(^|[^\d\/.\-:])(\d{1,2})\/(\d{1,2})(?![\d\/])/g, function (m, pre, mo, d, off, str) {
+      if (!validMD(+mo, +d)) return m;
+      var before = str.slice(Math.max(0, off - 12), off + pre.length);
+      var after = str.slice(off + m.length, off + m.length + 12);
+      return RE_DATE_CTX_BEFORE.test(before) || RE_DATE_CTX_AFTER.test(after) ? pre + (+mo) + "月" + (+d) + "日" : m;
     });
     // 時刻 10:30 → 10時30分
     t = t.replace(/(^|[^\d:])(\d{1,2}):(\d{2})(?![\d:])/g, function (m, pre, h, mi) {
@@ -222,6 +230,11 @@
     t = t.replace(/(^|[。!?]\s*)[ \t]*(\d{1,2})[.)](?!\d)[ \t]*(?=\S)/gm, "$1$2件目、");
     t = t.replace(/(^|\s)(\d{1,2})\)(?=\s|[぀-ヿ一-鿿])\s*/g, "$1$2件目、");
 
+    // 「4/5(月)」の曜日つきは確実な日付(括弧ごと消える前に日付へ)
+    t = t.replace(/(^|[^\d\/.\-:])(\d{1,2})\/(\d{1,2})\s?\([月火水木金土日祝](?:曜日?)?\)/g, function (m, pre, mo, d) {
+      return validMD(+mo, +d) ? pre + (+mo) + "月" + (+d) + "日" : m;
+    });
+
     // 括弧内の読み飛ばし
     for (var i = 0; i < 6; i++) {
       var before = t;
@@ -269,9 +282,9 @@
       if (n === "" || /[\s。、！？]/.test(n)) return "。";
       return " ";
     });
-    // アポストロフィは英字間のみ残す
-    t = t.replace(/'(?![A-Za-z])|(^|[^A-Za-z])'/g, "$1");
+    // 所有格 's は「'」を除く前に処理(辞書語・カタカナ語のあとの 's は読まない)。残りのアポストロフィは英字間のみ残す
     t = t.replace(/([ァ-ヶー])'s(?![A-Za-z])/g, "$1");
+    t = t.replace(/'(?![A-Za-z])|(^|[^A-Za-z])'/g, "$1");
 
     // 読める文字だけを残す
     t = t.replace(/[^\p{L}\p{M}\p{N}\s。、！？.'・]/gu, " ");
@@ -493,6 +506,7 @@
     return {
       play: function (list, startIndex) {
         clearTimers(); token++;
+        rateOverride = null; // 前の再生中に setRate した値を持ち越さない(速度は getRate が正)
         items = norm(list);
         index = Math.max(0, startIndex | 0);
         notified = -1; retried = 0;

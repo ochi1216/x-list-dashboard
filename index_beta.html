@@ -226,6 +226,11 @@
   .seg-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .seg-btns button { min-height: 44px; min-width: 56px; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); font-size: 15px; cursor: pointer; }
   .seg-btns button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  /* 長い英字・URLでも幅を超えない(overflow-wrap:anywhere はSafari15.4以降なので word-break:break-word を併記) */
+  .card, .topic, .topic b, .topic p, .holditem, .hi-title, .kindline, #topBand, #listenGuide, #breakdown, #todayNote, #offlineBox, .pl-card, .pl-list, .fl-card, .ov-full p, #plToast .msg, .lb-card, .lb-title, .au-name, .evrow, .qop .q-body, .fmsg { overflow-wrap: anywhere; word-break: break-word; }
+  .tap small { overflow-wrap: normal; word-break: keep-all; }
+  #offlineBox { margin: 8px 0; }
+  #todayNote { margin: 8px 0; padding: 12px 14px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line); color: #ffd9e0; font-size: 14px; line-height: 1.6; }
   .tab-body:empty::before { content: "準備中"; color: var(--muted); display: block; padding: 24px 4px; }
 
   /* カードの点数バッジ・種類+理由 */
@@ -245,28 +250,32 @@
   @media (min-width: 640px) { .row .title-block { flex: 1; } }
 
   /* フルスクリーン(聴く/流す) */
-  .overlay { position: fixed; inset: 0; z-index: 800; background: var(--bg); display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); overflow: hidden; }
+  .overlay { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 800; background: var(--bg); display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); overflow: hidden; }
   body[data-view="listen"], body[data-view="flow"] { overflow: hidden; }
   .ov-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
   .ov-bar .grow { flex: 1; text-align: center; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .pl-top { flex: 1 1 50%; min-height: 0; display: flex; flex-direction: column; }
+  .pl-hint { margin: 0 12px; padding: 4px 10px; border-radius: 8px; background: rgba(233,69,96,0.12); border: 1px solid rgba(233,69,96,0.35); color: #ffd9e0; font-size: 12px; line-height: 1.5; text-align: center; }
+  #plStopped { margin: 8px 12px 0; padding: 14px 10px; border-radius: 14px; background: #4a2036; border: 2px solid var(--accent); color: #fff; font-size: 34px; font-weight: 800; text-align: center; line-height: 1.2; }
+  #plInterrupted .intr-title.long { font-size: 40px; font-weight: 800; color: var(--accent); }
   .pl-card { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 18px 16px; }
   .pl-card .pl-title { font-size: 22px; line-height: 1.45; font-weight: 700; margin: 6px 0; }
   .pl-card .pl-title .sbadge { height: 26px; min-width: 26px; font-size: 15px; vertical-align: 3px; }
   .pl-card .pl-body { font-size: 16px; line-height: 1.7; color: #d4d4e6; margin-top: 10px; white-space: pre-wrap; }
   .pl-card .pl-meta { font-size: 13px; color: var(--muted); margin-top: 8px; }
-  .pl-bottom { flex: 0 0 50%; display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 8px; padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
-  .tap { border: 0; border-radius: 18px; font-size: 20px; font-weight: 800; color: #fff; line-height: 1.3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+  .pl-bottom { flex: 0 0 50%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr); gap: 8px; padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
+  .tap { border: 0; border-radius: 18px; font-size: clamp(14px, 4.6vw, 20px); font-weight: 800; color: #fff; line-height: 1.3; white-space: nowrap; min-width: 0; padding: 0 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
   .tap small { font-size: 12px; font-weight: 500; opacity: 0.8; }
   .tap:active { filter: brightness(1.25); }
   .tap.reject { background: #4a3550; }
   .tap.toggle { background: #3a3a66; }
   .tap.next { background: var(--accent); }
   .tap[disabled] { opacity: 0.35; }
-  #plToast { position: absolute; left: 10px; right: 10px; top: calc(env(safe-area-inset-top) + 54px); z-index: 5; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #3b2a46; border: 1px solid var(--accent); font-size: 14px; }
+  #plToast { position: fixed; left: 10px; right: 10px; top: calc(env(safe-area-inset-top) + 54px); z-index: 900; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #3b2a46; border: 1px solid var(--accent); font-size: 14px; }
+  body:not([data-view="listen"]) #plToast { top: auto; bottom: calc(14px + env(safe-area-inset-bottom)); }
   #plToast .msg { flex: 1; min-width: 0; line-height: 1.4; }
   #plToast button { min-height: 48px; min-width: 96px; border-radius: 10px; border: 0; background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; }
-  .ov-full { position: absolute; inset: 0; z-index: 4; background: var(--bg); display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 24px 20px calc(24px + env(safe-area-inset-bottom)); text-align: center; }
+  .ov-full { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 4; background: var(--bg); display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 24px 20px calc(24px + env(safe-area-inset-bottom)); text-align: center; }
   .ov-full p { margin: 0; font-size: 17px; line-height: 1.7; }
   .pl-list { text-align: left; font-size: 15px; line-height: 1.6; }
   .pl-list div { padding: 6px 0; border-bottom: 1px solid var(--line); }
@@ -281,7 +290,10 @@
   #flPaused { text-align: center; color: var(--accent); font-weight: 700; padding: 6px; }
   .fl-actions { padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); }
   .fl-actions .btn { width: 100%; min-height: 64px; font-size: 20px; }
-  #btnBackToday { background: none; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 14px; cursor: pointer; padding: 4px 10px; flex-shrink: 0; min-height: 32px; }
+  /* 「‹ 今日」は既存の1行(更新ダイジェストの題名行)の中に置く。行の高さは右端の「▲ 閉じる」ピルと同じなので、固定ヘッダの高さは増えない */
+  #btnBackToday { background: none; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 11px; cursor: pointer; padding: 3px 8px; margin-right: 8px; flex-shrink: 0; min-height: 0; line-height: normal; white-space: nowrap; }
+  #digest .digest-titlebar h2 { flex: 1; min-width: 0; }
+  #digest .digest-titlebar .caret { white-space: nowrap; }
 
   /* ================= beta 第2段: 週次・費用・設定(追加部分) ================= */
   .fld { width: 100%; min-height: 48px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: #15152b; color: var(--text); font-size: 16px; font-family: inherit; }
@@ -381,6 +393,8 @@
 
   <section id="tab-today" class="tab-body" data-tab-body="today">
     <div class="today-head"><h1>🎧 今日</h1><span class="date" id="todayDate"></span><button type="button" class="btn small" id="btnTodayReload" title="再読込">↻</button></div>
+    <div id="offlineBox" hidden><button type="button" class="btn big" id="btnOffline">⚠️ 通信できません。再読み込み</button></div>
+    <div id="todayNote" hidden role="status"></div>
     <div id="resumeBox" hidden><button type="button" class="btn big" id="btnResume">中断しました。続きから再生<small id="resumeSub"></small></button></div>
     <div id="listenBox" class="stack">
       <button type="button" class="btn primary big" id="btnListen">▶聴く(約0分)</button>
@@ -418,6 +432,7 @@
 <div class="header-bar" id="headerBar">
   <div id="digest">
     <div class="digest-titlebar" id="digestTitlebar">
+      <button id="btnBackToday" type="button" title="今日へ戻る">‹ 今日</button>
       <h2>📊 更新ダイジェスト</h2>
       <span class="caret" id="digestCaret">▲ 閉じる</span>
     </div>
@@ -448,7 +463,6 @@
     </div>
   </div>
   <div class="header-title-row">
-    <button id="btnBackToday" type="button" title="今日へ戻る">‹ 今日</button>
     <h1 id="pageTitle">Xリスト ダイジェスト（未読 0件）</h1>
     <button id="accordionToggle" aria-expanded="true">▲ 閉じる</button>
   </div>
@@ -515,6 +529,8 @@
       <span class="grow" id="plPos"></span>
       <button type="button" class="btn small" id="plSpeed">1.2x</button>
     </div>
+    <div class="pl-hint" id="plWake">画面を点灯したままにしてください(ロックすると読み上げが止まります)</div>
+    <div id="plStopped" hidden role="status">⏹ 停止中</div>
     <div class="pl-card" id="plCard"></div>
   </div>
   <div class="pl-bottom" id="plBottom">
@@ -522,9 +538,8 @@
     <button type="button" class="tap toggle" id="plToggle">⏸ 止める</button>
     <button type="button" class="tap next" id="plNext">次へ ▶<small>既読にする</small></button>
   </div>
-  <div id="plToast" hidden><span class="msg" id="plToastMsg"></span><button type="button" id="plUndo">取り消し</button></div>
   <div class="ov-full" id="plInterrupted" hidden>
-    <p>⏸ 中断しました。</p>
+    <p class="intr-title" id="plIntrTitle">⏸ 中断しました。</p>
     <button type="button" class="btn primary big" id="plResume">中断しました。続きから再生</button>
     <button type="button" class="btn" id="plBackA">今日へ戻る</button>
   </div>
@@ -535,6 +550,9 @@
     <button type="button" class="btn" id="plBackB">今日へ戻る</button>
   </div>
 </div>
+
+<!-- 「これは不要」の取り消し帯: 聴く画面・中断パネル・今日タブのどこでも猶予の間は取り消せるよう body 直下に置く -->
+<div id="plToast" hidden><span class="msg" id="plToastMsg"></span><button type="button" id="plUndo">取り消し</button></div>
 
 <!-- ===== 流すモード ===== -->
 <div id="flowView" class="overlay" hidden>
@@ -631,7 +649,7 @@
       } else plain.push([x, d[x]]);
     });
     var mk = function (arr, flags) {
-      return arr.length ? new RegExp("(^|[^A-Za-z0-9])(" + arr.join("|") + ")s?(?![A-Za-z])", flags) : null;
+      return arr.length ? new RegExp("(^|[^A-Za-z0-9])(" + arr.join("|") + ")(?:'s|s)?(?![A-Za-z])", flags) : null;
     };
     var c = { ins: mk(ins, "gi"), sens: mk(sens, "g"), plain: plain, map: map, mapL: mapL };
     dictCache = { sig: sig, c: c };
@@ -705,6 +723,9 @@
   var SINGLE_UNITS = { W: 1, V: 1, A: 1, m: 1, g: 1, G: 1 };
 
   function validMD(m, d) { return m >= 1 && m <= 12 && d >= 1 && d <= 31; }
+  // 月日の文脈語(日付・期日・曜日・発表/発売/開催などの直前直後)
+  var RE_DATE_CTX_BEFORE = /(?:日付|期日|期限|締切|締め切り|発売日|公開日|開催日|発表日|予定日|リリース日|配信日|開始日|終了日|更新日|投稿日|〆|date|dated|deadline|due|on|by|until|since|from|before|after)[\s:：は]{0,3}$/i;
+  var RE_DATE_CTX_AFTER = /^(?:\s?[(（][月火水木金土日祝](?:曜日?)?[)）]|\s?[月火水木金土日]曜|(?:の|に|には|は)?(?:発表|発売|公開|開催|開始|リリース|実施|施行|配信|終了|締切|締め切り|期限|登場|開幕|予定|スタート|解禁|出荷|納期|時点|現在|以降|以前|まで|から|より|付け?(?:の|で)?)|\s?(?:\(|（)\d)/;
 
   function readNumbers(t) {
     // 桁区切りカンマ(1,200 → 1200)
@@ -717,8 +738,13 @@
       return +mo >= 1 && +mo <= 12 ? pre + y + "年" + (+mo) + "月" : m;
     });
     t = t.replace(/(^|[^\d])24\/7(?![\d\/])/g, "$124時間365日");
-    t = t.replace(/(^|[^\d\/.\-:])(\d{1,2})\/(\d{1,2})(?![\d\/])/g, function (m, pre, mo, d) {
-      return validMD(+mo, +d) ? pre + (+mo) + "月" + (+d) + "日" : m;
+    // 年の無い n/n は「4/5(分数・評価値)」と区別できないので、月日の文脈語が前後にある時だけ日付にする。
+    // 単独の n/n は日付にせず、後段で「n分のn」と読む。
+    t = t.replace(/(^|[^\d\/.\-:])(\d{1,2})\/(\d{1,2})(?![\d\/])/g, function (m, pre, mo, d, off, str) {
+      if (!validMD(+mo, +d)) return m;
+      var before = str.slice(Math.max(0, off - 12), off + pre.length);
+      var after = str.slice(off + m.length, off + m.length + 12);
+      return RE_DATE_CTX_BEFORE.test(before) || RE_DATE_CTX_AFTER.test(after) ? pre + (+mo) + "月" + (+d) + "日" : m;
     });
     // 時刻 10:30 → 10時30分
     t = t.replace(/(^|[^\d:])(\d{1,2}):(\d{2})(?![\d:])/g, function (m, pre, h, mi) {
@@ -780,6 +806,11 @@
     t = t.replace(/(^|[。!?]\s*)[ \t]*(\d{1,2})[.)](?!\d)[ \t]*(?=\S)/gm, "$1$2件目、");
     t = t.replace(/(^|\s)(\d{1,2})\)(?=\s|[぀-ヿ一-鿿])\s*/g, "$1$2件目、");
 
+    // 「4/5(月)」の曜日つきは確実な日付(括弧ごと消える前に日付へ)
+    t = t.replace(/(^|[^\d\/.\-:])(\d{1,2})\/(\d{1,2})\s?\([月火水木金土日祝](?:曜日?)?\)/g, function (m, pre, mo, d) {
+      return validMD(+mo, +d) ? pre + (+mo) + "月" + (+d) + "日" : m;
+    });
+
     // 括弧内の読み飛ばし
     for (var i = 0; i < 6; i++) {
       var before = t;
@@ -827,9 +858,9 @@
       if (n === "" || /[\s。、！？]/.test(n)) return "。";
       return " ";
     });
-    // アポストロフィは英字間のみ残す
-    t = t.replace(/'(?![A-Za-z])|(^|[^A-Za-z])'/g, "$1");
+    // 所有格 's は「'」を除く前に処理(辞書語・カタカナ語のあとの 's は読まない)。残りのアポストロフィは英字間のみ残す
     t = t.replace(/([ァ-ヶー])'s(?![A-Za-z])/g, "$1");
+    t = t.replace(/'(?![A-Za-z])|(^|[^A-Za-z])'/g, "$1");
 
     // 読める文字だけを残す
     t = t.replace(/[^\p{L}\p{M}\p{N}\s。、！？.'・]/gu, " ");
@@ -1051,6 +1082,7 @@
     return {
       play: function (list, startIndex) {
         clearTimers(); token++;
+        rateOverride = null; // 前の再生中に setRate した値を持ち越さない(速度は getRate が正)
         items = norm(list);
         index = Math.max(0, startIndex | 0);
         notified = -1; retried = 0;
@@ -1132,6 +1164,7 @@ async function sbCount(path) {
   return Number.isFinite(total) ? total : 0;
 }
 
+let loadFailed = false; // beta: 直近の読み込みが失敗(オフライン等)。今日タブに「通信できません。再読み込み」を出す
 let allPosts = []; // 取得した生データ。postsは低情報フィルタ適用後の表示対象(recomputeVisiblePosts参照)
 let posts = [];
 let digestData = null; // 更新ダイジェスト（fetch_runs/digest_summaries/集計件数）のキャッシュ
@@ -2140,6 +2173,7 @@ async function load() {
   try {
     const data = await sbFetch(`x_posts?select=*&${filter}&order=fetched_at.desc`);
     allPosts = data || [];
+    loadFailed = false;
     recomputeVisiblePosts();
     document.getElementById("status").textContent = `${posts.length}件`;
     render();
@@ -2147,6 +2181,7 @@ async function load() {
     if (typeof onPostsLoaded === "function") onPostsLoaded(); // beta: 今日タブの再計算
   } catch (err) {
     document.getElementById("status").textContent = "読み込みエラー: " + err.message;
+    loadFailed = true;
     if (typeof onPostsLoaded === "function") onPostsLoaded(); // beta: 端末に確保済みの聴き残しは通信できなくても出す
   }
 }
@@ -2569,6 +2604,8 @@ const K = {
   token: "xdash_admin_token",        // 管理トークン(第2段のログインが保存する)
   holdOff: "xdash_hold_open",
   cache: "xdash_listen_cache",       // ▶押下時に確保した、その日の聴くカード(通信できなくても続きから再生できる)
+  pendingDemote: "xdash_pending_demote", // 「これは不要」の取り消し猶予中の降格(ページが破棄されても次回起動時に確定する)
+  unreadQ: "xdash_unread_queue",     // 「これ聴く」で既読を戻すPATCHが失敗した分の再送待ち
 };
 const CPS = 6.5;                       // 読み上げ文字/秒(速度1.0)
 const LISTEN_THRESHOLD = 4;            // 「上限で流すに回った」とみなす点数
@@ -2579,6 +2616,7 @@ const FETCH_LATE_HOURS = 18;           // 最終取得からこれ以上で「�
 const SPEEDS = [0.8, 1.0, 1.2, 1.5, 1.8, 2.0];
 const FLOW_SECS = [3, 4, 5, 6, 8];
 const PAUSE_MS = () => (Number.isFinite(window.XDASH_PAUSE_MS) ? window.XDASH_PAUSE_MS : 400);
+const SILENT_STOP_MS = () => (Number.isFinite(window.XDASH_SILENT_STOP_MS) ? window.XDASH_SILENT_STOP_MS : 5 * 60 * 1000); // この時間以上無音で止まっていたら「停止中」を大きく出す
 
 const esc = (s) => escapeHtml(String(s == null ? "" : s));
 
@@ -2692,6 +2730,46 @@ const AdminQueue = (() => {
 })();
 window.AdminQueue = AdminQueue;
 
+// 「これ聴く」で既読を戻すPATCH(is_read:false)が失敗した分を端末に積み、通信が戻ったら再送する
+const UnreadQueue = (() => {
+  const load = () => { try { const a = JSON.parse(lsGet(K.unreadQ, "[]")); return Array.isArray(a) ? a.filter((x) => x && x.url) : []; } catch (e) { return []; } };
+  const save = (a) => { lsSet(K.unreadQ, JSON.stringify(a)); try { document.dispatchEvent(new CustomEvent("xdash:unread")); } catch (e) { /* ignore */ } updateUnsentBand(); };
+  let busy = null;
+  function add(url) { const a = load(); if (!a.some((x) => x.url === url)) { a.push({ url, at: Date.now(), tries: 0 }); save(a); } }
+  async function flush() {
+    if (busy) return busy;
+    busy = (async () => {
+      const skipped = new Set();
+      for (;;) {
+        const it = load().find((x) => !skipped.has(x.url));
+        if (!it) break;
+        const p = allPosts.find((x) => x.post_url === it.url);
+        if (p && p.is_read) { save(load().filter((x) => x.url !== it.url)); continue; } // その後また既読になった分は送らない
+        try { await patchIsRead([it.url], false); save(load().filter((x) => x.url !== it.url)); }
+        catch (e) {
+          if (!/^\d{3}\b/.test(String(e && e.message))) break; // 通信できない: あとで再送
+          const a = load(); const cur = a.find((x) => x.url === it.url);
+          if (cur) { cur.tries = (cur.tries || 0) + 1; if (cur.tries >= 5) save(a.filter((x) => x.url !== it.url)); else save(a); }
+          skipped.add(it.url);
+        }
+      }
+    })().finally(() => { busy = null; });
+    return busy;
+  }
+  const flushSoon = () => { setTimeout(() => { flush().catch(() => {}); }, 30); };
+  window.addEventListener("online", flushSoon);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") flushSoon(); });
+  setInterval(() => { if (load().length) flushSoon(); }, 60000);
+  return { add, flush, count: () => load().length, list: load };
+})();
+window.UnreadQueue = UnreadQueue;
+
+function updateUnsentBand() {
+  const st = AdminQueue.stats();
+  const n = st.pending + UnreadQueue.count();
+  TopBand.set("unsent", n > 0 ? { text: `📤 未送信の操作が${n}件あります${st.needLogin ? "(ログインが必要です・設定タブ)" : ""}`, onClick: () => Tabs.show("settings") } : null);
+}
+
 // ================================================================ 上部の帯(同時に1件)
 // 優先順: 取得遅れ > 聴き残し > 通知先未設定 > 暫定 > 未送信N件
 const TopBand = (() => {
@@ -2714,9 +2792,7 @@ const TopBand = (() => {
 })();
 window.TopBand = TopBand;
 
-AdminQueue.onChange((st) => {
-  TopBand.set("unsent", st.pending > 0 ? { text: `📤 未送信の操作が${st.pending}件あります${st.needLogin ? "(ログインが必要です・設定タブ)" : ""}`, onClick: () => Tabs.show("settings") } : null);
-});
+AdminQueue.onChange(() => { updateUnsentBand(); });
 
 // ================================================================ ビュー切替・タブ
 function setView(v) {
@@ -2775,8 +2851,11 @@ function utterOf(p) {
   if (b) out.push({ kind: "body", text: b });
   return out;
 }
+// 読み上げる文章が1つも無いカード(要約・gistが空で本文がURLのみ等)。聴く対象からは外す
+const speakable = (p) => utterOf(p).length > 0;
 // 冒頭の重要度読み上げは5点と手動昇格のみ
 function cardItems(p) {
+  if (!speakable(p)) return [];
   const items = [];
   const tag = [];
   if (scoreNum(p) === 5) tag.push("重要度5。");
@@ -2794,13 +2873,17 @@ const minutesLabel = (sec) => Math.max(1, Math.round(sec / 60));
 function computeToday(now) {
   now = now || Date.now();
   const ds = dayStartMs(now);
-  const listen = [], skim = [], hold = [];
+  const listen = [], skim = [], hold = [], silent = [];
   let carry = 0;
   for (const p of allPosts) {
     const tier = p.listen_tier;
     if (!tier) continue;
     if (tier === "listen") {
-      if (!p.is_read) { listen.push(p); if (tierTime(p) < ds) carry++; }
+      if (!p.is_read) {
+        // 読み上げる文章が空のカードは聴く件数・所要時間に入れず、「流す」(音声なしで見る)に回す
+        if (speakable(p)) { listen.push(p); if (tierTime(p) < ds) carry++; }
+        else { skim.push(p); silent.push(p); }
+      }
     } else if (tier === "skim") {
       if (!p.is_read && tierTime(p) >= ds) skim.push(p);
     } else if (tier === "hold") {
@@ -2812,10 +2895,10 @@ function computeToday(now) {
   hold.sort(rankCmp);
   const speed = listenSpeed();
   const listenSecTotal = listen.reduce((n, p) => n + cardSec(p, speed), 0);
-  const skimHigh = skim.filter((p) => scoreOrNeg(p) >= LISTEN_THRESHOLD);
+  const skimHigh = skim.filter((p) => p.listen_tier === "skim" && scoreOrNeg(p) >= LISTEN_THRESHOLD && speakable(p));
   // 保留上位5件(見出し読み上げ用): 手動降格を除く・未読
   const holdTop = hold.filter((p) => p.manual_action !== "demote" && !p.is_read).slice(0, 5);
-  return { dayStart: ds, dayKey: dayKey(now), listen, skim, hold, holdTop, skimHigh, carry, listenSec: listenSecTotal, listenMin: listen.length ? minutesLabel(listenSecTotal) : 0 };
+  return { dayStart: ds, dayKey: dayKey(now), listen, skim, hold, holdTop, skimHigh, silent, carry, listenSec: listenSecTotal, listenMin: listen.length ? minutesLabel(listenSecTotal) : 0 };
 }
 
 // ---- 今日の要点(digest_daily)
@@ -2851,7 +2934,9 @@ function loadSession() {
 // 保存されたセッションのうち、まだ聴けるもの
 function resumable(s) {
   if (!s) return { cards: [], hold: [], digest: false, n: 0 };
-  const cards = (s.cardUrls || []).map(postByUrl).filter((p) => p && !p.is_read && p.listen_tier === "listen");
+  // 「+10分聴く」で足した流す(skim)区分のカードも復元する(追加分フラグ s.extra)。復元対象は listen 区分に限らない
+  const tierOk = (p) => p.listen_tier === "listen" || (!!s.extra && p.listen_tier === "skim");
+  const cards = (s.cardUrls || []).map(postByUrl).filter((p) => p && !p.is_read && tierOk(p) && speakable(p));
   const hold = (s.holdUrls || []).map(postByUrl).filter((p) => p && !p.is_read && p.listen_tier === "hold");
   const digest = !!s.withDigest && digestTopics(s.day).length > 0;
   return { cards, hold, digest, n: cards.length + hold.length + (digest ? 1 : 0) };
@@ -2867,6 +2952,7 @@ function refreshToday() {
   // 主ボタン / 案内
   const sess = loadSession();
   const rs = resumable(sess);
+  $("offlineBox").hidden = !loadFailed;
   $("resumeBox").hidden = rs.n === 0;
   if (rs.n > 0) $("resumeSub").textContent = rs.cards.length ? `残り${rs.cards.length}件` : "";
   const hasListen = T.listen.length > 0;
@@ -2874,16 +2960,18 @@ function refreshToday() {
   $("btnListen").textContent = `▶聴く(約${T.listenMin}分)`;
   $("listenGuide").hidden = hasListen;
   if (!hasListen) {
-    $("listenGuide").textContent = T.skim.length || T.hold.length
+    $("listenGuide").textContent = (T.skim.length || T.hold.length
       ? "今日の「聴く」カードはありません。「流す」または「一覧」で見られます。"
-      : "今日の「聴く」カードはまだありません。新しい投稿が区分されるとここに出ます。";
+      : "今日の「聴く」カードはまだありません。新しい投稿が区分されるとここに出ます。")
+      + (T.silent.length ? `(読み上げる文章がない${T.silent.length}件は「流す」に入れています)` : "");
   }
   const showExtra = !hasListen && T.skimHigh.length > 0;
   $("btnExtraToday").hidden = !showExtra;
   if (showExtra) $("btnExtraToday").textContent = `上限で流すに回った${LISTEN_THRESHOLD}点以上が${T.skimHigh.length}件 ・ +10分聴く`;
 
   // 内訳
-  $("breakdown").innerHTML = `聴く<b>${T.listen.length}</b>件・約<b>${T.listenMin}</b>分 / 流す<b>${T.skim.length}</b>件 / 保留<b>${T.hold.length}</b>件`;
+  $("breakdown").innerHTML = `聴く<b>${T.listen.length}</b>件・約<b>${T.listenMin}</b>分 / 流す<b>${T.skim.length}</b>件 / 保留<b>${T.hold.length}</b>件`
+    + (T.silent.length && hasListen ? `<div class="sub">読み上げる文章がない${T.silent.length}件は「流す」に入れています</div>` : "");
   $("btnFlow").textContent = `🌊 流す(${T.skim.length})`;
   $("btnFlow").disabled = T.skim.length === 0;
 
@@ -2971,16 +3059,78 @@ function promoteCard(p) {
   AdminQueue.add("tier_set", { post_url: p.post_url, how: "promote" });
   if (wasRead) { // 既読化済み(流すで2秒超など)は未読へ戻す(anonでis_readは書き込める)
     p.is_read = false;
-    sbFetch(`x_posts?post_url=eq.${encodeURIComponent(p.post_url)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ is_read: false }) }).catch((e) => console.error("unread failed", e));
+    // 失敗したら端末キューに積んで、通信が戻ったら再送する
+    patchIsRead([p.post_url], false).catch((e) => { console.error("unread failed", e); UnreadQueue.add(p.post_url); });
   }
 }
 
 // ================================================================ 聴くモード
 const LP = {
-  active: false, state: "idle", // idle|playing|paused|interrupted|finished
+  active: false, // state: idle|playing|paused|interrupted|finished (下で定義。変わるたびに画面点灯・「停止中」表示を同期する)
   items: [], segs: [], cum: [], player: null,
-  curSeg: -1, curItem: null, extra: false, undo: null, voices: [],
+  curSeg: -1, curItem: null, extra: false, undo: null, voices: [], quietSince: 0,
 };
+let lpState = "idle";
+Object.defineProperty(LP, "state", { enumerable: true, configurable: true, get() { return lpState; }, set(v) { if (v === lpState) return; lpState = v; onLpState(); } });
+
+// ---- 画面の点灯(Screen Wake Lock)。聴く再生中だけ取得し、停止・終了で解放する。非対応・失敗は無視。
+let wakeSentinel = null, wakeBusy = false;
+const wantWake = () => LP.active && lpState === "playing";
+async function acquireWake() {
+  try {
+    if (!navigator.wakeLock || typeof navigator.wakeLock.request !== "function") return;
+    if ((wakeSentinel && !wakeSentinel.released) || wakeBusy) return;
+    wakeBusy = true;
+    let sent = null;
+    try { sent = await navigator.wakeLock.request("screen"); } finally { wakeBusy = false; }
+    if (!sent) return;
+    if (!wantWake()) { releaseSentinel(sent); return; } // 取得を待つ間に止まった
+    wakeSentinel = sent;
+    if (sent.addEventListener) sent.addEventListener("release", () => { if (wakeSentinel === sent) wakeSentinel = null; });
+  } catch (e) { wakeSentinel = null; }
+}
+function releaseSentinel(sent) { try { const r = sent && sent.release && sent.release(); if (r && typeof r.catch === "function") r.catch(() => {}); } catch (e) { /* ignore */ } }
+function releaseWake() { const sent = wakeSentinel; wakeSentinel = null; releaseSentinel(sent); }
+function syncWake() { if (wantWake()) acquireWake(); else releaseWake(); }
+
+// ---- 5分以上無音で止まっていたら「停止中」を大きく出す(止める/中断/読み上げ停止のどれでも)
+let stopTimer = null;
+function silentLong() { return !!(LP.active && LP.quietSince && Date.now() - LP.quietSince >= SILENT_STOP_MS()); }
+function updateStopped() {
+  const long = silentLong();
+  $("plStopped").hidden = !(long && lpState === "paused");
+  const t = $("plIntrTitle");
+  t.textContent = long ? "⏹ 停止中" : "⏸ 中断しました。";
+  t.classList.toggle("long", long);
+}
+function onLpState() {
+  syncWake();
+  const quiet = LP.active && (lpState === "paused" || lpState === "interrupted");
+  clearTimeout(stopTimer);
+  if (quiet) {
+    if (!LP.quietSince) LP.quietSince = Date.now();
+    stopTimer = setTimeout(updateStopped, Math.max(0, SILENT_STOP_MS() - (Date.now() - LP.quietSince)) + 30);
+  } else LP.quietSince = 0;
+  updateStopped();
+}
+
+// 復帰の合図の短い効果音(再開ボタンのタップ後に鳴らす=iPhoneの音声はユーザー操作が要る)。失敗は無視。
+function beep() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ctx = new AC();
+    if (ctx.resume) { const r = ctx.resume(); if (r && r.catch) r.catch(() => {}); }
+    const osc = ctx.createOscillator(), g = ctx.createGain(), t0 = ctx.currentTime;
+    osc.type = "sine"; osc.frequency.value = 880;
+    g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.2, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(t0); osc.stop(t0 + 0.22);
+    setTimeout(() => { try { ctx.close(); } catch (e) { /* ignore */ } }, 800);
+  } catch (e) { /* ignore */ }
+}
+
+function setTodayNote(text) { const el = $("todayNote"); el.textContent = text || ""; el.hidden = !text; }
 
 function ttsAvailable() { return !!(window.TTS && typeof TTS.createPlayer === "function" && window.speechSynthesis); }
 
@@ -3035,11 +3185,12 @@ function snapLoad() {
   } catch (e) { /* ignore */ }
   return snapMap;
 }
-function snapSave(posts) {
-  snapMap = new Map();
+function snapSave(posts, merge) {
+  const old = merge ? snapLoad() : null; // 追加分(+10分)は、その日に確保済みの分を消さずに足す
+  snapMap = new Map(old ? old : []);
   const arr = posts.map((p) => { const o = {}; for (const f of SNAP_FIELDS) o[f] = p[f] === undefined ? null : p[f]; return o; });
   for (const o of arr) snapMap.set(o.post_url, o);
-  lsSet(K.cache, JSON.stringify({ day: dayKey(Date.now()), savedAt: Date.now(), posts: arr }));
+  lsSet(K.cache, JSON.stringify({ day: dayKey(Date.now()), savedAt: Date.now(), posts: [...snapMap.values()] }));
 }
 function snapMarkRead(url) {
   const o = snapLoad().get(url);
@@ -3104,7 +3255,7 @@ function saveSession() {
   }
   const withDigest = !!cur && cur.type === "digest";
   if (!cardUrls.length && !holdUrls.length && !withDigest) { lsDel(K.session); return; }
-  lsSet(K.session, JSON.stringify({ day: dayKey(Date.now()), cardUrls, holdUrls, withDigest, savedAt: Date.now() }));
+  lsSet(K.session, JSON.stringify({ day: dayKey(Date.now()), cardUrls, holdUrls, withDigest, extra: !!LP.extra, savedAt: Date.now() }));
 }
 
 function makePlayer() {
@@ -3152,6 +3303,8 @@ function startSequence(seq, opts) {
   try { if (typeof isPlaying !== "undefined" && isPlaying) { isPlaying = false; window.speechSynthesis.cancel(); updatePlayButton(); } if (autoMoveDirection !== 0) stopAutoMove(); } catch (e) { /* ignore */ }
   killPlayer();
   if (!seq.items.length) return false;
+  commitPendingDemote(); // 前の「これは不要」の猶予が残っていれば確定してから新しい再生へ
+  setTodayNote("");
   LP.active = true; LP.state = "playing"; LP.items = seq.items; LP.segs = seq.segs; LP.cum = seq.cum;
   LP.curSeg = 0; LP.curItem = null; LP.extra = !!opts.extra;
   LP.player = makePlayer();
@@ -3160,6 +3313,7 @@ function startSequence(seq, opts) {
   hideToast();
   updateToggle(); updateSpeedBtn();
   renderPlayerSeg();
+  syncWake();
   LP.player.play(LP.items, 0);
   return true;
 }
@@ -3187,10 +3341,17 @@ function startListenNormal() {
 function startResume() {
   const s = loadSession();
   const rs = resumable(s);
-  if (!rs.n) { refreshToday(); return; }
+  if (!rs.n) {
+    // 復元できるカードが0件(すでに既読・降格・端末に残っていない等): 今日タブへ戻して案内する
+    lsDel(K.session);
+    if (LP.active) leaveListen(); else setView("tabs");
+    refreshToday();
+    setTodayNote("続きから再生できるカードがありませんでした(すでに聴いた・状態が変わった可能性があります)。今日のタブに戻りました。");
+    return;
+  }
   const topics = rs.digest ? digestTopics(s.day) : [];
   const seq = buildSequence({ topics, cards: rs.cards, hold: rs.hold });
-  startSequence(seq);
+  startSequence(seq, { extra: !!s.extra });
 }
 
 function startExtraTen() {
@@ -3199,7 +3360,7 @@ function startExtraTen() {
   const pick = []; let sec = 0;
   for (const p of T.skimHigh) { if (sec >= EXTRA_SEC) break; pick.push(p); sec += cardSec(p, speed); }
   if (!pick.length) { refreshToday(); return; }
-  snapSave(pick);
+  snapSave(pick, true);
   startSequence(buildSequence({ cards: pick }), { extra: true });
 }
 
@@ -3216,6 +3377,19 @@ function finishSequence() {
   $("plMoreTen").hidden = n === 0;
   $("plOverflow").textContent = n > 0 ? `上限で流すに回った${LISTEN_THRESHOLD}点以上が${n}件あります。続けますか` : "";
   showFinishPanel(true);
+  if (n > 0) speakNotice($("plOverflow").textContent); // 画面を見ていなくても分かるよう音声でも案内する
+}
+// プレイヤーを使わない1回きりの読み上げ(聴き終わりの案内)。失敗は無視。
+function speakNotice(text) {
+  try {
+    const synth = window.speechSynthesis;
+    if (!synth || !window.SpeechSynthesisUtterance || !text) return;
+    try { synth.cancel(); } catch (e) { /* ignore */ }
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "ja-JP"; u.rate = listenSpeed();
+    const v = getVoice(); if (v) u.voice = v;
+    synth.speak(u);
+  } catch (e) { /* ignore */ }
 }
 
 function interrupt(reason) {
@@ -3224,16 +3398,16 @@ function interrupt(reason) {
   LP.state = "interrupted";
   const pl = LP.player; LP.player = null;
   if (pl) { try { pl.stop(); } catch (e) { /* ignore */ } }
-  commitPendingDemote();
-  showInterruptPanel(true);
+  showInterruptPanel(true); // 「これは不要」の取り消し猶予は中断中も保つ(確定は残り時間が過ぎてから)
+  updateStopped();
 }
 
 function leaveListen() {
   const pl = LP.player; LP.player = null;
   if (pl) { try { pl.stop(); } catch (e) { /* ignore */ } }
   LP.active = false; LP.state = "idle";
-  commitPendingDemote();
-  setView("tabs");
+  try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (e) { /* 聴き終わりの案内などを止める */ }
+  setView("tabs"); // 取り消し猶予は今日タブでも残る(確定は残り時間が過ぎてから)
 }
 
 function jumpToSeg(n) {
@@ -3242,6 +3416,7 @@ function jumpToSeg(n) {
   if (LP.state === "paused") { try { window.speechSynthesis.resume(); } catch (e) { /* ignore */ } }
   LP.state = "playing";
   updateToggle();
+  syncWake();
   LP.player.play(LP.items, LP.segs[n].start);
 }
 
@@ -3262,7 +3437,7 @@ function skipCurrent() {
 function toggleCurrent() {
   if (!LP.active || !LP.player) return;
   if (LP.state === "playing") { LP.state = "paused"; LP.player.pause(); }
-  else if (LP.state === "paused") { LP.state = "playing"; LP.player.resume(); }
+  else if (LP.state === "paused") { if (silentLong()) beep(); LP.state = "playing"; LP.player.resume(); }
   updateToggle();
 }
 
@@ -3276,9 +3451,10 @@ function rejectCurrent() {
   p.listen_tier = "hold"; p.manual_action = "demote"; p.manual_at = new Date().toISOString(); p.is_read = true;
   listDirty = true;
   const segIdx = LP.curSeg;
-  const u = { url: p.post_url, prev, segIdx, timer: null, tick: null, until: Date.now() + UNDO_MS };
+  const u = { url: p.post_url, prev, segIdx, timer: null, remain: null, until: Date.now() + UNDO_MS };
   u.timer = setTimeout(commitPendingDemote, UNDO_MS);
   LP.undo = u;
+  lsSet(K.pendingDemote, JSON.stringify({ url: p.post_url, at: Date.now() })); // ページが破棄されても次回起動時に確定する
   showToast(p);
   jumpToSeg(LP.curSeg + 1);
 }
@@ -3295,9 +3471,32 @@ function commitPendingDemote() {
   if (!u) return;
   LP.undo = null;
   clearTimeout(u.timer);
+  lsDel(K.pendingDemote);
   hideToast();
   AdminQueue.add("tier_set", { post_url: u.url, how: "demote" });
   rpcMarkRead(u.url, "user").then((ok) => { if (!ok) patchIsRead([u.url], true).catch(() => {}); });
+}
+// 画面が裏に回っている間は取り消しの猶予を進めない(確定を保留し、復帰時に「残り時間」で確定する)
+function pauseDemoteClock() {
+  const u = LP.undo;
+  if (!u || u.remain != null) return;
+  clearTimeout(u.timer); u.timer = null;
+  u.remain = Math.max(0, u.until - Date.now());
+}
+function resumeDemoteClock() {
+  const u = LP.undo;
+  if (!u || u.remain == null) return;
+  u.until = Date.now() + u.remain; u.remain = null;
+  u.timer = setTimeout(commitPendingDemote, Math.max(0, u.until - Date.now()));
+}
+// 前のページ(裏で破棄された等)で猶予中だった降格は、起動時に確定する
+function flushPendingDemoteFromLastPage() {
+  let o = null;
+  try { o = JSON.parse(lsGet(K.pendingDemote, "null")); } catch (e) { o = null; }
+  lsDel(K.pendingDemote);
+  if (!o || !o.url) return;
+  AdminQueue.add("tier_set", { post_url: o.url, how: "demote" });
+  rpcMarkRead(o.url, "user").then((ok) => { if (!ok) patchIsRead([o.url], true).catch(() => {}); });
 }
 
 function undoDemote() {
@@ -3305,13 +3504,14 @@ function undoDemote() {
   if (!u) return;
   LP.undo = null;
   clearTimeout(u.timer);
+  lsDel(K.pendingDemote);
   hideToast();
   const p = postByUrl(u.url);
   if (p) Object.assign(p, u.prev);
   listDirty = true;
   // その場でそのカードへ戻って続きを聴く
   if (LP.active && LP.state !== "finished" && LP.state !== "interrupted" && LP.player && LP.segs[u.segIdx]) jumpToSeg(u.segIdx);
-  else if (LP.active && LP.state === "finished") { /* 聴き終わり後は元の状態に戻すだけ(次回▶で聴ける) */ }
+  else if (document.body.dataset.view === "tabs") refreshToday(); // 中断中・今日タブで取り消した場合は聴く待ちへ戻るだけ(次回▶で聴ける)
 }
 
 $("plNext").addEventListener("click", skipCurrent);
@@ -3321,24 +3521,29 @@ $("plUndo").addEventListener("click", undoDemote);
 $("plExit").addEventListener("click", () => { if (LP.active && (LP.state === "playing" || LP.state === "paused")) saveSession(); leaveListen(); });
 $("plBackA").addEventListener("click", leaveListen);
 $("plBackB").addEventListener("click", leaveListen);
-$("plResume").addEventListener("click", () => { showInterruptPanel(false); startResume(); });
+$("plResume").addEventListener("click", () => { beep(); showInterruptPanel(false); startResume(); });
 $("plMoreTen").addEventListener("click", () => { showFinishPanel(false); startExtraTen(); });
 $("plSpeed").addEventListener("click", () => {
   let i = SPEEDS.findIndex((v) => Math.abs(v - listenSpeed()) < 0.01);
   i = (i + 1) % SPEEDS.length;
   lsSet(K.speed, String(SPEEDS[i]));
   updateSpeedBtn();
-  if (LP.player && LP.state === "playing") LP.player.setRate(listenSpeed());
+  if (LP.player) LP.player.setRate(listenSpeed()); // 停止中に変えても再開時にその速度で読む
 });
 
 // 画面が裏に回ったら中断扱い(iPhoneは裏で読み上げが止まるため。途中停止は未読のまま)
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     if (document.body.dataset.view === "listen") interrupt("hidden");
-    commitPendingDemote();
+    if (document.body.dataset.view === "flow" && !FL.paused) { FL.paused = true; $("flPaused").hidden = false; } // 流すは裏では止める(既読にしない)
+    pauseDemoteClock(); // 「これは不要」は確定せず、猶予を止めておく
+  } else if (document.visibilityState === "visible") {
+    resumeDemoteClock();
+    if (wantWake()) acquireWake(); // 画面が戻ったら点灯の取得し直し(裏に回ると解放される)
+    updateStopped();
   }
 });
-window.addEventListener("pagehide", () => { commitPendingDemote(); if (document.body.dataset.view === "listen") interrupt("pagehide"); });
+window.addEventListener("pagehide", () => { pauseDemoteClock(); if (document.body.dataset.view === "listen") interrupt("pagehide"); });
 
 // ================================================================ 流すモード
 const FL = { queue: [], idx: -1, elapsed: 0, marked: false, paused: false, timer: null, last: 0 };
@@ -3381,6 +3586,7 @@ function flowEnd() {
 }
 function flowTick() {
   const now = Date.now();
+  if (document.visibilityState === "hidden") { FL.last = now; return; } // 画面が裏のときは進めず、既読にもしない
   const dt = Math.min(500, now - FL.last);
   FL.last = now;
   const p = flowCur();
@@ -3414,12 +3620,14 @@ $("flSecUp").addEventListener("click", () => setFlowSec(Math.min(20, flowSec() +
 
 // ================================================================ 今日タブのボタン
 $("btnListen").addEventListener("click", startListenNormal);
-$("btnResume").addEventListener("click", startResume);
+$("btnResume").addEventListener("click", () => { beep(); startResume(); });
+$("btnOffline").addEventListener("click", () => { $("btnOffline").textContent = "⏳ 読み込み中…"; Promise.resolve(load()).finally(() => { $("btnOffline").textContent = "⚠️ 通信できません。再読み込み"; refreshToday(); }); });
 $("btnExtraToday").addEventListener("click", startExtraTen);
 $("btnFlow").addEventListener("click", startFlow);
 $("btnList").addEventListener("click", () => setView("list"));
 $("btnTodayReload").addEventListener("click", () => { load(); });
-$("btnBackToday").addEventListener("click", () => {
+$("btnBackToday").addEventListener("click", (e) => {
+  e.stopPropagation(); // 題名行(ダイジェストの開閉)へ伝えない
   try { if (isPlaying) { isPlaying = false; window.speechSynthesis.cancel(); updatePlayButton(); } if (autoMoveDirection !== 0) stopAutoMove(); releasePin(); } catch (e) { /* ignore */ }
   setView("tabs");
 });
@@ -3452,15 +3660,16 @@ renderSettings();
   const start = lsGet(K.tab, "today");
   if (document.body.dataset.view === "list") { /* #list で直接一覧モード */ }
   else Tabs.show(start === "today" || document.querySelector(`[data-tab-body="${start}"]`) ? start : "today");
-  const st = AdminQueue.stats();
-  TopBand.set("unsent", st.pending > 0 ? { text: `📤 未送信の操作が${st.pending}件あります${st.needLogin ? "(ログインが必要です・設定タブ)" : ""}`, onClick: () => Tabs.show("settings") } : null);
+  updateUnsentBand();
+  flushPendingDemoteFromLastPage();
+  UnreadQueue.flush().catch(() => {});
   refreshToday(); // 投稿の読み込みが先に終わっていた場合・通信できない場合(確保済みの続きを出す)も含め、まず描画
   if (allPosts.length) loadDigestDaily();
   AdminQueue.flush().catch(() => {});
 })();
 
 // テスト・第2段向けの公開
-window.Beta = { computeToday, rankCmp, dayKey, dayStartMs, cardItems, listenSpeed, setView, refreshToday, startListenNormal, startFlow, LP, FL, DG, K };
+window.Beta = { computeToday, rankCmp, dayKey, dayStartMs, cardItems, listenSpeed, setView, refreshToday, startListenNormal, startFlow, LP, FL, DG, K, UnreadQueue };
 })();
 </script>
 <script>
@@ -3626,7 +3835,7 @@ function renderAuth() {
   const el = $("sx-auth");
   if (!sxActive()) { el.innerHTML = ""; return; }
   if (loggedIn()) {
-    el.innerHTML = `<div class="card"><h2>🔐 ログイン</h2><div>✅ ログイン中です</div><div class="sub" style="margin-top:4px">この端末のトークンで管理操作を送れます(使うたびに延長されます)。</div><div style="margin-top:10px"><button type="button" class="btn small" id="sxLogout">ログアウト</button></div></div>`;
+    el.innerHTML = `<div class="card"><h2>🔐 ログイン</h2><div>✅ ログイン中です</div><div class="sub" style="margin-top:4px">この端末のトークンで管理操作を送れます(使うたびに延長されます)。</div><div class="sub" id="sxTokenNote" style="margin-top:4px">🔑 トークンはこの端末の localStorage に平文で保存します。盗まれても使えるのは管理操作だけで、30日で失効します。ログアウトで消去できます。</div><div style="margin-top:10px"><button type="button" class="btn small" id="sxLogout">ログアウト</button></div></div>`;
     return;
   }
   const setup = Auth.setupDone === false || Auth.forceSetup;
@@ -3640,6 +3849,7 @@ function renderAuth() {
       <input class="fld" id="sxLoginPass" type="password" autocomplete="current-password" placeholder="パスフレーズ">
       <button type="button" class="btn primary" id="sxLoginBtn" style="width:100%">🔓 ログイン</button>`}
     <div class="fmsg" id="sxAuthMsg" role="status"></div>
+    <div class="sub" id="sxTokenNote" style="margin-top:6px">🔑 ログイン後のトークンはこの端末の localStorage に平文で保存します。盗まれても使えるのは管理操作だけで、30日で失効し、ログアウトで消去できます。</div>
     <div style="margin-top:8px"><button type="button" class="btn small" id="sxSwitch">${setup ? "パスフレーズでログインする" : "初めて使う(セットアップコードがある)"}</button></div>
   </div>`;
   tickWait();
@@ -3964,6 +4174,7 @@ function renderQueue(note) {
   if (!sxActive()) { el.innerHTML = ""; return; }
   const st = AdminQueue.stats();
   const ops = AdminQueue.list();
+  const unread = window.UnreadQueue ? UnreadQueue.count() : 0;
   const rows = ops.map((op) => {
     const p = op.payload || {};
     const sub = [fmtAt(op.at), op.tries ? `試行${op.tries}回` : "", op.last_error ? `エラー ${op.last_error}` : "", op.kind === "tier_set" ? String(p.post_url || "").replace(/^https?:\/\//, "") : ""].filter(Boolean).join(" ・ ");
@@ -3974,6 +4185,7 @@ function renderQueue(note) {
   el.innerHTML = `<div class="card"><h2>📤 未送信の操作</h2>
     <div id="sxQSummary" style="font-variant-numeric:tabular-nums">未送信 <b>${st.pending}</b>件${st.dead ? ` ・ 保留中(失敗) <b>${st.dead}</b>件` : ""}${!st.hasToken && ops.length ? " ・ ログインすると送信されます" : st.needLogin ? " ・ ログインが必要です" : ""}</div>
     ${rows || `<div class="muted" style="padding:8px 0">未送信の操作はありません。</div>`}
+    ${unread ? `<div class="sub" id="sxUnreadQ" style="margin-top:6px">↩️ 「これ聴く」で未読に戻す操作の再送待ち ${unread}件(通信できると自動で送ります)</div>` : ""}
     ${ops.length ? `<div style="margin-top:8px"><button type="button" class="btn" data-q="flush" style="width:100%">📨 今すぐ送る</button></div>` : ""}
     ${st.dead ? `<div style="margin-top:8px"><button type="button" class="btn small" data-q="cleardead">失敗したものを全て破棄</button></div>` : ""}
     <div class="fmsg" id="sxQMsg" role="status">${esc(note || "")}</div></div>`;
@@ -3999,6 +4211,7 @@ $("sx-queue").addEventListener("click", async (e) => {
   }
 });
 AdminQueue.onChange(() => { if ($("sx-queue")) renderQueue(); });
+document.addEventListener("xdash:unread", () => { if ($("sx-queue")) renderQueue(); });
 
 // ================================================================ 週次: レポート
 const Wk = { weeks: 4 };
@@ -4090,7 +4303,20 @@ const skipUntil = () => Number(lsGet(LABEL_SKIP_KEY, "0")) || 0;
 const pendingLabelIds = () => new Set(AdminQueue.list().filter((o) => o.kind === "label_submit").map((o) => String((o.payload || {}).id)));
 function lbFilter(items) { const pend = pendingLabelIds(); return (items || []).filter((x) => x && !LB.answered.has(String(x.id)) && !pend.has(String(x.id))); }
 
-function lbTitleOf(it) { const s = String(it.summary || it.content || "").replace(/\s+/g, " ").trim(); const first = s.split(/(?<=[。！？!?])/)[0] || s; return (first.length > 60 ? first.slice(0, 60) + "…" : first); }
+// 見出し(最初の1文)と本文(残り)に分ける。見出しと同じ文を本文にも重ねて出さない(長い1文は見出しなしで本文だけ)
+function lbParts(it) {
+  const raw = String(it.summary || it.content || "").trim();
+  const fm = raw.match(/^[^。！？!?]*[。！？!?]/);
+  const first = fm ? fm[0] : raw;
+  const title = first.replace(/\s+/g, " ").trim();
+  if (title.length > 60) return { title: "", body: raw };
+  return { title, body: raw.slice(first.length).trim() };
+}
+const LABEL_CREATE_KEY = "xdash_label_creates";
+const LABEL_MAX_PER_DAY = 3; // 答え合わせのリスト作成は同じ日(02:00 JST区切り)に3回まで
+const lbDay = () => (window.Beta && Beta.dayKey ? Beta.dayKey(Date.now()) : new Date().toISOString().slice(0, 10));
+function lbCreatesToday() { try { const o = JSON.parse(lsGet(LABEL_CREATE_KEY, "null")); return o && o.day === lbDay() ? Number(o.n) || 0 : 0; } catch (e) { return 0; } }
+const lbCreatesLeft = () => Math.max(0, LABEL_MAX_PER_DAY - lbCreatesToday());
 function lbRender() {
   const el = $("wk-label");
   const head = `<h2>✅ 答え合わせ</h2>`;
@@ -4105,15 +4331,15 @@ function lbRender() {
     const it = LB.items[0];
     const rem = LB.items.length;
     const min = Math.max(1, Math.round((rem * LABEL_SEC_PER_ITEM) / 60));
-    const title = lbTitleOf(it);
-    const body = String(it.summary || it.content || "").trim();
-    const showOrig = it.summary && it.content && String(it.content).trim() !== body;
+    const parts = lbParts(it);
+    const title = parts.title, body = parts.body;
+    const showOrig = it.summary && it.content && String(it.content).trim() !== String(it.summary).trim();
     const imgs = (Array.isArray(it.image_urls) ? it.image_urls : []).filter((u) => /^https?:\/\//.test(String(u))).slice(0, 3);
     el.innerHTML = `${head}
       <div class="lb-meta" id="lbMeta">残り <b id="lbRemain">${rem}</b>件 ・ 約<b id="lbMin">${min}</b>分${LB.total ? ` <span>(今回${LB.total}件)</span>` : ""}</div>
       <div class="lb-card" id="lbCard" data-id="${esc(it.id)}">
-        <div class="lb-title">${esc(title)}</div>
-        ${body && body !== title ? `<div class="lb-body">${esc(body)}</div>` : ""}
+        ${title ? `<div class="lb-title">${esc(title)}</div>` : ""}
+        ${body ? `<div class="lb-body">${esc(body)}</div>` : ""}
         ${showOrig ? `<details><summary>元の本文を見る</summary><div>${esc(it.content)}</div></details>` : ""}
         ${imgs.length ? `<div class="lb-imgs">${imgs.map((u) => `<img src="${esc(u)}" alt="" loading="lazy" referrerpolicy="no-referrer">`).join("")}</div>` : ""}
         <div style="margin-top:10px">${toggleBtn("lbPlay", "▶ 聴く", "label")}</div>
@@ -4126,13 +4352,15 @@ function lbRender() {
     Reader.sync();
     return;
   }
+  const left = lbCreatesLeft();
+  const limitNote = `<div class="sub" id="lbLimit" style="margin-top:6px">${left > 0 ? `今日はあと${left}回作れます(1日${LABEL_MAX_PER_DAY}回まで)。` : `今日は${LABEL_MAX_PER_DAY}回作りました。続きは明日お願いします。`}</div>`;
   if (LB.phase === "done") {
     el.innerHTML = `${head}<div style="padding:6px 0;line-height:1.7">🎉 今回の分は終わりました。ありがとうございます。</div>
-      <button type="button" class="btn primary" id="lbMore" style="width:100%">📋 次の${LABEL_N}件を作る</button>${msg}`;
+      ${left > 0 ? `<button type="button" class="btn primary" id="lbMore" style="width:100%">📋 次の${LABEL_N}件を作る</button>` : ""}${limitNote}${msg}`;
     return;
   }
-  el.innerHTML = `${head}<div class="sub" style="margin-bottom:8px">AIの点数や投稿者名は見えない状態で、${LABEL_N}件ずつ「聴く価値」を付けます(最大3回)。</div>
-    <button type="button" class="btn primary" id="lbStart" style="width:100%">📋 答え合わせを始める(${LABEL_N}件)</button>${msg}`;
+  el.innerHTML = `${head}<div class="sub" style="margin-bottom:8px">AIの点数や投稿者名は見えない状態で、${LABEL_N}件ずつ「聴く価値」を付けます(同じ日に最大${LABEL_MAX_PER_DAY}回)。</div>
+    ${left > 0 ? `<button type="button" class="btn primary" id="lbStart" style="width:100%">📋 答え合わせを始める(${LABEL_N}件)</button>` : ""}${limitNote}${msg}`;
 }
 async function lbLoad(listNo) {
   if (!loggedIn() || skipUntil() > Date.now()) { lbRender(); return; }
@@ -4147,9 +4375,14 @@ async function lbLoad(listNo) {
   lbRender();
 }
 async function lbCreate() {
+  if (lbCreatesLeft() <= 0) { LB.msg = `今日は${LABEL_MAX_PER_DAY}回作りました。続きは明日お願いします。`; LB.msgKind = ""; lbRender(); return; } // 最大3回は画面でも強制
+  if (LB.creating) return; // 連打で2回作らない
+  LB.creating = true;
   LB.msg = "作成中…"; LB.msgKind = ""; lbRender();
-  const r = await api("label_create", { n: LABEL_N });
+  let r;
+  try { r = await api("label_create", { n: LABEL_N }); } finally { LB.creating = false; }
   if (!r.ok) { LB.phase = "idle"; LB.msg = errMsg(r); LB.msgKind = "err"; lbRender(); return; }
+  lsSet(LABEL_CREATE_KEY, JSON.stringify({ day: lbDay(), n: lbCreatesToday() + 1 }));
   LB.answered = new Set();
   await lbLoad(r.json.list_no);
 }
@@ -4179,7 +4412,7 @@ $("wk-label").addEventListener("click", (e) => {
     const it = LB.items[0];
     if (!it) return;
     if (Reader.isPlaying("label")) Reader.stop();
-    else Reader.play("label", { gist: lbTitleOf(it), summary: String(it.summary || it.content || "") });
+    else { const lp = lbParts(it); Reader.play("label", { gist: lp.title, summary: lp.body }); } // 見出しと本文で同じ文を二度読まない
   }
   else if (b.id === "lbStart" || b.id === "lbMore") lbCreate();
   else if (b.id === "lbSkip") { lsSet(LABEL_SKIP_KEY, String(Date.now() + SKIP_MS)); Reader.stop(); lbRender(); }

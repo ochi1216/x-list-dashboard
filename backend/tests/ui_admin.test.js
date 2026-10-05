@@ -532,6 +532,86 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     await s2.ctx.close();
   } catch (e) { check("帯のテストが完走", false, e.stack); }
 
+  // ================================================================ 7. レビュー指摘の修正(答え合わせの回数・重複表示・トークン保存の説明)
+  console.log("\n--- 7. レビュー指摘の修正 ---");
+  // ⑬ 答え合わせの「最大3回」を画面で強制(同日の作成は3回まで)
+  try {
+    const st = newState({ labelItems: [] });
+    const s = await open(browser, base, { token: "tok-seed", st });
+    const p = s.page;
+    await goTab(p, "weekly"); await until(() => vis(p, "#lbStart"));
+    check("⑬始める前に「今日はあと3回作れます」と出る", (await txt(p, "#lbLimit")).includes("あと3回"), await txt(p, "#lbLimit"));
+    const round = async (no, btn) => {
+      st.labelItems = [1, 2].map((i) => ({ id: 3000 + no * 10 + i, content: `本文${no}-${i}`, summary: `要約${no}-${i}です。`, image_urls: [] }));
+      st.answered = new Map();
+      await p.click(btn); await until(() => vis(p, "#lbCard"));
+      await p.click('#lbScores button[data-score="3"]'); await sleep(380);
+      await p.click('#lbScores button[data-score="4"]');
+      await until(async () => !(await p.$("#lbCard")) && /今回の分は終わりました/.test((await txt(p, "#wk-label")) || "") && !!(await p.$("#lbLimit")), 5000); await sleep(150);
+    };
+    await round(1, "#lbStart");
+    check("⑬1回目を作ったあと、「次の20件を作る」と「あと2回」", (await vis(p, "#lbMore")) && (await txt(p, "#lbLimit")).includes("あと2回"), await txt(p, "#lbLimit"));
+    await round(2, "#lbMore");
+    check("⑬2回目のあと「あと1回」", (await vis(p, "#lbMore")) && (await txt(p, "#lbLimit")).includes("あと1回"), await txt(p, "#lbLimit"));
+    await round(3, "#lbMore");
+    check("⑬3回目のあとは「次の20件を作る」ボタンが消え、「今日は3回作りました」と出る", !(await p.$("#lbMore")) && !(await p.$("#lbStart")) && (await txt(p, "#lbLimit")).includes("今日は3回作りました"), await txt(p, "#wk-label"));
+    check("⑬label_createは3回だけ呼ばれた", callsOf(st, "label_create").length === 3, `${callsOf(st, "label_create").length}`);
+    // 4回目を強制的に押そうとしても作られない(画面の関数を直接呼ぶ)
+    await p.evaluate(() => { const b = document.createElement("button"); b.id = "lbMore"; document.getElementById("wk-label").appendChild(b); b.click(); }); await sleep(250);
+    check("⑬ボタンが無理に押されてもサーバーへは作成要求しない(画面で強制)", callsOf(st, "label_create").length === 3);
+    const saved = await p.evaluate(() => JSON.parse(localStorage.getItem("xdash_label_creates") || "null"));
+    check("⑬作成回数は日付つきで端末に保存される", !!saved && saved.n === 3 && /^\d{4}-\d{2}-\d{2}$/.test(saved.day), JSON.stringify(saved));
+    await p.reload({ waitUntil: "domcontentloaded" }); await sleep(500);
+    await goTab(p, "weekly"); await sleep(500);
+    check("⑬再読込しても同じ日は3回まで(始めるボタンは出ない)", !(await p.$("#lbStart")) && !(await p.$("#lbMore")) && (await txt(p, "#wk-label")).includes("今日は3回作りました"), await txt(p, "#wk-label"));
+    // 日が変われば(保存した日付が昨日なら)また作れる
+    await p.evaluate(() => localStorage.setItem("xdash_label_creates", JSON.stringify({ day: "2020-01-01", n: 3 })));
+    await p.evaluate(() => document.getElementById("btnWeeklyReload").click()); await sleep(600);
+    check("⑬日が変われば(02:00 JST区切り)また作れる(ボタンが戻り「あと3回」)", (!!(await p.$("#lbStart")) || !!(await p.$("#lbMore"))) && (await txt(p, "#lbLimit")).includes("あと3回"), await txt(p, "#wk-label"));
+    check("⑬JSエラーなし", s.rec.errors.length === 0, JSON.stringify(s.rec.errors));
+    await s.ctx.close();
+  } catch (e) { check("⑬答え合わせ回数のテストが完走", false, e.stack); }
+
+  // ⑬ 見出しと本文の重複表示をやめる(画面も読み上げも)
+  try {
+    const items = [
+      { id: 4001, content: "本文", summary: "一文目です。二文目です。三文目です。", image_urls: [] },
+      { id: 4002, content: "本文", summary: "これだけの一文です。", image_urls: [] },
+      { id: 4003, content: "本文", summary: "あ".repeat(80) + "。続きの文です。", image_urls: [] },
+    ];
+    const s = await open(browser, base, { token: "tok-seed", st: newState({ labelItems: items }) });
+    const p = s.page;
+    await goTab(p, "weekly"); await until(() => vis(p, "#lbCard"));
+    const count = (t, w) => t.split(w).length - 1;
+    let t1 = await txt(p, "#lbCard");
+    check("⑬複数文: 見出しは最初の1文だけ・本文は残りで、同じ文が二度出ない", count(t1, "一文目です") === 1 && count(t1, "二文目です") === 1 && (await txt(p, ".lb-title")) === "一文目です。" && (await txt(p, ".lb-body")) === "二文目です。三文目です。", t1);
+    await p.click("#lbPlay"); await sleep(400);
+    const spoken1 = await p.evaluate(() => window.__spoken.join("|"));
+    check("⑬聴いても同じ文を二度読まない", count(spoken1, "一文目です") === 1 && spoken1.includes("二文目です"), spoken1);
+    await p.click('#lbScores button[data-score="3"]'); await sleep(380);
+    let t2 = await txt(p, "#lbCard");
+    check("⑬1文だけの要約は見出しだけ(本文欄を重ねない)", count(t2, "これだけの一文です") === 1 && !(await p.$(".lb-body")), t2);
+    await p.click('#lbScores button[data-score="3"]'); await sleep(380);
+    let t3 = await txt(p, "#lbCard");
+    check("⑬60字を超える長い1文は見出しにせず本文だけ(同じ文が重ならない)", count(t3, "あ".repeat(60)) === 1 && !(await p.$(".lb-title")) && t3.includes("続きの文です"), t3.slice(0, 120));
+    check("⑬横スクロールなし", await noOverflow(p));
+    await s.ctx.close();
+  } catch (e) { check("⑬重複表示のテストが完走", false, e.stack); }
+
+  // ⑮ 管理トークンの平文保存は設計判断として設定タブに明記・ログアウトで消せる
+  try {
+    const s = await open(browser, base, { token: "tok-seed" });
+    const p = s.page;
+    await goTab(p, "settings"); await until(() => vis(p, "#sxLogout"));
+    const note = await txt(p, "#sxTokenNote");
+    check("⑮ログイン中の設定タブに「localStorageに平文で保存・盗まれても管理操作のみ・30日で失効・ログアウトで消去」を明記", /localStorage/.test(note) && note.includes("平文") && note.includes("管理操作だけ") && note.includes("30日") && note.includes("ログアウト"), note);
+    await p.click("#sxLogout"); await sleep(250);
+    check("⑮ログアウトでトークンを消去する", !(await tok(p)) && (await vis(p, "#sxLoginPass")));
+    const note2 = await txt(p, "#sxTokenNote");
+    check("⑮未ログインの設定タブにも同じ説明が出る", /localStorage/.test(note2 || "") && (note2 || "").includes("平文"), note2);
+    await s.ctx.close();
+  } catch (e) { check("⑮トークン説明のテストが完走", false, e.stack); }
+
   await browser.close(); srv.close();
   fs.rmSync(dir, { recursive: true, force: true });
   console.log(failures === 0 ? `\n全${total}項目OK` : `\nNG ${failures}/${total}件`);
