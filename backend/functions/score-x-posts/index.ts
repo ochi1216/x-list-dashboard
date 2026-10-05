@@ -8,7 +8,7 @@ import {
   parseSpeechResult, PROMPT_VERSION, scoreWithLlm, SPEECH_SCHEMA,
 } from "./_scoring.ts";
 import {
-  type Cfg, failureClass, failureUpdate, hasEarlierDuplicate, mapPool, parseCfg, ruleFields,
+  type Cfg, envErrorDetail, failureClass, failureUpdate, hasEarlierDuplicate, mapPool, parseCfg, ruleFields,
   sanitize, speechDecision, speechSaveFields, targetFrom, wantRescore,
 } from "./logic.ts";
 
@@ -139,6 +139,10 @@ Deno.serve(async (req: Request) => {
 
       let stop = false;
       let transportFails = 0;
+      // 内容系(content)の失敗は実行の終わりにまとめて判定する(全件が同種=環境起因なら試行回数に数えない)
+      const contentFails: { id: number; attempts: number; kind: string; status?: number }[] = [];
+      let otherLlmFails = 0; // 内容系以外の失敗(通信など)
+      let llmOk = 0; // LLMで採点できた件数
       const nowIso = () => new Date().toISOString();
 
       await mapPool(posts, CONCURRENCY, async (p) => {
@@ -175,13 +179,15 @@ Deno.serve(async (req: Request) => {
             counts.failed++;
             if (fc === "transport") {
               // 通信系(network/5xx/429等)は試行回数に数えない(要約側と同じ)。連続したら中断する
+              otherLlmFails++;
               if (++transportFails >= 4) stop = true;
               return;
             }
-            await supabase.from("x_posts").update(failureUpdate(p.score_attempts ?? 0)).eq("id", p.id);
+            contentFails.push({ id: p.id, attempts: p.score_attempts ?? 0, kind: out.failKind, status: out.status });
             return;
           }
           transportFails = 0;
+          llmOk++;
           if (out.guardStopped) stop = true; // 再採点が費用ガードで止まった: 以後の着手をやめる(この投稿は T-1 で確定済み)
 
           await supabase.from("score_runs").insert(out.runs.map((r) => ({
@@ -200,6 +206,21 @@ Deno.serve(async (req: Request) => {
           counts.failed++;
         }
       }, () => stop || Date.now() > scoreDeadline);
+
+      // 内容系の失敗の試行回数。全件が同種(400 FAILED_PRECONDITION・非対応設定・空応答など)なら環境起因として数えない。
+      if (contentFails.length > 0) {
+        const envDetail = envErrorDetail(contentFails, otherLlmFails, llmOk);
+        if (envDetail) {
+          await db.rpc("ops_event", {
+            p_level: "warn", p_kind: "llm_env_error", p_message: "Geminiの設定・モデル起因のエラーで採点できません",
+            p_data: { detail: envDetail, fn: FN }, p_dedupe_minutes: 360,
+          });
+        } else {
+          for (const f of contentFails) {
+            await supabase.from("x_posts").update(failureUpdate(f.attempts)).eq("id", f.id);
+          }
+        }
+      }
 
       if (stop && transportFails >= 4) {
         await db.rpc("ops_event", {

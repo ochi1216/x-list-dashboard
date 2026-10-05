@@ -641,6 +641,8 @@ export interface DigestDeps {
   opsEvent: (level: "info" | "warn" | "error", kind: string, message: string, data: Record<string, unknown>, dedupeMinutes: number) => Promise<void>;
   // 生成の試行開始を記録する(tuning_config の digest_last_attempt_at に ISO文字列で upsert。SQL側 digest_due の30分バックオフ用)
   touchAttempt: (iso: string) => Promise<void>;
+  // 直近の試行開始(tuning_config の digest_last_attempt_at。ISO文字列)。無い・不正なら null。
+  getLastAttempt: () => Promise<string | null>;
 }
 
 function genJson(r: GenRes & { ok: true }): unknown {
@@ -654,6 +656,15 @@ function genJson(r: GenRes & { ok: true }): unknown {
 
 export const FAILED_MESSAGE = "生成できません";
 export const DROP_WARN_RATIO = 0.2;
+// 試行の連打防止(SQL側 digest_due と同じ30分)
+export const ATTEMPT_BACKOFF_MS = 30 * 60_000;
+
+// 認証エラー(鍵の誤設定・請求停止)の通知。360分に1回に束ねる。失敗しても処理は止めない。
+async function reportAuth(deps: DigestDeps, status: number | undefined, mode: string): Promise<void> {
+  try {
+    await deps.opsEvent("error", "gemini_auth", "Gemini APIの認証エラー", { detail: `http ${status ?? "unknown"}`, mode }, 360);
+  } catch { /* 通知の失敗で処理は止めない */ }
+}
 
 export interface TodayResult {
   ok: boolean;
@@ -697,16 +708,31 @@ export async function runToday(deps: DigestDeps): Promise<TodayResult> {
   const cards = selectCards(all);
   const prev = await deps.getDaily(day);
 
-  // 前回生成(paused は生成していないので除く)
-  const baseline = prev && prev.status !== "paused" && prev.generated_at ? Date.parse(prev.generated_at) : null;
+  // 生成を見送る基準は2つだけ(SQL側 digest_due と完全に同じ。failed / paused の行は見ない):
+  //  ① digest_last_attempt_at から30分以内(失敗の連打防止)
+  //  ② 当日の ok / empty 行の generated_at から digest_min_interval_hours 以内
+  let lastAttemptMs: number | null = null;
+  try {
+    const a = await deps.getLastAttempt();
+    const t = a ? Date.parse(a) : NaN;
+    lastAttemptMs = Number.isFinite(t) ? t : null; // 不正な値は無いものとして扱う(SQL側も同じ)
+  } catch {
+    lastAttemptMs = null;
+  }
+  const baseline = prev && (prev.status === "ok" || prev.status === "empty") && prev.generated_at
+    ? Date.parse(prev.generated_at)
+    : null;
   const eligible = all.filter((c) => (c.score ?? 0) >= 3);
   const newCount = baseline === null
     ? eligible.length
     : eligible.filter((c) => Date.parse(c.scored_at ?? c.fetched_at ?? "") > baseline).length;
-  if (newCount < minNew) return { ok: true, mode: "today", skipped: true, reason: "few_new", day, input_count: cards.length };
+  if (lastAttemptMs !== null && nowMs - lastAttemptMs < ATTEMPT_BACKOFF_MS) {
+    return { ok: true, mode: "today", skipped: true, reason: "backoff", day, input_count: cards.length };
+  }
   if (baseline !== null && nowMs - baseline < minHours * HOUR_MS) {
     return { ok: true, mode: "today", skipped: true, reason: "interval", day, input_count: cards.length };
   }
+  if (newCount < minNew) return { ok: true, mode: "today", skipped: true, reason: "few_new", day, input_count: cards.length };
 
   const save = async (status: "ok" | "empty" | "failed" | "paused", topics: Topic[], model: string | null, ratio: number) => {
     // 当日に ok の行が既にあれば、failed/empty/paused で上書きしない(正常な要点を壊さない)。
@@ -750,9 +776,12 @@ export async function runToday(deps: DigestDeps): Promise<TodayResult> {
     return j && Array.isArray(j.topics) ? j.topics : null;
   };
   // 生成失敗(ok行が無ければ failed 行を保存。ok行があれば残す)
-  const failed = async (kind: string, m: string | null) => {
+  // auth(鍵・請求の不備)は digest_failed ではなく gemini_auth(error)を出す。failed 行は書くが baseline にならないので
+  // 再試行は30分基準だけで止まる(6時間停止にならない)。
+  const failed = async (kind: string, m: string | null, status?: number) => {
     await save("failed", [], m, 0);
-    await deps.opsEvent("warn", "digest_failed", `今日の要点: 生成に失敗(${kind})`, { day, kind }, 360);
+    if (kind === "auth") await reportAuth(deps, status, "today");
+    else await deps.opsEvent("warn", "digest_failed", `今日の要点: 生成に失敗(${kind})`, { day, kind }, 360);
   };
 
   const g1 = await call(false);
@@ -761,7 +790,7 @@ export async function runToday(deps: DigestDeps): Promise<TodayResult> {
       await save("paused", [], null, 0);
       return { ok: true, mode: "today", status: "paused", day, input_count: cards.length };
     }
-    await failed(g1.kind, g1.model ?? null);
+    await failed(g1.kind, g1.model ?? null, g1.status);
     return { ok: false, mode: "today", day, error: safeErr(g1.error) };
   }
   model = g1.model;
@@ -935,6 +964,7 @@ export async function runWeek(deps: DigestDeps): Promise<WeekResult> {
       }
       return { ok: true, mode: "week", status: "paused", week_start: weekStart, days_covered: covered };
     }
+    if (g.kind === "auth") await reportAuth(deps, g.status, "week");
     return { ok: false, mode: "week", week_start: weekStart, days_covered: covered, error: safeErr(g.error) };
   }
   const j = genJson(g) as { themes?: unknown } | null;

@@ -465,17 +465,46 @@ export async function callGemini(ctx: GeminiCtx, req: GeminiRequest): Promise<Ge
 }
 
 // llm_usage への記録。失敗しても呼び出し結果は返すが、記録漏れ(=費用ガードの集計漏れ)に気づけるよう
-// console.error に残す(キーは伏せる)。
+// console.error に残す(キーは伏せる)。同一実行(batchId)で連続して3回以上失敗したら
+// ops_event('error','usage_log_failed')を出す(費用ガードが盲目になるため。360分に1回に束ねる)。
+export const USAGE_FAIL_ALERT_AFTER = 3;
+const usageFailures = new WeakMap<object, { batch: string; n: number; alerted: boolean }>();
+
+export async function noteUsageLogFailure(
+  db: { rpc: GeminiDb["rpc"] }, batchId: string, label: string,
+): Promise<void> {
+  let st = usageFailures.get(db);
+  if (!st || st.batch !== batchId) {
+    st = { batch: batchId, n: 0, alerted: false };
+    usageFailures.set(db, st);
+  }
+  st.n++;
+  if (st.n < USAGE_FAIL_ALERT_AFTER || st.alerted) return;
+  st.alerted = true;
+  try {
+    await db.rpc("ops_event", {
+      p_level: "error", p_kind: "usage_log_failed", p_message: "llm_usageの記録に失敗が続いています(費用ガードが集計できません)",
+      p_data: { detail: `x${st.n} ${label}` }, p_dedupe_minutes: 360,
+    });
+  } catch {
+    // 通知の失敗で処理は止めない
+  }
+}
+
 async function recordUsage(ctx: GeminiCtx, row: Record<string, unknown>): Promise<number | null> {
   try {
     const id = await ctx.db.insertUsage(row);
     if (id === null || id === undefined) {
       console.error(`llm_usage insert returned no id (fn=${ctx.fn} purpose=${String(row.purpose)} model=${String(row.model)})`);
+      await noteUsageLogFailure(ctx.db, ctx.batchId, ctx.fn);
       return null;
     }
+    const st = usageFailures.get(ctx.db);
+    if (st && st.batch === ctx.batchId) st.n = 0; // 連続失敗の判定: 成功で数え直す
     return id;
   } catch (e) {
     console.error(`llm_usage insert failed (fn=${ctx.fn} purpose=${String(row.purpose)}): ${sanitize(e, [ctx.apiKey])}`);
+    await noteUsageLogFailure(ctx.db, ctx.batchId, ctx.fn);
     return null;
   }
 }

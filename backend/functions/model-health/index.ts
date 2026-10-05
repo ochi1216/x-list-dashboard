@@ -40,6 +40,7 @@ Deno.serve(async (req: Request) => {
     rpc,
     insertUsage: async (row) => {
       const r = await supabase.from("llm_usage").insert(row).select("id").single();
+      if (r?.error) throw new Error(`llm_usage insert: ${r.error.message ?? "error"}`);
       const id = r?.data?.id;
       return id == null ? null : Number(id);
     },

@@ -5,7 +5,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 import { callGemini, makeGeminiDb, reportGeminiAuthError, resolveGeminiBase, sanitize } from "./_gemini.ts";
 import { checkPipelineAuth } from "./_auth.ts";
 import { createBudget, jsonResponse, newBatchId, runPool } from "./_util.ts";
-import { checkUnauthRestrictions, isPermanentFailure, RESPONSE_SCHEMA, resolveLimit, summarizeOne } from "./logic.ts";
+import { checkUnauthRestrictions, envErrorDetail, isPermanentFailure, RESPONSE_SCHEMA, resolveLimit, summarizeOne } from "./logic.ts";
 
 const FN = "summarize-x-post";
 // 時間予算(実行上限は約150秒)。「新しい投稿に着手してよい期限」で、着手済みの処理は完了を待つ。
@@ -80,15 +80,13 @@ Deno.serve(async (req: Request) => {
     let guardStop = false;
     let authStop = false;
     const errors: Record<string, string> = {};
+    // 恒久的な失敗は実行の終わりにまとめて判定する(全件が同種=環境起因なら試行回数に数えない)
+    const permFails: { post_url: string; attempts: number; kind?: string; status?: number }[] = [];
+    let llmOk = 0; // Geminiで要約できた件数(短い日本語のコード処理は含めない)
+    let otherFails = 0; // 恒久的でない失敗(通信・保存・提供終了など)の件数
 
     const { results, skipped } = await runPool(posts, CONCURRENCY, async (post) => {
       if (guardStop || authStop) return "skipped" as const;
-      const countPermanentFailure = async () => {
-        if (body.post_url) return; // 手動指定は試行回数に数えない
-        await supabase.from("x_posts")
-          .update({ summary_attempts: ((post as { summary_attempts?: number }).summary_attempts ?? 0) + 1 })
-          .eq("post_url", post.post_url);
-      };
       const outcome = await summarizeOne(post, {
         gen: async (parts, opts) => {
           const r = await callGemini(
@@ -113,7 +111,11 @@ Deno.serve(async (req: Request) => {
       });
       if (!outcome.ok) {
         errors[post.post_url] = sanitize(outcome.error, [geminiKey]);
-        if (isPermanentFailure(outcome)) await countPermanentFailure();
+        if (isPermanentFailure(outcome)) {
+          permFails.push({ post_url: post.post_url, attempts: (post as { summary_attempts?: number }).summary_attempts ?? 0, kind: outcome.kind, status: outcome.status });
+        } else {
+          otherFails++;
+        }
         return "failed" as const;
       }
       const { error: upErr } = await supabase
@@ -123,11 +125,28 @@ Deno.serve(async (req: Request) => {
       if (upErr) {
         // 保存の失敗は一時的なものとして試行回数に数えない
         errors[post.post_url] = sanitize(upErr.message, [geminiKey]);
+        otherFails++;
         return "failed" as const;
       }
       processed++;
+      if (outcome.usedGemini) llmOk++;
       return "done" as const;
     }, budget.deadline);
+
+    // 試行回数の確定。手動指定(post_url)は数えない。環境起因(全件が同種)なら数えず llm_env_error を出す。
+    if (!body.post_url && permFails.length > 0) {
+      const envDetail = envErrorDetail(permFails, otherFails, llmOk);
+      if (envDetail) {
+        await db.rpc("ops_event", {
+          p_level: "warn", p_kind: "llm_env_error", p_message: "Geminiの設定・モデル起因のエラーで要約できません",
+          p_data: { detail: envDetail, fn: FN }, p_dedupe_minutes: 360,
+        });
+      } else {
+        for (const f of permFails) {
+          await supabase.from("x_posts").update({ summary_attempts: f.attempts + 1 }).eq("post_url", f.post_url);
+        }
+      }
+    }
 
     let unstarted = skipped;
     for (let i = 0; i < results.length; i++) {

@@ -123,6 +123,11 @@ Deno.serve(async (req: Request) => {
         opsEvent: async (level, kind, message, data, dedupe) => {
           await db.rpc("ops_event", { p_level: level, p_kind: kind, p_message: message, p_data: data, p_dedupe_minutes: dedupe });
         },
+        getLastAttempt: async () => {
+          const { data, error } = await supabase.from("tuning_config").select("value").eq("key", "digest_last_attempt_at").maybeSingle();
+          if (error) throw new Error(error.message);
+          return typeof data?.value === "string" ? data.value : null;
+        },
         touchAttempt: async (iso) => {
           const { error } = await supabase.from("tuning_config")
             .upsert({ key: "digest_last_attempt_at", value: iso, updated_at: iso }, { onConflict: "key" });

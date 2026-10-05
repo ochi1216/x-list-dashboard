@@ -151,6 +151,25 @@ export function isPermanentFailure(f: { kind?: string; status?: number }): boole
   return false;
 }
 
+// 環境起因のエラー判定(1回の実行で処理した全件が、同種の「恒久的な失敗」だったとき)。
+// 例: 400 FAILED_PRECONDITION・モデルが非対応の設定(400 INVALID_ARGUMENT)・空応答が全件で続く。
+// 個々の投稿の問題ではなく環境(設定・モデル・請求)の問題なので、試行回数に数えず ops_event('warn','llm_env_error') を出す。
+// 1〜2件だけの失敗は投稿固有の可能性があるため従来どおり数える(数えないと毒入りの1件が永久に再試行される)。
+export const ENV_ERROR_MIN_ITEMS = 3;
+export function failSignature(f: { kind?: string; status?: number }): string {
+  return f.kind === "http" && typeof f.status === "number" ? `http ${f.status}` : String(f.kind ?? "unknown");
+}
+// permanent: 試行回数の対象だった失敗 / otherAttempted: それ以外の結果(通信失敗・保存失敗など)で終わった件数 / successes: LLM成功件数
+// 環境起因なら "http 400 x5" のような detail を返す。そうでなければ null(従来どおり数える)。
+export function envErrorDetail(
+  permanent: { kind?: string; status?: number }[], otherAttempted: number, successes: number,
+): string | null {
+  if (permanent.length < ENV_ERROR_MIN_ITEMS || otherAttempted > 0 || successes > 0) return null;
+  const sig = failSignature(permanent[0]);
+  if (!permanent.every((f) => failSignature(f) === sig)) return null;
+  return `${sig} x${permanent.length}`;
+}
+
 function readSummaryJson(json: unknown): { gist: string; summary: string } | null {
   if (!json || typeof json !== "object") return null;
   const o = json as Record<string, unknown>;

@@ -3,6 +3,7 @@
 
 export const BASE = "https://generativelanguage.googleapis.com/v1beta";
 export const HTTP_TIMEOUT_MS = 40_000; // 1回のHTTP要求の上限(無いと応答しない相手で関数全体の150秒上限まで固まる)
+export const AUTH_BODY_RE = /API key not valid|API_KEY_INVALID|API key expired|API_KEY_EXPIRED|PERMISSION_DENIED|UNAUTHENTICATED|FAILED_PRECONDITION/i; // _shared/gemini.ts の isAuthResponse と同じ基準
 export const GONE_BODY_RE = /not found|no longer|deprecated|retired|decommission|discontinued/i;
 export const REHEARSE_MIN_POSTS = 20; // 予行演習の最小件数(commit の根拠になる標本の大きさ)
 export const COMMIT_MIN_RATE = 0.9;
@@ -48,6 +49,12 @@ export function sanitize(input: unknown, apiKey = ""): string {
   s = s.replace(/([?&;\s"']|^)key=[^&\s"']+/gi, "$1key=[redacted]");
   s = s.replace(/\s+/g, " ").trim();
   return s.length > 200 ? s.slice(0, 200) : s;
+}
+
+// 認証系: 401/403、または400で本文がAPIキー不正・権限なし・FAILED_PRECONDITION(課金・地域・設定不備)。_shared/gemini.ts の isAuthResponse と同じ。
+export function isAuth(status: number, body: string): boolean {
+  if (status === 401 || status === 403) return true;
+  return status === 400 && AUTH_BODY_RE.test(body);
 }
 
 // 404 は常に。400/410 は本文が提供終了を示し、かつ本文に "model" を含むときだけ(別原因の400で切り替えない)。
@@ -102,6 +109,7 @@ export interface CallOut {
   guard?: boolean;
   http_status?: number;
   gone?: boolean;
+  auth?: boolean; // 認証系エラー(鍵の誤設定・請求停止)。gone とは別物(モデル切替の根拠にしない)
   text: string;
   json: unknown | null;
   thought_part: boolean;
@@ -125,6 +133,21 @@ export interface CallOpts {
 function num(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+// llm_usage の記録が連続3回以上失敗したら ops_event('error','usage_log_failed')(費用ガードが盲目になるため)。実行(deps)ごとに数える。
+const usageFails = new WeakMap<object, { n: number; alerted: boolean }>();
+function usageLogOk(deps: HealthDeps): void {
+  const st = usageFails.get(deps);
+  if (st) st.n = 0;
+}
+async function usageLogFailed(deps: HealthDeps): Promise<void> {
+  const st = usageFails.get(deps) ?? { n: 0, alerted: false };
+  usageFails.set(deps, st);
+  st.n++;
+  if (st.n < 3 || st.alerted) return;
+  st.alerted = true;
+  await opsEvent(deps, "error", "usage_log_failed", "llm_usageの記録に失敗が続いています(費用ガードが集計できません)", { detail: `x${st.n} model-health` }, 360);
 }
 
 export async function genCall(deps: HealthDeps, o: CallOpts): Promise<CallOut> {
@@ -156,7 +179,8 @@ export async function genCall(deps: HealthDeps, o: CallOpts): Promise<CallOut> {
     const raw = await res.text();
     const latency = deps.now() - started;
     if (!res.ok) {
-      out = { ...empty, ok: false, http_status: res.status, gone: isGone(res.status, raw), latency_ms: latency, error: sanitize(`http ${res.status}: ${raw}`, deps.apiKey) };
+      const auth = isAuth(res.status, raw);
+      out = { ...empty, ok: false, http_status: res.status, auth, gone: !auth && isGone(res.status, raw), latency_ms: latency, error: sanitize(`http ${res.status}: ${raw}`, deps.apiKey) };
     } else {
       let j: Record<string, any> = {};
       try { j = JSON.parse(raw); } catch { /* 空扱い */ }
@@ -191,7 +215,7 @@ export async function genCall(deps: HealthDeps, o: CallOpts): Promise<CallOut> {
     const cost = inP != null && outP != null && hasUsage
       ? (out.usage.prompt * inP + (out.usage.output + out.usage.thoughts) * outP) / 1e6
       : null;
-    await deps.insertUsage({
+    const usageId = await deps.insertUsage({
       called_at: new Date(deps.now()).toISOString(),
       batch_id: deps.batchId,
       fn: "model-health",
@@ -211,9 +235,11 @@ export async function genCall(deps: HealthDeps, o: CallOpts): Promise<CallOut> {
       error: out.ok ? null : out.error ?? null,
       post_url: o.postUrl ?? null,
     });
+    if (usageId == null) await usageLogFailed(deps); else usageLogOk(deps);
   } catch (e) {
     // 記録失敗で処理は止めないが、記録漏れに気づけるよう残す(キーは伏せる)
     console.error(`llm_usage insert failed (model-health ${o.purpose}): ${sanitize(e, deps.apiKey)}`);
+    await usageLogFailed(deps);
   }
   return out;
 }
