@@ -101,5 +101,7 @@ update public.admin_auth set failed_count=0;
 
 ### 備考
 - `xd_anon_jwt` は Vault に設定済み(`set_secret` で別途設定。`ops_bootstrap()` の対象ではない)。`ops_bootstrap()` は存在し、秘密4種(ntfyトピック・cron用/Windows用の共有シークレット・管理トークン署名鍵)とセットアップコードを作る(上の初期設定手順1)。
-- `digest_due()` の条件は2つだけ(Edge側 digest.ts の runToday と同じ基準): `tuning_config.digest_last_attempt_at`(ISO文字列)から30分以内なら false(失敗の連打防止)/ 当日の ok・empty 行から `digest_min_interval_hours` 以内なら false。failed・paused 行の有無は見ない。キーが無ければ試行の制限なし。
-- x_hourly の警報: 直近1時間のGemini呼び出しでエラー率50%以上(10回以上のとき)→ `llm_error_rate`、最初の投稿から4時間超えて区分が確定しない投稿が残る → `tier_stalled`(どちらも warn・360分に1回)。
+- `digest_due()` の条件は2つだけ(Edge側 digest.ts の runToday と完全に同じ基準。同じ状態を両方へ与える試験が `backend/tests/sql/run.sh` にある): `tuning_config.digest_last_attempt_at`(ISO文字列)から30分以内なら false(失敗の連打防止)/ 当日の ok・empty 行から `digest_min_interval_hours` 以内なら false。failed・paused 行の有無は見ない。キーが無ければ試行の制限なし。生成が失敗(Geminiの認証エラー含む)しても、再試行は30分基準だけで止まる(6時間は止まらない)。認証エラーは `gemini_auth`(error・360分に1回)を出す(model-health の probe / rehearse も同じ)。
+- x_hourly の警報: 直近1時間のGemini呼び出しでエラー率50%以上(10回以上のとき)→ `llm_error_rate`、最初の投稿から4時間+5分(強制確定は x_tick が5分ごとに拾うため余裕を持たせる)を超えて区分が確定しない投稿が残る → `tier_stalled`(どちらも warn・360分に1回)。
+- 環境起因のエラー(`llm_env_error`・warn・360分に1回): 要約/採点の1回の実行で、LLM処理した全件が同種の4xx・空応答・形式不正(3件以上。例 400 の非対応設定)だったときは、`summary_attempts` / `score_attempts` に数えず `detail='http 400 x件数'` で通知する。原因(モデル・設定・請求)を直せば次のtickで自動再開。一部が成功した・2件以下の失敗は従来どおり数える。
+- `usage_log_failed`(error・360分に1回): 同一実行で llm_usage の記録が連続3回以上失敗したとき。費用ガードが使用量を集計できず盲目になっているので、DB・権限を確認する。

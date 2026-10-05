@@ -185,6 +185,74 @@ Deno.test({ name: "summarize-x-post", ...T }, async (t) => {
     });
   });
 
+  await t.step("環境起因(全件が同種の4xx/empty が3件以上): summary_attempts に数えず llm_env_error(warn)。一部成功・2件以下は従来どおり数える", async () => {
+    const bad400 = { status: 400, body: JSON.stringify({ error: { code: 400, status: "INVALID_ARGUMENT", message: "thinking is not supported by this model" } }) };
+    fresh();
+    const ps = Array.from({ length: 5 }, (_, i) => supa.addPost({ content: JA_LONG + "あ".repeat(i) }));
+    gem.failNext = Array.from({ length: 5 }, () => bad400);
+    await withFn(env, "summarize-x-post", {}, async (f) => {
+      const r = await f.call({});
+      eq(r.status, 200, "status");
+      assert(ps.every((p) => p.summary_attempts === 0 && p.gist === null), "試行回数は据え置き");
+      const ev = supa.rows("ops_events").filter((e) => e.kind === "llm_env_error");
+      eq([ev.length, ev[0].level, ev[0].data.detail], [1, "warn", "http 400 x5"], "llm_env_error");
+      assertNoKey(JSON.stringify(ev), "ops_event");
+    });
+    // 一部成功(4件失敗・1件成功)は数える
+    fresh();
+    const qs = Array.from({ length: 5 }, (_, i) => supa.addPost({ content: JA_LONG + "い".repeat(i) }));
+    gem.failNext = Array.from({ length: 4 }, () => bad400);
+    await withFn(env, "summarize-x-post", {}, async (f) => {
+      await f.call({});
+      eq(qs.filter((p) => p.summary_attempts === 1).length, 4, "失敗4件は数える");
+      assert(!supa.rows("ops_events").some((e) => e.kind === "llm_env_error"), "環境起因ではない");
+    });
+    // 2件だけの失敗は投稿固有の可能性があるので数える
+    fresh();
+    const ws = Array.from({ length: 2 }, (_, i) => supa.addPost({ content: JA_LONG + "う".repeat(i) }));
+    gem.failNext = Array.from({ length: 2 }, () => bad400);
+    await withFn(env, "summarize-x-post", {}, async (f) => {
+      await f.call({});
+      assert(ws.every((p) => p.summary_attempts === 1), "2件は数える");
+      assert(!supa.rows("ops_events").some((e) => e.kind === "llm_env_error"), "環境起因とみなさない");
+    });
+  });
+
+  await t.step("環境起因(採点で全件が同種の4xx が3件以上): score_attempts に数えず llm_env_error(warn)", async () => {
+    const bad400 = { status: 400, body: JSON.stringify({ error: { code: 400, status: "INVALID_ARGUMENT", message: "unsupported generation config" } }) };
+    fresh();
+    const ps = Array.from({ length: 3 }, (_, i) => supa.addPost({ author_handle: `u${i}`, content: `SCORE=4 ${JA_LONG}${"あ".repeat(i)}`, summary: "要約" }));
+    gem.failNext = Array.from({ length: 3 }, () => bad400);
+    await withFn(env, "score-x-posts", {}, async (f) => {
+      const r = await f.call({}, CRON);
+      eq(r.status, 200, "status");
+      assert(ps.every((p) => p.score_attempts === 0 && p.score_state === null), "試行回数は据え置き");
+      const ev = supa.rows("ops_events").filter((e) => e.kind === "llm_env_error");
+      eq([ev.length, ev[0].level, ev[0].data.detail], [1, "warn", "http 400 x3"], "llm_env_error");
+    });
+    fresh();
+    const qs = Array.from({ length: 2 }, (_, i) => supa.addPost({ author_handle: `v${i}`, content: `SCORE=4 ${JA_LONG}${"い".repeat(i)}`, summary: "要約" }));
+    gem.failNext = Array.from({ length: 2 }, () => bad400);
+    await withFn(env, "score-x-posts", {}, async (f) => {
+      await f.call({}, CRON);
+      assert(qs.every((p) => p.score_attempts === 1), "2件は数える");
+      assert(!supa.rows("ops_events").some((e) => e.kind === "llm_env_error"), "環境起因とみなさない");
+    });
+  });
+
+  await t.step("llm_usage の記録が同一実行で3回以上失敗: ops_event(error, usage_log_failed)・処理自体は続く", async () => {
+    fresh();
+    const ps = Array.from({ length: 4 }, (_, i) => supa.addPost({ content: JA_LONG + "あ".repeat(i) }));
+    supa.failTable.set("POST llm_usage", Infinity);
+    await withFn(env, "summarize-x-post", {}, async (f) => {
+      const r = await f.call({});
+      eq([r.status, r.json.processed], [200, 4], "要約は成功");
+      assert(ps.every((p) => p.gist !== null), "保存済み");
+      const ev = supa.rows("ops_events").filter((e) => e.kind === "usage_log_failed");
+      eq([ev.length, ev[0].level], [1, "error"], "usage_log_failed 1件(dedupe)");
+    });
+  });
+
   await t.step("認証エラー(403): 全投稿を試行回数に数えず、その実行を直ちに打ち切り、ops_event(gemini_auth)を出す(鍵の誤設定で一括して未処理確定しない)", async () => {
     fresh();
     const ps = Array.from({ length: 12 }, (_, i) => supa.addPost({ content: JA_LONG + "あ".repeat(i) }));
@@ -612,10 +680,31 @@ Deno.test({ name: "generate-digest-summary", ...T }, async (t) => {
       supa.rows("digest_daily")[0].status = "ok";
       supa.rows("digest_daily")[0].topics = [{ headline: "正常な要点" }];
       supa.rows("digest_daily")[0].generated_at = new Date(Date.now() - 8 * 3600_000).toISOString();
+      eq((await f.call({ period_type: "today" }, CRON)).json.reason, "backoff", "試行から30分以内は見送り");
+      supa.setCfg("digest_last_attempt_at", new Date(Date.now() - 31 * 60_000).toISOString());
       gem.failNext = [{ status: 400, body: JSON.stringify({ error: { code: 400, message: "bad request" } }) }];
       const r2 = await f.call({ period_type: "today" }, CRON);
       eq(r2.json.ok, false, "失敗");
       eq([supa.rows("digest_daily")[0].status, supa.rows("digest_daily")[0].topics[0].headline], ["ok", "正常な要点"], "ok 行は保持");
+    });
+  });
+
+  await t.step("today: 認証エラー(403)は gemini_auth(error)・failed 行を書く・再試行は30分後(6時間止まらない)", async () => {
+    fresh();
+    seedCards(3);
+    await withFn(env, "generate-digest-summary", {}, async (f) => {
+      gem.failNext = [{ status: 403, body: JSON.stringify({ error: { message: "billing disabled" } }) }];
+      const r = await f.call({ period_type: "today" }, CRON);
+      eq([r.status, r.json.ok], [500, false], "失敗");
+      eq(supa.rows("digest_daily").map((x) => x.status), ["failed"], "failed 行");
+      const ev = supa.rows("ops_events").filter((e) => e.kind === "gemini_auth");
+      eq(ev.length, 1, "gemini_auth 1件");
+      eq([ev[0].level, ev[0].data.detail], ["error", "http 403"], "内容");
+      assert(!supa.rows("ops_events").some((e) => e.kind === "digest_failed"), "digest_failed は出さない");
+      eq((await f.call({ period_type: "today" }, CRON)).json.reason, "backoff", "30分以内は見送り");
+      supa.setCfg("digest_last_attempt_at", new Date(Date.now() - 31 * 60_000).toISOString());
+      const r3 = await f.call({ period_type: "today" }, CRON);
+      eq(r3.json.status, "ok", "30分後は再試行され成功");
     });
   });
 
@@ -816,6 +905,32 @@ Deno.test({ name: "model-health", ...T }, async (t) => {
       eq(mc.enabled, true, "enabled");
       assert(mc.verified_at, "verified_at");
       assertKeyOnlyInHeader();
+    });
+  });
+
+  await t.step("probe が認証エラー(403)・rehearse が認証エラー: gemini_auth(error)を出し、gone/probe失敗にせず、以降を呼ばない・commitしない", async () => {
+    fresh();
+    await withFn(env, "model-health", {}, async (f) => {
+      gem.failNext = [{ status: 403, body: JSON.stringify({ error: { message: "billing disabled" } }) }];
+      const r = await f.call({}, CRON);
+      eq(r.status, 200, "status");
+      const ev = supa.rows("ops_events").filter((e) => e.kind === "gemini_auth");
+      eq([ev.length, ev[0].level, ev[0].data.detail], [1, "error", "http 403"], "gemini_auth");
+      assert(!supa.rows("ops_events").some((e) => e.kind === "model_probe_failed"), "probe失敗にしない");
+      assert(!supa.rpcCalls.some((c) => c.name === "model_report_gone"), "goneを報告しない");
+      eq(gem.calls.length, 1, "次候補は呼ばない");
+      eq(r.json.health.probes[1].skipped, "auth", "next は auth で見送り");
+    });
+    fresh();
+    seedPosts(22);
+    supa.insert("llm_prices", { model: "gemini-3.1-flash", in_usd: 0.1, out_usd: 0.4 });
+    await withFn(env, "model-health", {}, async (f) => {
+      gem.failNext = Array.from({ length: 200 }, () => ({ status: 400, body: JSON.stringify({ error: { code: 400, status: "FAILED_PRECONDITION", message: "billing" } }) }));
+      const r = await f.call({ action: "rehearse", model: "gemini-3.1-flash", n: 20, commit: true }, CRON);
+      eq([r.json.ok, r.json.auth_stopped, r.json.committed], [true, true, false], "打ち切り・commitしない");
+      assert(r.json.commit_blocked.some((x: string) => x.includes("auth")), "理由");
+      assert(gem.calls.length <= 5, `探索の1回で止まる: ${gem.calls.length}`);
+      eq(supa.rows("ops_events").filter((e) => e.kind === "gemini_auth").length, 1, "gemini_auth 1件");
     });
   });
 

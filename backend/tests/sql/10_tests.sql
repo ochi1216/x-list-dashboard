@@ -285,6 +285,14 @@ insert into public.llm_usage(fn, purpose, model, status, called_at) select 'f', 
 select pg_temp.addp('ts1', now() - interval '3 hours', 4, 'scored');
 select public.x_hourly();
 select pg_temp.chk('C x_hourly: 3時間前の未確定は tier_stalled にしない', not exists (select 1 from public.ops_events where kind = 'tier_stalled'));
+-- 強制確定(4時間)の直後でも、x_tick の1周期(5分)分の余裕を過ぎるまでは警報しない
+update public.x_posts set fetched_at = now() - interval '4 hours 2 minutes', posted_at = now() - interval '4 hours 2 minutes';
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: 4時間2分前の未確定は tier_stalled にしない(5分の余裕)', not exists (select 1 from public.ops_events where kind = 'tier_stalled'));
+update public.x_posts set fetched_at = now() - interval '4 hours 6 minutes', posted_at = now() - interval '4 hours 6 minutes';
+select public.x_hourly();
+select pg_temp.chk('C x_hourly: 4時間6分前の未確定 -> tier_stalled', exists (select 1 from public.ops_events where kind = 'tier_stalled'));
+delete from public.ops_events where kind = 'tier_stalled';
 update public.x_posts set fetched_at = now() - interval '5 hours', posted_at = now() - interval '5 hours';
 update public.tuning_config set value = 'false'::jsonb where key = 'tier_assign_enabled';
 select public.x_hourly();
@@ -301,10 +309,11 @@ select pg_temp.chk('C x_hourly: 確定後は tier_stalled を出さない', not 
 -- notify_ops のラベル(日本語)
 truncate public.ops_events; truncate net._log;
 select public.set_secret('xd_ntfy_topic', 't_label');
-select public.ops_event('warn', k, 'x', '{}', 0) from unnest(array['llm_error_rate', 'tier_stalled', 'gemini_auth', 'digest_failed', 'score_stalled', 'model_probe_failed']) k;
-select pg_temp.chk('C notify_ops: 6種の警報が6件送られる', public.notify_ops() = 6);
-select pg_temp.chk('C notify_ops: 新6種のラベルは日本語(kind名のまま送らない)',
-  (select count(*) = 6 and bool_and(body ->> 'message' ~ '[ぁ-ん]') and bool_and(body ->> 'message' !~ '(llm_error_rate|tier_stalled|gemini_auth|digest_failed|score_stalled|model_probe_failed)')
+select public.ops_event('warn', k, 'x', '{}', 0) from unnest(array['llm_error_rate', 'tier_stalled', 'gemini_auth', 'digest_failed', 'score_stalled', 'model_probe_failed',
+  'score_no_profile', 'secrets_missing', 'digest_dropped', 'digest_week_dropped', 'llm_env_error', 'usage_log_failed']) k;
+select pg_temp.chk('C notify_ops: 12種の警報が12件送られる', public.notify_ops() = 12);
+select pg_temp.chk('C notify_ops: 12種のラベルは日本語(kind名のまま送らない)',
+  (select count(*) = 12 and bool_and(body ->> 'message' ~ '[ぁ-ん]') and bool_and(body ->> 'message' !~ '(llm_error_rate|tier_stalled|gemini_auth|digest_failed|score_stalled|model_probe_failed|score_no_profile|secrets_missing|digest_dropped|digest_week_dropped|llm_env_error|usage_log_failed)')
      from net._log where url = 'https://ntfy.sh'),
   (select string_agg(body ->> 'message', ' | ') from net._log where url = 'https://ntfy.sh'));
 delete from vault.secrets where name = 'xd_ntfy_topic';

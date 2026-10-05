@@ -17,6 +17,15 @@ for f in "$MIG"/20261005_00{1a,1b,1c,1d,1e,2a,2b,2c,3a,3b,3c,4,5,6}_*.sql; do
 done
 echo "== 006 を再適用(冪等性) =="; $PSQL -f "$MIG/20261005_006_review_fixes.sql" >/dev/null
 echo "== 試験 =="; $PSQL -f "$HERE/10_tests.sql"
+echo "== digest_due(SQL)と runToday(TS)の判定一致(同じ状態を両方へ与える) =="
+PARITY_FAIL=0
+for n in $(node "$HERE/parity.ts" names 2>/dev/null); do
+  S=$(node "$HERE/parity.ts" sql "$n" 2>/dev/null | $PSQL -At -f - | tail -1)
+  T=$(node "$HERE/parity.ts" ts "$n" 2>/dev/null)
+  [ "$S" = t ] && S=true || S=false
+  if [ "$S" = "$T" ]; then echo "  一致 $n: $S"; else echo "  不一致 $n: SQL=$S TS=$T"; PARITY_FAIL=1; fi
+done
+[ "$PARITY_FAIL" = 0 ] && echo "PASS digest_parity" || { echo "FAIL digest_parity"; exit 1; }
 echo "== notify_ops 並行実行 =="
 $PSQL -c "select public.set_secret('xd_ntfy_topic','t_test'); select public.ops_event('error','fetch_stale','x','{}',0);" >/dev/null
 $PSQL -c "begin; select pg_advisory_xact_lock(hashtext('notify_ops')); select pg_sleep(4); commit;" >/dev/null &

@@ -560,3 +560,28 @@ test("callGemini: ctx.baseUrl があればそのURLへ(キーは常にヘッダ)
   assert.ok(!seen.includes("key="));
   assert.equal(hdr["x-goog-api-key"], KEY);
 });
+
+test("llm_usage の記録が同一実行で連続3回失敗 → ops_event(error, usage_log_failed)を1回だけ(成功を挟むと数え直し)", async () => {
+  const h = harness([{ status: 200, body: okBody('{"gist":"g"}') }]);
+  let fail = true;
+  h.ctx.db.insertUsage = async () => { if (fail) throw new Error("insert failed key=" + KEY); return 1; };
+  const events = () => h.rpcCalls.filter((c) => c.name === "ops_event" && (c.args as any).p_kind === "usage_log_failed");
+  for (let i = 0; i < 2; i++) assert.equal((await callGemini(h.ctx, { ...REQ, schema: SCHEMA })).ok, true); // 失敗しても呼び出し結果は返す
+  assert.equal(events().length, 0);
+  fail = false;
+  await callGemini(h.ctx, { ...REQ, schema: SCHEMA }); // 成功で数え直し
+  fail = true;
+  for (let i = 0; i < 2; i++) await callGemini(h.ctx, { ...REQ, schema: SCHEMA });
+  assert.equal(events().length, 0, "成功を挟んだので連続は2回");
+  await callGemini(h.ctx, { ...REQ, schema: SCHEMA });
+  assert.equal(events().length, 1);
+  const a = events()[0].args as any;
+  assert.deepEqual([a.p_level, a.p_dedupe_minutes], ["error", 360]);
+  assert.ok(!JSON.stringify(a).includes("AIza"));
+  await callGemini(h.ctx, { ...REQ, schema: SCHEMA });
+  assert.equal(events().length, 1, "同一実行では1回だけ");
+  // 別の実行(batchId)は数え直し
+  h.ctx.batchId = "b-2";
+  for (let i = 0; i < 3; i++) await callGemini(h.ctx, { ...REQ, schema: SCHEMA });
+  assert.equal(events().length, 2);
+});

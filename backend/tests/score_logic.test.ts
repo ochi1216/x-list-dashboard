@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  failureClass, failureUpdate, hasEarlierDuplicate, mapPool, parseCfg, ruleFields, sanitize, speechDecision, targetFrom, wantRescore,
+  envErrorDetail, failureClass, failureUpdate, hasEarlierDuplicate, mapPool, parseCfg, ruleFields, sanitize, speechDecision, targetFrom, wantRescore,
 } from "../functions/score-x-posts/logic.ts";
 
 test("parseCfg と targetFrom", () => {
@@ -97,4 +97,13 @@ test("speechDecision: guard停止のときだけ記録しない。それ以外�
   assert.equal(speechDecision({ ok: false, kind: "network" }, false, false), "record_failure");
   assert.equal(speechDecision({ ok: false, kind: "guard" }, false, false), "guard_stop");
   assert.equal(speechDecision({ ok: false, kind: "auth" }, false, false), "auth_stop"); // 認証エラーも記録せず打ち切る
+});
+
+test("envErrorDetail(採点): 全件が同種の内容系失敗が3件以上のときだけ環境起因", () => {
+  const f = { kind: "http", status: 400 };
+  assert.equal(envErrorDetail([f, f, f], 0, 0), "http 400 x3");
+  assert.equal(envErrorDetail([f, f], 0, 0), null);
+  assert.equal(envErrorDetail([f, f, f], 0, 2), null);
+  assert.equal(envErrorDetail([f, f, f], 1, 0), null);
+  assert.equal(envErrorDetail([{ kind: "parse" }, { kind: "parse" }, { kind: "parse" }], 0, 0), "parse x3");
 });

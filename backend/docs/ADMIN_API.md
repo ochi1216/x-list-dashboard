@@ -53,7 +53,7 @@
 履歴は `tuning_config_history(key, old_value, new_value, source)`。`config_set` の source は `"admin"`。
 
 許可キーと値域(値の型は厳密: 数値は数値・真偽は真偽・文字列は文字列)。`*` は passphrase 再入力必須(ただし `kill_switch=true` と、`monthly_cap_jpy`/`daily_cap_jpy`/`hourly_call_cap`/`ti_daily_call_cap` を下げる変更は再入力不要。上の「passphrase再入力」の例外を参照)。
-- 費用: `monthly_cap_jpy*` 整数100〜50000 / `daily_cap_jpy*` 整数50〜5000 / `hourly_call_cap*` 整数50〜5000 / `ti_daily_call_cap*` 整数10〜5000 / `cap_warn_ratio*` 0.3〜1 / `cap_stop_extra_ratio*` 0.5〜3 / `cap_stop_all_ratio*` 1〜5 / `usd_jpy` 50〜500
+- 費用: `monthly_cap_jpy*` 整数100〜50000 / `daily_cap_jpy*` 整数50〜5000 / `hourly_call_cap*` 整数50〜5000 / `ti_daily_call_cap*` 整数10〜5000 / `cap_warn_ratio*` 0.3〜1 / `cap_stop_extra_ratio*` 0.5〜3 / `cap_stop_all_ratio*` 1〜5 / `usd_jpy`* 50〜500
 - 安全: `pipeline_auth_mode*` `"log"|"enforce"` / `kill_switch*` `auto_expire_enabled*`(bool) / `auto_expire_max_per_run` 整数1〜2000
 - 機能スイッチ(bool): `score_enabled, tier_assign_enabled, cap_opinion, backfill_enabled, speech_enabled`
 - 聴く: `listen_threshold` 整数3〜5 / `listen_quota_min` 整数1〜60 / `listen_chars_per_sec` 3〜15 / `listen_speed` 0.5〜3 / `listen_morning_share` 0.1〜0.9

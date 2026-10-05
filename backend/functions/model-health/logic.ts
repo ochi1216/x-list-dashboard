@@ -269,9 +269,10 @@ export interface ProbeResult {
   model: string;
   role: "current" | "next";
   ok: boolean;
-  skipped?: string; // "guard" | "kill_switch" | "config_unavailable"
+  skipped?: string; // "guard" | "kill_switch" | "config_unavailable" | "auth"
   http_status?: number;
   gone?: boolean;
+  auth?: boolean;
   json_ok?: boolean;
   thoughts?: number;
   latency_ms?: number;
@@ -286,7 +287,7 @@ export async function probeModel(deps: HealthDeps, state: ModelStateData, model:
   if (r.guard) return { model, role, ok: false, skipped: "guard", error: r.error };
   const jsonOk = probeValid(r.json);
   return {
-    model, role, ok: r.ok && jsonOk, http_status: r.http_status, gone: r.gone === true, json_ok: jsonOk,
+    model, role, ok: r.ok && jsonOk, http_status: r.http_status, gone: r.gone === true, auth: r.auth === true, json_ok: jsonOk,
     thoughts: r.usage.thoughts, latency_ms: r.latency_ms, error: r.ok && jsonOk ? undefined : (r.error ?? "invalid json"),
   };
 }
@@ -308,6 +309,11 @@ async function opsEvent(deps: HealthDeps, level: string, kind: string, message: 
   } catch { /* 記録失敗で処理は止めない */ }
 }
 
+// 認証エラー(鍵の誤設定・請求停止)の通知。共通のGemini呼び出し(_shared/gemini.ts reportGeminiAuthError)と同じ kind・文言・360分。
+async function reportAuth(deps: HealthDeps, status: number | undefined, where: string): Promise<void> {
+  await opsEvent(deps, "error", "gemini_auth", "Gemini APIの認証エラー", { detail: `http ${status ?? "unknown"}`, where }, 360);
+}
+
 // 現行・次候補の probe。kill_switch 中(または設定が読めない)は Gemini を呼ばない。
 async function runProbes(
   deps: HealthDeps, state: ModelStateData, current: string, next: string | null, currentListed: boolean | null,
@@ -323,6 +329,12 @@ async function runProbes(
   }
   const cur = await probeModel(deps, state, current, "current");
   probes.push(cur);
+  if (cur.auth) {
+    // 認証エラー: 鍵・請求の問題なのでモデルの goneやprobe失敗とは別扱い。次候補は同じ鍵で必ず同じ結果なので呼ばない。
+    await reportAuth(deps, cur.http_status, "probe");
+    if (next) probes.push({ model: next, role: "next", ok: false, skipped: "auth" });
+    return { probes, reported };
+  }
   if (cur.skipped !== "guard") {
     if (cur.ok) {
       await deps.rpc("model_report_ok", { p_model: current });
@@ -338,7 +350,11 @@ async function runProbes(
       await opsEvent(deps, "warn", "model_probe_failed", `現行モデル ${current} のprobeに失敗: ${cur.error ?? ""}`, { model: current, http_status: cur.http_status }, 360);
     }
   }
-  if (next) probes.push(await probeModel(deps, state, next, "next"));
+  if (next) {
+    const nx = await probeModel(deps, state, next, "next");
+    probes.push(nx);
+    if (nx.auth) await reportAuth(deps, nx.http_status, "probe");
+  }
   return { probes, reported };
 }
 
@@ -418,6 +434,7 @@ export async function exploreThinking(
 ) {
   const rows: ExploreRow[] = [];
   let guard = false;
+  let auth: number | null = null; // 認証エラーのHTTPステータス(401/403/400)。出たら以降は呼ばない
   for (const cfg of THINKING_CANDIDATES) {
     if (deps.now() >= deadline) break; // 時間予算切れ(未探索分は結果に出ない→commitはブロックされる)
     const extra = { ...base };
@@ -427,6 +444,7 @@ export async function exploreThinking(
       model, purpose: "probe", prompt: PROBE_PROMPT, schema: PROBE_SCHEMA, maxOutputTokens: 512, extraConfig: extra, state,
     });
     if (r.guard) { guard = true; break; }
+    if (r.auth) { auth = r.http_status ?? 0; break; }
     rows.push({
       config: cfg, ok: r.ok && probeValid(r.json) && !r.thought_part, http_status: r.http_status,
       thoughts: r.usage.thoughts, thought_part: r.thought_part, error: r.ok ? undefined : r.error,
@@ -435,7 +453,7 @@ export async function exploreThinking(
   // 通ったもののうち思考トークンが最少のもの(同数なら探索順=指定なしが優先)
   let chosen: ExploreRow | null = null;
   for (const r of rows) if (r.ok && (chosen === null || r.thoughts < chosen.thoughts)) chosen = r;
-  return { rows, chosen, guard };
+  return { rows, chosen, guard, auth };
 }
 
 export interface RehearseOpts { model: string; n: number; commit: boolean }
@@ -491,11 +509,12 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
   };
   const errors: string[] = [];
   let guard = ex.guard;
+  let authStatus: number | null = ex.auth; // 認証エラー: 以降の呼び出しを止める(鍵・請求の問題で全件同じ結果になる)
   let skipped = 0;
   let idx = 0;
   async function worker() {
     for (;;) {
-      if (guard || deps.now() >= deadline) return;
+      if (guard || authStatus !== null || deps.now() >= deadline) return;
       const t = tasks[idx++];
       if (!t) return;
       const isSum = t.kind === "summary";
@@ -508,6 +527,7 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
         extraConfig: isSum ? extraSummary : extraScore, state: stateOk,
       });
       if (r.guard) { guard = true; return; }
+      if (r.auth) { authStatus ??= r.http_status ?? 0; return; }
       stat.calls++;
       // 出力が上限で途切れた(truncated)ものは成功に数えない
       const valid = r.ok && !r.truncated && (isSum ? summaryValid(r.json) : scoring.parse(r.json) !== null);
@@ -525,6 +545,7 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
   }
   await Promise.all([worker(), worker(), worker(), worker()]);
   skipped = Math.max(0, tasks.length - stat.calls);
+  if (authStatus !== null) await reportAuth(deps, authStatus || undefined, "rehearse");
 
   const rate = stat.calls > 0 ? stat.json_ok / stat.calls : 0;
   const leak = stat.thought_part_calls > 0 || ex.rows.some((r) => r.thought_part);
@@ -536,6 +557,7 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
     calls: stat.calls,
     skipped,
     guard_stopped: guard,
+    auth_stopped: authStatus !== null,
     json_success_rate: Math.round(rate * 1000) / 1000,
     summary_success_rate: stat.summary_calls ? Math.round((stat.summary_ok / stat.summary_calls) * 1000) / 1000 : null,
     score_success_rate: stat.score_calls ? Math.round((stat.score_ok / stat.score_calls) * 1000) / 1000 : null,
@@ -557,6 +579,7 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
     const reasons: string[] = [];
     if (ex.chosen === null) reasons.push("no thinking config passed");
     if (guard) reasons.push("cost guard stopped");
+    if (authStatus !== null) reasons.push("gemini auth error");
     if (stat.calls === 0) reasons.push("no calls");
     if (skipped > 0) reasons.push("incomplete");
     if (posts.length < REHEARSE_MIN_POSTS) reasons.push(`fewer than ${REHEARSE_MIN_POSTS} posts`);

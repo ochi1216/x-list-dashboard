@@ -32,12 +32,15 @@ function topic(urls: string[], over: Record<string, unknown> = {}) {
   };
 }
 
-interface Rec { upserts: DailyRow[]; weeks: WeekRow[]; events: { level: string; kind: string }[]; gens: GenReq[]; attempts: string[] }
+interface Rec {
+  upserts: DailyRow[]; weeks: WeekRow[]; events: { level: string; kind: string }[]; gens: GenReq[]; attempts: string[];
+  eventData: { kind: string; data: Record<string, unknown>; dedupe: number }[];
+}
 function makeDeps(opts: {
   cards?: Card[]; prev?: DailyRow | null; gen: (r: GenReq, n: number) => GenRes; cfg?: Record<string, number>;
-  daily?: DailyRow[]; week?: WeekRow | null; now?: number;
+  daily?: DailyRow[]; week?: WeekRow | null; now?: number; lastAttempt?: string | null;
 }): { deps: DigestDeps; rec: Rec } {
-  const rec: Rec = { upserts: [], weeks: [], events: [], gens: [], attempts: [] };
+  const rec: Rec = { upserts: [], weeks: [], events: [], gens: [], attempts: [], eventData: [] };
   const deps: DigestDeps = {
     now: () => opts.now ?? NOW,
     gen: async (r) => { rec.gens.push(r); return opts.gen(r, rec.gens.length); },
@@ -48,8 +51,9 @@ function makeDeps(opts: {
     upsertDaily: async (row) => { rec.upserts.push(row); },
     getWeek: async () => opts.week ?? null,
     upsertWeek: async (row) => { rec.weeks.push(row); },
-    opsEvent: async (level, kind) => { rec.events.push({ level, kind }); },
+    opsEvent: async (level, kind, _msg, data, dedupe) => { rec.events.push({ level, kind }); rec.eventData.push({ kind, data, dedupe }); },
     touchAttempt: async (iso) => { rec.attempts.push(iso); },
+    getLastAttempt: async () => opts.lastAttempt ?? null,
   };
   return { deps, rec };
 }
@@ -282,20 +286,76 @@ test("生成失敗(http/parse/JSON不正)でも当日に ok 行があれば上�
   await runToday(m3.deps);
   assert.equal(m3.rec.upserts[0].status, "ok");
 });
-test("見出し再生成の試行ごとに digest_last_attempt_at を記録・失敗後の再実行は間隔でスキップ", async () => {
+test("見出し再生成の試行ごとに digest_last_attempt_at を記録・failed 行は baseline にならず再試行は30分基準だけで止まる", async () => {
   const cs = cards(5);
   const bad = topic([cs[0].post_url], { headline: "Anthropicが発表" });
   const m = makeDeps({ cards: cs, gen: () => ok({ topics: [bad] }) });
   await runToday(m.deps);
   assert.equal(m.rec.gens.length, 2);
   assert.equal(m.rec.attempts.length, 2);
-  // failed 行が保存されるので、同じ日の再実行は(前回生成から6時間以内は)呼び出さない
+  assert.equal(m.rec.upserts[0].status, "failed");
+  const failedRow = m.rec.upserts[0];
   const again = cards(6, { scored_at: new Date(NOW + 60e3).toISOString() });
-  const m2 = makeDeps({ cards: again, prev: m.rec.upserts[0], gen: () => ok({ topics: [bad] }), now: NOW + 1800e3 });
+  // 直近の試行から10分(<30分): 30分基準で止まる(failed 行の generated_at は見ない)
+  const m2 = makeDeps({ cards: again, prev: failedRow, gen: () => ok({ topics: [bad] }), now: NOW + 600e3, lastAttempt: m.rec.attempts[1] });
   const r2 = await runToday(m2.deps);
-  assert.equal(r2.reason, "interval");
+  assert.equal(r2.reason, "backoff");
   assert.equal(m2.rec.gens.length, 0);
   assert.equal(m2.rec.attempts.length, 0);
+  // 30分以上たてば(6時間を待たず)再試行できる
+  const m3 = makeDeps({ cards: again, prev: failedRow, gen: () => ok({ topics: [topic([cs[0].post_url])] }), now: NOW + 1801e3, lastAttempt: m.rec.attempts[1] });
+  const r3 = await runToday(m3.deps);
+  assert.equal(r3.skipped, undefined);
+  assert.equal(r3.status, "ok");
+  assert.equal(m3.rec.upserts[0].status, "ok");
+});
+test("baseline は ok/empty 行だけ: failed/paused 行の generated_at は見ない・empty 行は見る(SQL digest_due と同じ)", async () => {
+  const gen = () => ok({ topics: [topic(["https://x.com/u/status/1"])] });
+  const fresh = cards(6, { scored_at: new Date(NOW - 60e3).toISOString() });
+  const row = (status: DailyRow["status"], hoursAgo: number): DailyRow =>
+    ({ day: "2026-10-05", generated_at: new Date(NOW - hoursAgo * 3600e3).toISOString(), model: "m", status, topics: [], input_count: 5, dropped_ratio: 0, version: 1 });
+  for (const st of ["failed", "paused"] as const) {
+    const m = makeDeps({ cards: fresh, prev: row(st, 0.1), gen });
+    const r = await runToday(m.deps);
+    assert.equal(r.skipped, undefined, `${st} 行(6分前)は間隔の根拠にしない`);
+    assert.equal(m.rec.gens.length, 1);
+  }
+  const me = makeDeps({ cards: fresh, prev: row("empty", 2), gen });
+  assert.equal((await runToday(me.deps)).reason, "interval");
+  const me7 = makeDeps({ cards: fresh, prev: row("empty", 7), gen });
+  assert.equal((await runToday(me7.deps)).status, "ok");
+  // 試行記録が不正な値なら無いものとして扱う
+  const mb = makeDeps({ cards: fresh, gen, lastAttempt: "not a date" });
+  assert.equal((await runToday(mb.deps)).status, "ok");
+});
+test("認証エラー(auth): gemini_auth を出し(digest_failed ではなく)・failed 行を書き・再試行は30分基準のみ", async () => {
+  const auth: GenRes = { ok: false, kind: "auth", error: "http 403: billing disabled", status: 403 };
+  const m = makeDeps({ cards: cards(5), gen: () => auth });
+  const r = await runToday(m.deps);
+  assert.equal(r.ok, false);
+  assert.equal(m.rec.upserts[0].status, "failed");
+  assert.equal(m.rec.attempts.length, 1);
+  assert.ok(m.rec.events.some((e) => e.kind === "gemini_auth" && e.level === "error"));
+  assert.ok(!m.rec.events.some((e) => e.kind === "digest_failed"));
+  assert.equal(m.rec.eventData.find((e) => e.kind === "gemini_auth")?.dedupe, 360);
+  assert.equal(m.rec.eventData.find((e) => e.kind === "gemini_auth")?.data.detail, "http 403");
+  // 30分後には再試行される(failed 行で6時間止まらない)
+  const m2 = makeDeps({ cards: cards(5), prev: m.rec.upserts[0], gen: () => ok({ topics: [topic(["https://x.com/u/status/1"])] }),
+    now: NOW + 31 * 60e3, lastAttempt: m.rec.attempts[0] });
+  assert.equal((await runToday(m2.deps)).status, "ok");
+  // ok 行がある日は上書きしないが gemini_auth は出す
+  const prev: DailyRow = { day: "2026-10-05", generated_at: new Date(NOW - 8 * 3600e3).toISOString(), model: "m", status: "ok", topics: [{ headline: "正常" }], input_count: 5, dropped_ratio: 0, version: 1 };
+  const m3 = makeDeps({ cards: cards(6, { scored_at: new Date(NOW - 3600e3).toISOString() }), prev, gen: () => auth });
+  await runToday(m3.deps);
+  assert.equal(m3.rec.upserts.length, 0);
+  assert.ok(m3.rec.events.some((e) => e.kind === "gemini_auth"));
+  // week でも auth は gemini_auth
+  const topics = [{ headline: "話題", summary: "概要。", new_facts: [], card_urls: [], is_followup: false }] as unknown as DailyRow["topics"];
+  const daily = ["2026-10-03", "2026-10-04", "2026-10-05"].map((d) => ({ ...prev, day: d, topics }));
+  const mw = makeDeps({ gen: () => auth, daily });
+  const rw = await runWeek(mw.deps);
+  assert.equal(rw.ok, false);
+  assert.ok(mw.rec.events.some((e) => e.kind === "gemini_auth"));
 });
 test("maxOutputTokens は入力カード数に応じて 1500+80×枚(上限6000)・入力は最大40枚", async () => {
   assert.equal(todayMaxTokens(0), 1500);

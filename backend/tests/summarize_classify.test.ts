@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  buildFullPrompt, checkUnauthRestrictions, classifyContent, fetchImageAsInlineData, IMAGE_PROMPT, isPermanentFailure,
+  buildFullPrompt, checkUnauthRestrictions, classifyContent, envErrorDetail, fetchImageAsInlineData, IMAGE_PROMPT, isPermanentFailure,
   needsImageAnalysis, resolveLimit, RESPONSE_SCHEMA, SHORT_EN_PROMPT, summarizeOne, SUMMARY_PROMPT, toSmallVariant,
 } from "../functions/summarize-x-post/logic.ts";
 import { newBatchId, runPool, createBudget, clampInt } from "../functions/_shared/util.ts";
@@ -217,4 +217,15 @@ test("summarizeOne: Gemini失敗の kind/status が結果に引き継がれる(�
   assert.equal(r2.ok === false && isPermanentFailure(r2), false);
   const shape = await summarizeOne(post({ content: "あ".repeat(80) }), fakeGenDeps({ gist: "x" }));
   assert.equal(shape.ok === false && isPermanentFailure(shape), true); // 形が不正=parse
+});
+
+test("envErrorDetail: 全件が同種の恒久失敗が3件以上のときだけ環境起因(試行回数に数えない)", () => {
+  const f400 = { kind: "http", status: 400 };
+  assert.equal(envErrorDetail([f400, f400, f400], 0, 0), "http 400 x3");
+  assert.equal(envErrorDetail([{ kind: "empty" }, { kind: "empty" }, { kind: "empty" }, { kind: "empty" }], 0, 0), "empty x4");
+  assert.equal(envErrorDetail([f400, f400], 0, 0), null, "2件以下は投稿固有の可能性");
+  assert.equal(envErrorDetail([f400, f400, f400], 0, 1), null, "一部成功");
+  assert.equal(envErrorDetail([f400, f400, f400], 1, 0), null, "通信失敗などが混ざる");
+  assert.equal(envErrorDetail([f400, f400, { kind: "http", status: 422 }], 0, 0), null, "異種");
+  assert.equal(envErrorDetail([f400, f400, { kind: "empty" }], 0, 0), null, "異種(kind)");
 });

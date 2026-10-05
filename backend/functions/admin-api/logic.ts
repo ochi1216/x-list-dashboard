@@ -108,7 +108,7 @@ export interface ConfigSpec {
 }
 
 export const CONFIG_SPECS: Record<string, ConfigSpec> = {
-  usd_jpy: { kind: "num", min: 50, max: 500 },
+  usd_jpy: { kind: "num", min: 50, max: 500, protected: true }, // 為替は費用の計算(円換算の上限判定)に効くので再入力必須
   monthly_cap_jpy: { kind: "int", min: 100, max: 50000, protected: true },
   daily_cap_jpy: { kind: "int", min: 50, max: 5000, protected: true },
   hourly_call_cap: { kind: "int", min: 50, max: 5000, protected: true },

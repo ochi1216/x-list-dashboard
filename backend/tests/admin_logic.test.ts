@@ -264,8 +264,8 @@ test("config_set: 通常キーはpassphrase不要・履歴にadminで記録・�
 });
 
 test("config_set: 保護キーはpassphrase再入力が必須(誤りは拒否・失敗カウント)", async () => {
-  const keys = ["monthly_cap_jpy", "daily_cap_jpy", "hourly_call_cap", "pipeline_auth_mode", "kill_switch", "auto_expire_enabled"];
-  const vals: any = { monthly_cap_jpy: 5000, daily_cap_jpy: 500, hourly_call_cap: 700, pipeline_auth_mode: "enforce", kill_switch: false, auto_expire_enabled: true };
+  const keys = ["monthly_cap_jpy", "daily_cap_jpy", "hourly_call_cap", "pipeline_auth_mode", "kill_switch", "auto_expire_enabled", "usd_jpy", "cap_warn_ratio"];
+  const vals: any = { usd_jpy: 150, cap_warn_ratio: 0.9, monthly_cap_jpy: 5000, daily_cap_jpy: 500, hourly_call_cap: 700, pipeline_auth_mode: "enforce", kill_switch: false, auto_expire_enabled: true };
   const { db, call, token } = await loggedIn();
   for (const k of keys) {
     assert.equal((await call({ action: "config_set", key: k, value: vals[k] }, token)).body.error, "passphrase_required", k);

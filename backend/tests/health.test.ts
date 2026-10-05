@@ -416,3 +416,29 @@ test("rehearse: llm_prices に単価が無いモデルは(成功率が高くて�
   assert.equal(r2.committed, false);
   assert.equal(h.rec.commits.length, 0);
 });
+
+test("probe が認証エラー(403 / 400 FAILED_PRECONDITION): gemini_auth(error・360分)を出し、gone・model_probe_failed にしない・次候補は呼ばない", async () => {
+  for (const [status, body] of [[403, { error: { message: "billing disabled" } }], [400, { error: { status: "FAILED_PRECONDITION", message: "User location is not supported" } }]] as const) {
+    const { deps, rec } = setup({ generate: () => ({ status, body }) });
+    const r = await runHealth(deps) as any;
+    assert.equal(r.ok, true);
+    const evs = rec.rpcs.filter((c) => c.name === "ops_event");
+    assert.equal(evs.length, 1, "gemini_auth のみ");
+    assert.deepEqual([evs[0].args!.p_kind, evs[0].args!.p_level, evs[0].args!.p_dedupe_minutes], ["gemini_auth", "error", 360]);
+    assert.ok(!rec.rpcs.some((c) => c.name === "model_report_gone" || c.name === "model_report_ok"));
+    assert.equal(r.health.probes[0].auth, true);
+    assert.equal(r.health.probes[0].gone, false);
+    assert.equal(r.health.probes[1].skipped, "auth");
+    assert.equal(rec.fetches.filter((f) => f.init.method === "POST").length, 1, "次候補へは呼ばない");
+    assert.ok(!JSON.stringify(rec.rpcs).includes("AIza"));
+  }
+});
+
+test("llm_usage の記録が連続3回失敗 → ops_event(error, usage_log_failed)を1回(model-health)", async () => {
+  const { deps, rec } = setup({});
+  deps.insertUsage = async () => null; // 記録失敗(idが返らない)
+  for (let i = 0; i < 3; i++) await runHealth(deps); // 1回あたりprobe2回 → 合計6回の失敗
+  const evs = rec.rpcs.filter((c) => c.name === "ops_event" && c.args!.p_kind === "usage_log_failed");
+  assert.equal(evs.length, 1);
+  assert.deepEqual([evs[0].args!.p_level, evs[0].args!.p_dedupe_minutes], ["error", 360]);
+});

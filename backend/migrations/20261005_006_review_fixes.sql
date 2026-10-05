@@ -312,6 +312,12 @@ begin
       when 'digest_failed'     then '今日の要点の生成に失敗しました'
       when 'score_stalled'     then '採点が止まっています'
       when 'model_probe_failed' then 'モデルの予行演習に失敗しました'
+      when 'score_no_profile'  then '関心プロファイルが未設定のため採点できません'
+      when 'secrets_missing'   then '呼び出し用の秘密が未設定です'
+      when 'digest_dropped'    then '今日の要点で検査により多くの文を削除しました'
+      when 'digest_week_dropped' then '今週の流れで検査により多くの文を削除しました'
+      when 'llm_env_error'     then 'Geminiの設定・モデル起因のエラーで処理が進みません'
+      when 'usage_log_failed'  then '費用の記録に失敗が続いています'
       when 'test'              then 'テスト通知'
       else e.kind end;
     v_detail := left(regexp_replace(coalesce(e.data ->> 'detail', ''), '[^0-9A-Za-z .,:/%_()+>-]', '', 'g'), 80);
@@ -410,7 +416,8 @@ end $$;
 
 -- x_hourly(003cを置き換え): 003cの処理に警報2つを追加
 --  ・llm_error_rate: 直近1時間のllm_usageでエラー率50%以上(呼び出し10回以上のとき)
---  ・tier_stalled: batch_key が null のまま、最初の投稿から batch_confirm_hours(既定4)を超えた投稿群が残っている
+--  ・tier_stalled: batch_key が null のまま、最初の投稿から batch_confirm_hours(既定4)+5分を超えた投稿群が残っている
+--    (強制確定は x_tick(5分ごと)が拾うので、確定時刻ちょうどに警報すると毎回誤報になる。5分の余裕を持たせる)
 --    (tier_scope_from が未設定、または tier_assign_enabled=false の間は確定しないのが正常なので出さない)
 create or replace function public.x_hourly()
 returns jsonb language plpgsql security definer set search_path = public, pg_temp as $$
@@ -448,7 +455,7 @@ begin
   if v_scope is not null and public.cfg_bool('tier_assign_enabled', true) then
     v_hours := greatest(public.cfg_num('batch_confirm_hours', 4), 4);
     select min(fetched_at) into v_oldest from public.x_posts where batch_key is null and fetched_at >= v_scope;
-    if v_oldest is not null and v_oldest < now() - make_interval(secs => (v_hours * 3600)::int) then
+    if v_oldest is not null and v_oldest < now() - make_interval(secs => (v_hours * 3600)::int + 300) then
       perform public.ops_event('warn', 'tier_stalled', '区分が確定しない投稿が' || v_hours || '時間以上残っています',
                                jsonb_build_object('detail', round(extract(epoch from (now() - v_oldest)) / 3600) || ' hours'), 360);
     end if;
