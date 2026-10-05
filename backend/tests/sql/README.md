@@ -8,7 +8,7 @@ backend/tests/sql/run.sh        # PGBIN(既定 /usr/lib/postgresql/16/bin)、PGP
 
 手動で流す場合は、空のDBに `psql -v ON_ERROR_STOP=1 -f 00_stub.sql` → 各migration → `10_tests.sql` の順(rootでなければ run.sh 不要)。`10_tests.sql` は1つでも FAIL があれば例外で終わります。
 
-試験内容(78項目 + 並行実行1項目。006は2回適用してから流す)
+試験内容(80項目 + 並行実行1項目。006は2回適用してから流す)
 - N2: fetch_runs / digest_summaries は anon・authenticated とも INSERT/UPDATE/DELETE/TRUNCATE が拒否、SELECT可、表権限はSELECTのみ。
 - F1: anonは content更新・read_via直接更新・INSERT/DELETE/TRUNCATE が拒否、is_read/is_starred更新とSELECTと mark_read RPC は可。column_privileges(UPDATE)は2列のみ。
 - A: finalize_tiers を 手動降格・手動昇格・既読・要約不能(summary_attempts=3, summary null)・通常の混在データで実行(手動昇降格の tier_initial はアルゴリズム判定のまま、listen_tier だけ手動結果。未採点待ちの4時間ルール、score_enabled=false / tier_assign_enabled=false の挙動を含む)。

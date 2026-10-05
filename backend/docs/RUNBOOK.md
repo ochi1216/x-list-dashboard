@@ -24,8 +24,10 @@ xd_pipeline_secret_cron(cron→各関数)、xd_pipeline_secret_win(Windows→sum
 - Phase 5(参照先要約)の取得拡張: 外部リンクURL・カード題名/説明・引用元本文を x_posts.ref_url/ref_title/ref_desc/quoted_text へ保存する固定JS抽出を追加(抽出失敗でも従来どおり動くこと)。サーバー側は `ref_enabled=false` の列のみ。有効化は別途検証。
 
 ## デプロイ順(本番反映。この順番だけを使う。cronと区分確定の開始は必ず最後)
+0. 事前確認(006の前): 取得スキル(Windows)が anon キーで x_posts / fetch_runs へ直接書いていないこと。2026-10-05〜06 のログ(PostgREST経由のPOST)では x_posts・fetch_runs へのPOSTは0件で、書き込みはMCP(execute_sql)経由と確認済み。念のため `query_logs` で `POST /rest/v1/x_posts` `POST /rest/v1/fetch_runs` が無いことを再確認する。
+0b. Edge Function のデプロイ用ファイルは `bash backend/build.sh` で `backend/dist/<関数>/` に作る(共通部品を `_<名前>.ts` として同梱)。
 1. DB: `20261005_005_summary_attempts.sql` → `20261005_006_review_fixes.sql`(加算のみ・冪等。001〜003cは適用済み)。直後に下の「本番適用前チェック」を実行して期待値を確認。
-   - 戻し: どちらも冪等なので、途中で失敗したら同じファイルを再実行。権限を戻す場合は `grant insert, update, delete on public.fetch_runs, public.digest_summaries to anon;`(通常は不要)。関数は 001〜003c と 005 の `create or replace` を再適用すれば旧定義へ戻る。
+   - 戻し: どちらも冪等なので、途中で失敗したら同じファイルを再実行。権限を戻す場合(通常は不要): `grant insert, update, delete on public.fetch_runs, public.digest_summaries to anon;` と、x_posts は `grant insert, delete on public.x_posts to anon;` および `grant update on public.x_posts to anon;`(列単位の is_read/is_starred に絞る前の状態へ戻す)。関数は 001〜003c と 005 の `create or replace` を再適用すれば旧定義へ戻る。
    - 確認: `select column_name from information_schema.columns where table_name='x_posts' and column_name='summary_attempts';` が1行。
 2. 初期化: 下の「初期設定手順」の1(ops_bootstrap)・3(プロファイル承認)・4(GEMINI_API_KEY_X)を先に済ませる。秘密が無いまま cron を入れると、x_tick は `{"summarize":true}` を返すのに call_fn が何も呼ばない(ops_events に secrets_missing が出る)ので、動いたように見えてしまう。
 3. 新関数: score-x-posts → model-health → admin-api(verify_jwt=true)。確認: `list_edge_functions` で各関数が ACTIVE・verify_jwt=true。
