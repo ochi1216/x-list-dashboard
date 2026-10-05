@@ -1,0 +1,73 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import {
+  failureClass, failureUpdate, hasEarlierDuplicate, mapPool, parseCfg, ruleFields, sanitize, targetFrom, wantRescore,
+} from "../functions/score-x-posts/logic.ts";
+
+test("parseCfg と targetFrom", () => {
+  const c = parseCfg([
+    { key: "backfill_enabled", value: true }, { key: "tier_scope_from", value: "2026-10-01T00:00:00Z" },
+    { key: "score_backfill_from", value: "2026-09-01T00:00:00Z" }, { key: "listen_threshold", value: 4 },
+    { key: "interest_profile", value: { version: 3, status: "approved", text: " T " } },
+  ]);
+  assert.equal(targetFrom(c), "2026-09-01T00:00:00Z");
+  assert.equal(c.profileText, "T");
+  assert.equal(c.profileVersion, 3);
+  assert.equal(targetFrom({ ...c, backfillEnabled: false }), "2026-10-01T00:00:00Z");
+  const d = parseCfg([]);
+  assert.equal(d.listenThreshold, 4); assert.equal(d.capOpinion, false); assert.equal(targetFrom(d), null);
+  assert.equal(d.profileText, "");
+});
+
+test("重複判定: 先行・14日・同時刻はpost_url昇順", () => {
+  const self = { post_url: "https://x.com/a/2", posted_at: "2026-10-05T00:00:00Z" };
+  assert.equal(hasEarlierDuplicate(self, [{ post_url: "https://x.com/a/1", posted_at: "2026-10-04T00:00:00Z" }]), true);
+  assert.equal(hasEarlierDuplicate(self, [{ post_url: "https://x.com/a/3", posted_at: "2026-10-06T00:00:00Z" }]), false);
+  assert.equal(hasEarlierDuplicate(self, [{ post_url: "https://x.com/a/1", posted_at: "2026-09-20T00:00:00Z" }]), false); // 15日前
+  assert.equal(hasEarlierDuplicate(self, [{ post_url: "https://x.com/a/1", posted_at: "2026-09-21T00:00:01Z" }]), true);
+  assert.equal(hasEarlierDuplicate(self, [{ post_url: "https://x.com/a/1", posted_at: "2026-10-05T00:00:00Z" }]), true);  // 同時刻・url小
+  assert.equal(hasEarlierDuplicate(self, [{ post_url: "https://x.com/a/9", posted_at: "2026-10-05T00:00:00Z" }]), false); // 同時刻・url大
+  assert.equal(hasEarlierDuplicate(self, [self]), false);
+  // 双方向で両方が重複扱いにならない
+  const other = { post_url: "https://x.com/a/1", posted_at: "2026-10-05T00:00:00Z" };
+  assert.equal(hasEarlierDuplicate(other, [self]), false);
+});
+
+test("ruleFields", () => {
+  assert.equal(ruleFields("duplicate").score, 1);
+  assert.equal(ruleFields("none").score_state, "rule");
+  assert.equal(ruleFields("duplicate").score_kind, "duplicate");
+});
+
+test("failureUpdate: 3回でfailed", () => {
+  assert.deepEqual(failureUpdate(0), { score_attempts: 1, score_state: null });
+  assert.deepEqual(failureUpdate(2), { score_attempts: 3, score_state: "failed" });
+});
+
+test("failureClass / wantRescore", () => {
+  assert.equal(failureClass("guard"), "guard");
+  assert.equal(failureClass("parse"), "content");
+  assert.equal(failureClass("http"), "transport");
+  assert.equal(wantRescore({ rescore: true }, 3, 4), true);
+  assert.equal(wantRescore({ rescore: true }, 4, 4), true);
+  assert.equal(wantRescore({ rescore: true }, 5, 4), false);
+  assert.equal(wantRescore({ rescore: true }, 2, 4), false);
+  assert.equal(wantRescore({ rescore: false }, 4, 4), false);
+  assert.equal(wantRescore(undefined, 4, 4), false);
+});
+
+test("sanitize: キーを伏せ200字に丸める", () => {
+  const s = sanitize("fail AIzaSyA1234567890abcdefghij and ?key=SECRET123 " + "x".repeat(500));
+  assert.ok(!s.includes("AIza") && !s.includes("SECRET123") && s.length <= 200);
+});
+
+test("mapPool: 並列上限と停止", async () => {
+  let active = 0, peak = 0, done = 0;
+  await mapPool([...Array(10).keys()], 4, async () => {
+    active++; peak = Math.max(peak, active); await new Promise((r) => setTimeout(r, 5)); active--; done++;
+  }, () => false);
+  assert.equal(done, 10); assert.ok(peak <= 4 && peak >= 2);
+  let n = 0;
+  await mapPool([1, 2, 3, 4, 5, 6], 1, async () => { n++; }, () => n >= 2);
+  assert.equal(n, 2);
+});

@@ -25,10 +25,30 @@ jobs:
         uses: actions/checkout@v4
       - name: Setup Pages
         uses: actions/configure-pages@v5
+      - name: Assemble site (allowlist only)
+        run: |
+          mkdir _site
+          for f in index.html index_beta.html index_prev.html .nojekyll; do
+            if [ -f "$f" ]; then cp "$f" "_site/$f"; fi
+          done
+          test -f _site/index.html
+          ls -la _site
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: '.'
+          path: '_site'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Smoke test (site is up, backend sources are not published)
+        run: |
+          url="${{ steps.deployment.outputs.page_url }}"
+          ok=0
+          for i in 1 2 3 4 5 6; do
+            a=$(curl -s -o /dev/null -w '%{http_code}' "$url")
+            b=$(curl -s -o /dev/null -w '%{http_code}' "${url}backend/docs/CONTRACT.md")
+            echo "attempt $i: / -> $a, /backend/docs/CONTRACT.md -> $b"
+            if [ "$a" = "200" ] && [ "$b" = "404" ]; then ok=1; break; fi
+            sleep 10
+          done
+          test "$ok" = "1"

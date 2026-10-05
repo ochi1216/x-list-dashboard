@@ -1,0 +1,2852 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Xリスト ダイジェスト(beta)</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { font-family: -apple-system, "Segoe UI", "Hiragino Sans", sans-serif; max-width: 960px; margin: 0 auto; padding: 12px; background: #1a1a2e; color: #e8e8e8; font-size: 16px; }
+  /* headerBarはsticky(常時画面上部に固定)なので高さに上限を設けないと、フィルター
+     パネル＋更新ダイジェストのドロワー(特に実行ログ)を開いた状態でビューポートより
+     高くなり得る。そうなるとカード一覧側へスクロールできなくなるだけでなく、
+     getStickyOffset()がheaderBar.offsetHeightを基準にスクロール先を補正している
+     ため、その計算自体が破綻し、カード送り(矢印キー等)がどこにスクロールしても
+     カードがヘッダーの下に隠れ続けて「戻ってこない」ように見える事故になる
+     (2026-08-09発生)。max-height+内部スクロールでheaderBarの高さを常に有限に保つ。 */
+  .header-bar { position: sticky; top: 0; z-index: 20; background: #1a1a2e; padding-top: 2px; margin: 0 -12px; padding-left: 12px; padding-right: 12px; max-height: min(75vh, 640px); overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .header-title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; }
+  h1 { font-size: 17px; margin: 0; }
+  #accordionToggle { background: none; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 14px; cursor: pointer; padding: 4px 10px; line-height: 1; flex-shrink: 0; }
+  #accordionToggle:hover { background: #1a1d24; }
+  .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; padding: 10px; background: #1a1d24; border-radius: 8px; }
+  .controls.collapsed { display: none; }
+  .controls input[type="text"] { flex: 1 1 100%; min-width: 0; padding: 10px 12px; border-radius: 8px; border: 1px solid #333; background: #0f1115; color: #eee; font-size: 16px; }
+  .controls select { padding: 8px 8px; border-radius: 8px; border: 1px solid #333; background: #0f1115; color: #eee; font-size: 15px; }
+  .controls label { display: flex; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap; }
+  .controls input[type="checkbox"] { width: 18px; height: 18px; }
+  .controls button { padding: 9px 14px; border-radius: 8px; border: 1px solid #333; background: #23272f; color: #eee; cursor: pointer; font-size: 14px; }
+  .controls button:hover { background: #2c313b; }
+  .controls button.primary { background: #b8860b; border-color: #b8860b; color: #111; font-weight: 600; }
+  .controls button.primary:hover { background: #cc9a1c; }
+
+  /* ---- 更新ダイジェスト（前回取得分／24H／週間の3タイル、headerBar内側）---- */
+  #digest { background: #1a1d24; border: 1px solid #2c313b; border-radius: 10px; margin-bottom: 8px; overflow: hidden; }
+  /* クリック判定は行全体(#digestTitlebar / .tile)に付いており矢印だけが対象では
+     ないが、見た目上は境界線付きの矢印ピルだけが「押せそう」に見えて伝わりにくい
+     との指摘(2026-08-09)を受け、行全体にホバー/タップの背景ハイライトを付けて
+     押せる範囲を可視化する。:activeも付けてタッチ端末でも即座に反応が見えるように。 */
+  #digest .digest-titlebar { display: flex; align-items: center; justify-content: space-between; padding: 8px 12px; cursor: pointer; user-select: none; }
+  #digest .digest-titlebar:hover, #digest .digest-titlebar:active { background: #23272f; }
+  #digest .digest-titlebar h2 { font-size: 12.5px; font-weight: 600; margin: 0; color: #9aa0a8; letter-spacing: 0.02em; }
+  #digest .digest-titlebar .caret { font-size: 11px; color: #6b7078; border: 1px solid #333; border-radius: 6px; padding: 3px 8px; transition: transform 0.15s ease; }
+  #digest.collapsed .digest-body { display: none; }
+  #digest.collapsed .digest-titlebar .caret { transform: rotate(-90deg); }
+  #digest .digest-tiles { display: flex; flex-direction: column; gap: 1px; background: #2c313b; border-top: 1px solid #2c313b; }
+  #digest .tile { background: #1a1d24; padding: 0 12px; height: 38px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 8px; overflow: hidden; }
+  #digest .tile:hover, #digest .tile.open, #digest .tile:active { background: #23272f; }
+  #digest .tile .t-label { font-size: 12px; color: #6b7078; white-space: nowrap; flex-shrink: 0; }
+  #digest .tile .t-count { font-size: 14px; font-weight: 700; color: #e8e8e8; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  #digest .tile .t-count small { font-size: 11px; font-weight: 500; color: #6b7078; margin-left: 1px; }
+  #digest .tile .t-unread { font-size: 11px; color: #9aa0a8; font-variant-numeric: tabular-nums; white-space: nowrap; margin-left: auto; }
+  #digest .tile .chev { font-size: 9px; color: #6b7078; flex-shrink: 0; transition: transform 0.15s ease; }
+  #digest .tile.open .chev { transform: rotate(180deg); }
+  #digest .drawer { border-top: 1px solid #2c313b; padding: 12px 14px 14px; display: none; background: #15171d; }
+  #digest .drawer.show { display: block; }
+  #digest .drawer-section { margin-bottom: 11px; }
+  #digest .drawer-section:last-child { margin-bottom: 0; }
+  #digest .drawer-eyebrow { font-size: 10.5px; color: #6b7078; letter-spacing: 0.06em; text-transform: uppercase; margin: 0 0 5px; }
+  #digest .drawer-runs { display: flex; flex-direction: column; gap: 4px; }
+  #digest .run-row { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; color: #9aa0a8; font-variant-numeric: tabular-nums; }
+  #digest .run-row .run-time { color: #6cb8ff; width: 46px; flex-shrink: 0; }
+  #digest .run-row .run-count { color: #e8e8e8; font-weight: 600; }
+  #digest .drawer-text { font-size: 13px; line-height: 1.7; color: #e8e8e8; margin: 0; }
+  #digest .drawer-empty { font-size: 12.5px; color: #6b7078; margin: 0; }
+  #digest .advice-box { background: rgba(184,134,11,0.09); border: 1px solid rgba(184,134,11,0.28); border-radius: 8px; padding: 9px 11px; display: flex; gap: 8px; align-items: flex-start; }
+  #digest .advice-box .advice-mark { color: #d9a521; font-size: 13px; line-height: 1.7; flex-shrink: 0; }
+  #digest .advice-box p { margin: 0; font-size: 13px; line-height: 1.7; color: #e8e8e8; }
+  #digest .highlight-list { display: flex; flex-direction: column; gap: 5px; }
+  #digest .highlight-item { display: flex; gap: 6px; align-items: baseline; font-size: 12.5px; line-height: 1.5; color: #e8e8e8; }
+  #digest .highlight-item .hi-bullet { color: #6cb8ff; flex-shrink: 0; }
+  #digest .highlight-item .hi-who { color: #6b7078; flex-shrink: 0; }
+  #digest .tag-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  #digest .tag-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: #6cb8ff; background: rgba(108,184,255,0.1); border: 1px solid rgba(108,184,255,0.28); border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
+  #digest .tag-chip .tag-new { font-size: 9px; opacity: 0.85; }
+  #digest .chart { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; align-items: end; height: 96px; margin-bottom: 6px; }
+  #digest .bar-col { display: flex; flex-direction: column; justify-content: flex-end; align-items: stretch; height: 100%; }
+  #digest .bar-stack { display: flex; flex-direction: column-reverse; border-radius: 4px 4px 2px 2px; overflow: hidden; width: 100%; }
+  #digest .seg-read { background: #3d84c9; }
+  #digest .seg-unread { background: #7fa3c4; }
+  #digest .bar-total { text-align: center; font-size: 10px; color: #6b7078; font-variant-numeric: tabular-nums; margin-bottom: 3px; }
+  #digest .chart-axis { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 2px; }
+  #digest .axis-label { text-align: center; font-size: 10.5px; color: #9aa0a8; }
+  #digest .axis-label .dow { display: block; color: #6b7078; font-size: 9.5px; }
+  #digest .axis-label.today { color: #6cb8ff; font-weight: 700; }
+  #digest .chart-legend { display: flex; gap: 14px; margin-top: 9px; font-size: 11px; color: #9aa0a8; }
+  #digest .chart-legend span { display: flex; align-items: center; gap: 5px; }
+  #digest .legend-swatch { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  #digest .drawer-generated { font-size: 10.5px; color: #4d525a; margin: 10px 0 0; text-align: right; }
+
+  #status { font-size: 12px; color: #888; margin-bottom: 8px; }
+  #lowValueNote { font-size: 12px; color: #6cb8ff; margin: -4px 0 8px; cursor: pointer; line-height: 1.5; }
+  #lowValueNote.warn { color: #ff6b6b; cursor: default; }
+  .lv-badge { flex: 0 0 auto; font-size: 11px; padding: 1px 6px; border-radius: 10px; background: #3a2f12; color: #e0b34a; white-space: nowrap; }
+  /* Each author's header+rows are wrapped in .group so position:sticky's
+     containing block is just that group — the header stays pinned for
+     exactly its own group's scroll range, then hands off to the next.
+     Extra padding-bottom makes the outgoing header linger a little into
+     the next group's first rows, giving a grace window to tap "mark read"
+     right after finishing that author's posts. */
+  .group { position: relative; padding-bottom: 36px; }
+  .group-header { display: flex; align-items: center; gap: 8px; padding: 9px 12px; margin-top: 10px; background: #1a1d24; border-radius: 6px 6px 0 0; font-size: 14px; color: #ccc; position: sticky; top: var(--header-h, 0px); z-index: 10; flex-wrap: wrap; }
+  .group-header .gh-name { color: #6cb8ff; font-weight: 600; }
+  .group-header .gh-count { color: #888; }
+  .group-header .gh-read-btn { margin-left: auto; padding: 4px 10px; border-radius: 6px; border: 1px solid #333; background: #23272f; color: #ccc; cursor: pointer; font-size: 12px; }
+  .group-header .gh-read-btn:hover { background: #2c313b; }
+
+  /* Row: mobile-first — stacked (date/star/handle on top, gist below).
+     row-main uses display:contents at wider widths so it collapses into
+     the outer flex row for a single-line desktop layout.
+     border-left is reserved (transparent) at all times so the gray "read"
+     bar appearing doesn't shift layout. */
+  .row { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px 10px 9px; border-bottom: 1px solid #22252c; border-left: 3px solid transparent; cursor: pointer; font-size: 16px; }
+  .row.read { border-left-color: #55595f; }
+  .row.read .gist { color: #fff; }
+  .row:hover { background: #1a1d24; }
+  .row-main { display: flex; align-items: center; gap: 8px; }
+  .row .date { color: #888; font-size: 13px; white-space: nowrap; }
+  .row .star { cursor: pointer; font-size: 20px; line-height: 1; padding: 2px 4px; margin: -2px -4px; }
+  .row .star.on { color: gold; }
+  .row .star.off { color: #444; }
+  .row .handle { color: #6cb8ff; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  .row .gist { color: #fff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; text-decoration: none; }
+  .row .gist:hover { text-decoration: underline; }
+  .row .nogist { color: #666; font-style: italic; }
+
+  .detail { padding: 10px 14px 16px; background: #15171d; font-size: 15px; line-height: 1.6; }
+  .detail a { color: #6cb8ff; display: inline-block; margin-top: 4px; }
+  .detail .tldr { font-size: 15px; color: #ddd; margin-bottom: 6px; }
+  /* 音声で聞く運用が基本のため、要約文はデフォルト非表示（チェックボックスで表示切替） */
+  body.summary-hidden .detail .tldr { display: none; }
+  .detail-images { display: flex; gap: 8px; flex-wrap: wrap; margin: 2px 0 8px; }
+  /* 画像の読み込み前後でレイアウトが動かないよう、リンク側(.detail-img-link)に
+     固定の予約枠を先に確保し、画像はその中でobject-fit:containにより全体像を
+     切り抜かずに表示する。カード送りは行の座標に依存するため、読み込み完了時の
+     高さジャンプ(CLS)が誤送りの原因になる。 */
+  .detail-images .detail-img-link { margin: 0; display: block; box-sizing: border-box; width: 96px; height: 96px; overflow: hidden; border-radius: 8px; border: 1px solid rgba(255,255,255,0.12); background: #1a1d24; }
+  .detail-img { display: block; width: 100%; height: 100%; object-fit: contain; }
+  /* サムネイルサイズ: S=96px枠 / M=192px枠(2倍) / L=カード幅いっぱい(端末幅に応じて可変、iPhoneでは約3倍相当) */
+  body[data-thumb-size="m"] .detail-images .detail-img-link { width: 192px; height: 192px; }
+  /* Lは縦横比が投稿ごとに違うため正確な予約はせず、緩いmin-heightで初期ジャンプ幅を抑える。
+     複数枚投稿は合計の高さが膨らまないよう1枚あたりの予約を小さくする。 */
+  body[data-thumb-size="l"] .detail-images .detail-img-link { flex: 1 1 100%; width: auto; height: auto; min-height: min(40vw, 240px); }
+  body[data-thumb-size="l"] .detail-images.multi .detail-img-link { min-height: min(24vw, 140px); }
+  body[data-thumb-size="l"] .detail-img { height: auto; max-height: min(120vw, 720px); }
+  .hidden { display: none; }
+
+  .row.active-read { background: rgba(229,62,62,0.12); box-shadow: inset 0 0 0 2px rgba(229,62,62,0.6); }
+
+  /* 読み上げ用フローティングボタン（ホバーボタン） */
+  .fab-container { position: fixed; top: 50%; right: 10px; transform: translateY(-50%); display: flex; flex-direction: column; gap: 10px; z-index: 500; pointer-events: none; }
+  .fab { position: relative; pointer-events: auto; width: 50px; height: 50px; border-radius: 25px; background: rgba(255,255,255,0.08); color: #6cb8ff; border: 1px solid rgba(108,184,255,0.35); box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; justify-content: center; align-items: center; cursor: pointer; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; font-size: 19px; transition: transform 0.12s, background 0.12s; touch-action: manipulation; }
+  .fab:active { transform: scale(0.92); }
+  .fab.author-nav { font-size: 15px; }
+  .fab.primary { border: 2px solid #6cb8ff; }
+  .fab.primary.playing { background: rgba(229,62,62,0.8); color: #fff; border-color: transparent; }
+  .fab.auto-moving { background: rgba(49,130,206,0.55); color: #fff; border-color: rgba(49,130,206,0.9); }
+  .fab.title-only { background: rgba(72,187,120,0.55); color: #fff; border-color: rgba(72,187,120,0.9); }
+  .fab.speed { font-size: 13px; font-weight: bold; overflow: visible; }
+
+  .speed-hover-group { position: absolute; right: 58px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: row; gap: 5px; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; white-space: nowrap; }
+  .speed-hover-group.visible { opacity: 1; pointer-events: auto; }
+  .speed-hover-btn { width: 38px; height: 38px; border-radius: 19px; background: rgba(15,17,21,0.95); color: #6cb8ff; border: 1px solid rgba(108,184,255,0.45); box-shadow: 0 2px 8px rgba(0,0,0,0.35); display: flex; justify-content: center; align-items: center; cursor: pointer; font-size: 11px; font-weight: bold; touch-action: manipulation; }
+  .speed-hover-btn.active-speed { background: #3182ce; color: #fff; border-color: #3182ce; }
+
+  /* 「その他」ボタン（読み上げ速度・投稿者送りをここに格納し、常時表示のFAB列を短くする） */
+  .fab.more { font-size: 22px; overflow: visible; }
+  .more-menu { position: absolute; right: 58px; bottom: 0; display: flex; flex-direction: row; gap: 5px; opacity: 0; pointer-events: none; transition: opacity 0.15s ease; white-space: nowrap; }
+  .more-menu.visible { opacity: 1; pointer-events: auto; }
+
+  @media (min-width: 640px) {
+    body { font-size: 14px; padding: 16px; }
+    .header-bar { margin: 0 -16px; padding-left: 16px; padding-right: 16px; }
+    h1 { font-size: 18px; }
+    .controls input[type="text"] { flex: 1; min-width: 160px; }
+    .row { flex-direction: row; align-items: baseline; column-gap: 10px; padding: 7px 10px 7px 7px; font-size: 14px; }
+    .row-main { display: contents; }
+    .row .date { width: 64px; flex-shrink: 0; font-size: 12px; }
+    .row .star { font-size: 16px; padding: 0; margin: 0; }
+    .row .handle { width: 150px; flex: 0 0 150px; }
+    .row .gist { flex: 1; font-size: 14px; }
+    .detail { padding-left: 96px; font-size: 13px; }
+    .detail .tldr { font-size: 14px; }
+    #digest .digest-tiles { flex-direction: row; }
+    #digest .tile { flex: 1; }
+  }
+
+  /* ================= beta: 共通 ================= */
+  [hidden] { display: none !important; }
+  :root { --bg: #1a1a2e; --panel: #232342; --panel2: #2b2b4d; --line: #3a3a5e; --accent: #e94560; --muted: #9a9cb8; --text: #ececf4; }
+  button { font-family: inherit; }
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 48px; padding: 10px 16px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); font-size: 16px; font-weight: 600; cursor: pointer; touch-action: manipulation; }
+  .btn:active { transform: scale(0.98); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.big { min-height: 72px; font-size: 20px; border-radius: 16px; width: 100%; }
+  .btn[disabled] { opacity: 0.4; cursor: default; }
+  .btn.small { min-height: 36px; padding: 6px 12px; font-size: 14px; border-radius: 10px; }
+
+  /* タブ */
+  #tabBar { position: sticky; top: 0; z-index: 30; display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin: 0 -12px; padding: calc(6px + env(safe-area-inset-top)) 12px 6px; background: var(--bg); border-bottom: 1px solid var(--line); }
+  #tabBar button { min-height: 44px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 15px; font-weight: 600; cursor: pointer; touch-action: manipulation; }
+  #tabBar button.on { background: var(--panel2); color: #fff; box-shadow: inset 0 -3px 0 var(--accent); }
+  #topBand { margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: rgba(233,69,96,0.14); border: 1px solid rgba(233,69,96,0.45); color: #ffd9e0; font-size: 14px; line-height: 1.5; cursor: pointer; }
+  #topBand[data-kind="provisional"], #topBand[data-kind="unsent"] { background: var(--panel); border-color: var(--line); color: var(--muted); }
+  .tab-body { padding: 8px 0 40px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 12px 0; }
+  .card h2 { font-size: 15px; margin: 0 0 8px; }
+  .card .sub { font-size: 12px; color: var(--muted); }
+  .muted { color: var(--muted); }
+  .today-head { display: flex; align-items: center; gap: 8px; margin: 10px 0 6px; }
+  .today-head h1 { flex: 1; font-size: 20px; }
+  .today-head .date { color: var(--muted); font-size: 13px; }
+  #listenGuide { margin: 8px 0; padding: 14px; border-radius: 12px; background: var(--panel); border: 1px dashed var(--line); color: var(--muted); font-size: 15px; line-height: 1.6; }
+  #breakdown { margin: 10px 2px; font-size: 14px; color: var(--muted); text-align: center; font-variant-numeric: tabular-nums; }
+  #breakdown b { color: var(--text); }
+  .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 10px 0; }
+  .stack > * + * { margin-top: 10px; }
+  .topic { padding: 8px 0; border-top: 1px solid var(--line); }
+  .topic:first-of-type { border-top: 0; }
+  .topic b { font-size: 15px; }
+  .topic p { margin: 4px 0 0; font-size: 14px; line-height: 1.6; color: #d8d8e8; }
+  .holdline { width: 100%; text-align: left; display: flex; justify-content: space-between; align-items: center; min-height: 48px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 15px; cursor: pointer; }
+  .holditem { padding: 10px 4px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: flex-start; }
+  .holditem .hi-body { flex: 1; min-width: 0; }
+  .holditem .hi-title { font-size: 14px; line-height: 1.5; }
+  .seg-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .seg-btns button { min-height: 44px; min-width: 56px; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); font-size: 15px; cursor: pointer; }
+  .seg-btns button.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  .tab-body:empty::before { content: "準備中"; color: var(--muted); display: block; padding: 24px 4px; }
+
+  /* カードの点数バッジ・種類+理由 */
+  .sbadge { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; min-width: 22px; height: 22px; padding: 0 5px; margin-right: 6px; border-radius: 6px; font-size: 13px; font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+  .sbadge.s5 { background: #e94560; color: #fff; }
+  .sbadge.s4 { background: #a8344d; color: #fff; }
+  .sbadge.s3 { background: #6d4a68; color: #e8e0ec; }
+  .sbadge.s2 { background: #46485f; color: #b7b9cc; }
+  .sbadge.s1 { background: #33354a; color: #8e90a6; }
+  .sbadge.s0 { background: transparent; border: 1px dashed #5d5f78; color: #8e90a6; }
+  .title-line { display: flex; align-items: center; min-width: 0; }
+  .title-line .gist { flex: 1; min-width: 0; }
+  .kindline { font-size: 12px; line-height: 1.5; color: #9a9cb8; margin-top: 2px; }
+  .kindline b { color: #d0d2e6; font-weight: 600; }
+  .chip-prov { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px solid #6a6d88; border-radius: 8px; font-size: 10px; color: #b9bcd2; vertical-align: 1px; }
+  .row .title-block { min-width: 0; }
+  @media (min-width: 640px) { .row .title-block { flex: 1; } }
+
+  /* フルスクリーン(聴く/流す) */
+  .overlay { position: fixed; inset: 0; z-index: 800; background: var(--bg); display: flex; flex-direction: column; padding-top: env(safe-area-inset-top); overflow: hidden; }
+  body[data-view="listen"], body[data-view="flow"] { overflow: hidden; }
+  .ov-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
+  .ov-bar .grow { flex: 1; text-align: center; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .pl-top { flex: 1 1 50%; min-height: 0; display: flex; flex-direction: column; }
+  .pl-card { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 18px 16px; }
+  .pl-card .pl-title { font-size: 22px; line-height: 1.45; font-weight: 700; margin: 6px 0; }
+  .pl-card .pl-title .sbadge { height: 26px; min-width: 26px; font-size: 15px; vertical-align: 3px; }
+  .pl-card .pl-body { font-size: 16px; line-height: 1.7; color: #d4d4e6; margin-top: 10px; white-space: pre-wrap; }
+  .pl-card .pl-meta { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .pl-bottom { flex: 0 0 50%; display: grid; grid-template-columns: 1fr 1.15fr 1fr; gap: 8px; padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
+  .tap { border: 0; border-radius: 18px; font-size: 20px; font-weight: 800; color: #fff; line-height: 1.3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
+  .tap small { font-size: 12px; font-weight: 500; opacity: 0.8; }
+  .tap:active { filter: brightness(1.25); }
+  .tap.reject { background: #4a3550; }
+  .tap.toggle { background: #3a3a66; }
+  .tap.next { background: var(--accent); }
+  .tap[disabled] { opacity: 0.35; }
+  #plToast { position: absolute; left: 10px; right: 10px; top: calc(env(safe-area-inset-top) + 54px); z-index: 5; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #3b2a46; border: 1px solid var(--accent); font-size: 14px; }
+  #plToast .msg { flex: 1; min-width: 0; line-height: 1.4; }
+  #plToast button { min-height: 48px; min-width: 96px; border-radius: 10px; border: 0; background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; }
+  .ov-full { position: absolute; inset: 0; z-index: 4; background: var(--bg); display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 24px 20px calc(24px + env(safe-area-inset-bottom)); text-align: center; }
+  .ov-full p { margin: 0; font-size: 17px; line-height: 1.7; }
+  .pl-list { text-align: left; font-size: 15px; line-height: 1.6; }
+  .pl-list div { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  /* 流す */
+  .fl-card { flex: 1; min-height: 0; overflow: hidden; padding: 12px 18px; display: flex; flex-direction: column; gap: 8px; cursor: pointer; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+  .fl-card .fl-title { font-size: 22px; font-weight: 700; line-height: 1.45; }
+  .fl-card .fl-title .sbadge { height: 26px; min-width: 26px; font-size: 15px; vertical-align: 3px; }
+  .fl-card .fl-body { font-size: 16px; line-height: 1.7; color: #d4d4e6; }
+  .fl-card img { max-width: 100%; max-height: 28vh; object-fit: contain; border-radius: 10px; align-self: flex-start; }
+  .fl-prog { height: 4px; background: var(--panel2); margin: 0 12px; border-radius: 2px; overflow: hidden; }
+  .fl-prog i { display: block; height: 100%; width: 0; background: var(--accent); }
+  #flPaused { text-align: center; color: var(--accent); font-weight: 700; padding: 6px; }
+  .fl-actions { padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); }
+  .fl-actions .btn { width: 100%; min-height: 64px; font-size: 20px; }
+  #btnBackToday { background: none; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 14px; cursor: pointer; padding: 4px 10px; flex-shrink: 0; min-height: 32px; }
+</style>
+</head>
+<body data-view="tabs">
+<!-- ===== beta: タブ骨格(今日/週次/費用/設定)。再生中・一覧モード中は #appShell ごと隠す ===== -->
+<div id="appShell">
+  <nav id="tabBar" role="tablist" aria-label="メインタブ">
+    <button type="button" role="tab" data-tab="today" class="on">今日</button>
+    <button type="button" role="tab" data-tab="weekly">週次</button>
+    <button type="button" role="tab" data-tab="cost">費用</button>
+    <button type="button" role="tab" data-tab="settings">設定</button>
+  </nav>
+  <div id="topBand" hidden></div>
+
+  <section id="tab-today" class="tab-body" data-tab-body="today">
+    <div class="today-head"><h1>🎧 今日</h1><span class="date" id="todayDate"></span><button type="button" class="btn small" id="btnTodayReload" title="再読込">↻</button></div>
+    <div id="resumeBox" hidden><button type="button" class="btn big" id="btnResume">中断しました。続きから再生<small id="resumeSub"></small></button></div>
+    <div id="listenBox" class="stack">
+      <button type="button" class="btn primary big" id="btnListen">▶聴く(約0分)</button>
+      <div id="listenGuide" hidden></div>
+      <button type="button" class="btn big" id="btnExtraToday" hidden>+10分聴く</button>
+    </div>
+    <div id="breakdown"></div>
+    <div class="row2">
+      <button type="button" class="btn" id="btnFlow">🌊 流す</button>
+      <button type="button" class="btn" id="btnList">📋 一覧</button>
+    </div>
+    <div id="digestCard" class="card" hidden></div>
+    <button type="button" class="holdline" id="btnHoldToggle" aria-expanded="false"><span id="holdLabel">保留 0件</span><span id="holdCaret">›</span></button>
+    <div id="holdList" hidden></div>
+  </section>
+
+  <!-- 第2段: 以下3つの中身は別担当が作る(空のコンテナ)。設定は「再生」だけ先に置き、#settings-extra に追記してもらう -->
+  <section id="tab-weekly" class="tab-body" data-tab-body="weekly" hidden></section>
+  <section id="tab-cost" class="tab-body" data-tab-body="cost" hidden></section>
+  <section id="tab-settings" class="tab-body" data-tab-body="settings" hidden>
+    <div class="card" id="set-playback">
+      <h2>🔊 再生</h2>
+      <div>聴く速度<div class="seg-btns" id="setSpeedBtns"></div></div>
+      <div style="margin-top:12px">声<div class="seg-btns" id="setVoiceBtns"></div></div>
+      <div style="margin-top:12px">流す(1枚あたり)<div class="seg-btns" id="setFlowBtns"></div></div>
+      <div style="margin-top:12px"><button type="button" class="btn small" id="btnVoiceTest">▶ 試し聴き</button></div>
+    </div>
+    <div id="settings-extra"></div>
+  </section>
+</div>
+
+<!-- ===== 一覧モード = 既存の画面(動作は変更しない) ===== -->
+<div id="listMode" hidden>
+<script>if (location.hash === "#list") { document.getElementById("appShell").hidden = true; document.getElementById("listMode").hidden = false; document.body.dataset.view = "list"; }</script>
+<div class="header-bar" id="headerBar">
+  <div id="digest">
+    <div class="digest-titlebar" id="digestTitlebar">
+      <h2>📊 更新ダイジェスト</h2>
+      <span class="caret" id="digestCaret">▲ 閉じる</span>
+    </div>
+    <div class="digest-body">
+      <div class="digest-tiles">
+        <div class="tile" data-tile="last_run">
+          <span class="t-label">前回取得分</span>
+          <span class="t-count">–</span>
+          <span class="t-unread"></span>
+          <span class="chev">▼</span>
+        </div>
+        <div class="tile" data-tile="24h">
+          <span class="t-label">直近24時間</span>
+          <span class="t-count">–</span>
+          <span class="t-unread"></span>
+          <span class="chev">▼</span>
+        </div>
+        <div class="tile" data-tile="7d">
+          <span class="t-label">直近7日間</span>
+          <span class="t-count">–</span>
+          <span class="t-unread"></span>
+          <span class="chev">▼</span>
+        </div>
+      </div>
+      <div class="drawer" data-drawer="last_run"></div>
+      <div class="drawer" data-drawer="24h"></div>
+      <div class="drawer" data-drawer="7d"></div>
+    </div>
+  </div>
+  <div class="header-title-row">
+    <button id="btnBackToday" type="button" title="今日へ戻る">‹ 今日</button>
+    <h1 id="pageTitle">Xリスト ダイジェスト（未読 0件）</h1>
+    <button id="accordionToggle" aria-expanded="true">▲ 閉じる</button>
+  </div>
+  <div class="controls" id="controlsPanel">
+    <label><input type="checkbox" id="starOnly"> ★のみ表示</label>
+    <label><input type="checkbox" id="unreadOnly"> 未読のみ表示</label>
+    <label><input type="checkbox" id="showSummary"> 要約文表示</label>
+    <label>サムネイル
+      <select id="thumbSize">
+        <option value="s">S</option>
+        <option value="m">M</option>
+        <option value="l" selected>L</option>
+      </select>
+    </label>
+    <label>低情報
+      <select id="lowValueMode">
+        <option value="hide" selected>隠す</option>
+        <option value="include">含める</option>
+        <option value="only">低情報のみ</option>
+      </select>
+    </label>
+    <label><input type="checkbox" id="groupByAuthor" checked> 投稿者でグループ化</label>
+    <select id="groupSort">
+      <option value="count_desc">投稿数が多い順</option>
+      <option value="count_asc">投稿数が少ない順</option>
+      <option value="name_asc">投稿者名 A→Z</option>
+      <option value="name_desc">投稿者名 Z→A</option>
+    </select>
+    <select id="postSort">
+      <option value="posted_desc">投稿日時が新しい順</option>
+      <option value="posted_asc">投稿日時が古い順</option>
+    </select>
+    <input type="text" id="search" placeholder="投稿者・本文で検索">
+    <button id="reload">再読込</button>
+    <button id="toggleAll" class="primary">すべて閉じる</button>
+    <button id="markAllRead">すべて既読</button>
+    <button id="mark24hRead">24H以前全既読</button>
+  </div>
+</div>
+<div id="status">読み込み中...</div>
+<div id="lowValueNote" hidden></div>
+<div id="list"></div>
+
+<div class="fab-container" id="fabContainer">
+  <div class="fab" id="btnCardPrev" title="前のカードへ">▲</div>
+  <div class="fab" id="btnReadMode" title="読み上げモード切替(▶:タイトル+要約 / ▶▶:タイトルのみ)">▶</div>
+  <div class="fab" id="btnCardNext" title="次のカードへ">▼</div>
+  <div class="fab primary" id="btnPlayPause" title="読み上げ開始/停止">▶️</div>
+  <div class="fab more" id="btnMore" title="その他の操作（読み上げ速度・投稿者送り）">⋯
+    <div class="more-menu" id="moreMenu">
+      <div class="fab speed" id="btnSpeed">1.5x<div class="speed-hover-group" id="speedHoverGroup"></div></div>
+      <div class="fab author-nav" id="btnAuthorPrev" title="前の投稿者へ">⏫</div>
+      <div class="fab author-nav" id="btnAuthorNext" title="次の投稿者へ">⏬</div>
+    </div>
+  </div>
+</div>
+</div><!-- /#listMode -->
+
+<!-- ===== 聴くモード: プレイヤー ===== -->
+<div id="listenView" class="overlay" hidden>
+  <div class="pl-top">
+    <div class="ov-bar">
+      <button type="button" class="btn small" id="plExit">✕ 中断</button>
+      <span class="grow" id="plPos"></span>
+      <button type="button" class="btn small" id="plSpeed">1.2x</button>
+    </div>
+    <div class="pl-card" id="plCard"></div>
+  </div>
+  <div class="pl-bottom" id="plBottom">
+    <button type="button" class="tap reject" id="plReject">これは不要<small>保留へ</small></button>
+    <button type="button" class="tap toggle" id="plToggle">⏸ 止める</button>
+    <button type="button" class="tap next" id="plNext">次へ ▶<small>既読にする</small></button>
+  </div>
+  <div id="plToast" hidden><span class="msg" id="plToastMsg"></span><button type="button" id="plUndo">取り消し</button></div>
+  <div class="ov-full" id="plInterrupted" hidden>
+    <p>⏸ 中断しました。</p>
+    <button type="button" class="btn primary big" id="plResume">中断しました。続きから再生</button>
+    <button type="button" class="btn" id="plBackA">今日へ戻る</button>
+  </div>
+  <div class="ov-full" id="plFinish" hidden>
+    <p id="plFinishMsg">✅ 聴き終わりました。</p>
+    <p id="plOverflow" class="muted" hidden></p>
+    <button type="button" class="btn primary big" id="plMoreTen" hidden>+10分聴く</button>
+    <button type="button" class="btn" id="plBackB">今日へ戻る</button>
+  </div>
+</div>
+
+<!-- ===== 流すモード ===== -->
+<div id="flowView" class="overlay" hidden>
+  <div class="ov-bar">
+    <button type="button" class="btn small" id="flExit">✕ 終了</button>
+    <span class="grow" id="flPos"></span>
+    <span><button type="button" class="btn small" id="flSecDown">−</button> <span id="flSecLabel" style="font-variant-numeric:tabular-nums">4秒</span> <button type="button" class="btn small" id="flSecUp">＋</button></span>
+  </div>
+  <div class="fl-card" id="flCard"></div>
+  <div class="fl-prog"><i id="flProg"></i></div>
+  <div id="flPaused" hidden>⏸ 一時停止中(カードをタップで再開)</div>
+  <div class="fl-actions"><button type="button" class="btn primary" id="flListen">🎧 これ聴く</button></div>
+  <div class="ov-full" id="flEnd" hidden>
+    <p id="flEndMsg">🌊 流し終わりました。</p>
+    <button type="button" class="btn primary big" id="flBack">今日へ戻る</button>
+  </div>
+</div>
+
+<!-- TTS: backend/ui_build.sh が ui/tts.js をここへ展開する(手で編集しない) -->
+<script>
+/*TTS:BEGIN*/
+/*TTS:END*/
+</script>
+
+<script>
+const SUPABASE_URL = "https://bpdkdwtevqsqgsxlahmd.supabase.co";
+const SUPABASE_KEY = "sb_publishable_obsKI3CBaB3PtU4Et5FE_w_Iup1JTZW";
+
+async function sbFetch(path, options = {}) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    ...options,
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${text}`);
+  }
+  if (res.status === 204) return null;
+  return res.json();
+}
+
+// 件数だけが欲しい問い合わせ用（本文は取得しない）。PostgRESTは既定で1000行
+// 上限があるため、`posts`配列の長さから件数を数えるのは30日超・大量投稿時に
+// 不正確になる（実測: 直近7日だけで上限を超えるケースを確認済み）。
+// count=exact + Range: 0-0 でContent-Rangeヘッダーの総件数だけ読む。
+async function sbCount(path) {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      apikey: SUPABASE_KEY,
+      Authorization: `Bearer ${SUPABASE_KEY}`,
+      Prefer: "count=exact",
+      Range: "0-0",
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`${res.status} ${text}`);
+  }
+  const range = res.headers.get("content-range") || "";
+  const total = parseInt(range.split("/")[1], 10);
+  return Number.isFinite(total) ? total : 0;
+}
+
+let allPosts = []; // 取得した生データ。postsは低情報フィルタ適用後の表示対象(recomputeVisiblePosts参照)
+let posts = [];
+let digestData = null; // 更新ダイジェスト（fetch_runs/digest_summaries/集計件数）のキャッシュ
+let collapsedUrls = new Set(); // post_urls whose detail is manually hidden — empty means all expanded (default)
+
+// 読み上げ（TTS）関連の状態
+let flatOrder = [];        // 現在の表示順で並んだpostsのフラット配列（フィルタ/グループ/ソート後）
+let authorBoundaries = []; // flatOrder中で「投稿者が変わる/新グループが始まる」インデックス
+let activeUrl = null;      // 現在ハイライト＆読み上げ対象のpost_url
+let isPlaying = false;
+
+// カードの「戻る/進む」ナビゲーション履歴（ブラウザのhistoryスタックと同じ発想）。
+// 未読のみ表示＋グループ化で、投稿者グループが全既読になり画面から消えた後でも、
+// ▲で実際に訪れたカードへ戻れるようにするための機構。
+let navHistory = [];                    // 実際に訪問したactiveUrlの時系列
+let navHistoryIndex = -1;               // navHistory中の現在位置。-1=未確立
+let historyBrowsing = false;            // ▲で隠れたカードを見せるため「未読のみ表示」を一時OFFにしている間true
+let historyBrowsingSavedUnread = null;  // 復元用の元のチェックボックス値
+let readMode = 0; // 0=mode0(タイトル+要約) 1=mode1(タイトルのみ)
+let currentSpeedRate = 1.5;
+const speedOptions = [1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+
+// 課題3: 長押しによる無音自動カード送り
+let autoMoveDirection = 0;      // 0=非アクティブ, 1=前進(▼), -1=後退(▲)
+let autoMoveTimerHandle = null; // 次のステップ用setTimeoutハンドル
+
+// 課題1・2: フィルター状態の永続化キー
+const LS_KEY_UNREAD_ONLY = "xdash_unreadOnly";
+const LS_KEY_SHOW_SUMMARY = "xdash_showSummary"; // 音声で聞く運用が基本のため、デフォルトはOFF(=非表示)
+const LS_KEY_GROUP_SORT  = "xdash_groupSort";
+const LS_KEY_POST_SORT   = "xdash_postSort";
+const LS_KEY_THUMB_SIZE  = "xdash_thumbSize"; // サムネイルサイズ S/M/L。デフォルトはL(音声運用でも画像は大きく見たいという要望)
+const LS_KEY_LOW_VALUE   = "xdash_lowValueMode"; // 低情報投稿の扱い hide/include/only。デフォルトはhide
+
+// 更新ダイジェスト（前回取得分／24H／週間）の開閉状態の永続化キー
+const LS_KEY_DIGEST_OPEN = "xdash_digestOpen";
+const LS_KEY_DIGEST_TILE = "xdash_digestTileOpen"; // JSON: {last_run,24h,7d}のbool
+let digestTileOpen = { last_run: false, "24h": false, "7d": false };
+
+function fmtDate(iso) {
+  if (!iso) return "----/--/--";
+  const d = new Date(iso);
+  return `${d.getMonth()+1}/${d.getDate()} ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+
+// Xの画像CDN URLの`name=`パラメータを差し替えてサイズ違いを出し分ける
+// (一覧では軽量なsmall、クリックで開く元画像はorig)。
+function xImageVariant(url, size) {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.endsWith("twimg.com")) return url; // X以外のホストではパラメータをいじらない
+    u.searchParams.set("name", size);
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+function olderThan24h(p) {
+  const t = p.posted_at || p.fetched_at;
+  if (!t) return true; // 日時不明＝新しいという根拠がないので「古い」扱い
+  return (Date.now() - new Date(t).getTime()) > 24 * 60 * 60 * 1000;
+}
+
+async function markAsRead(postUrls) {
+  return setReadState(postUrls, true);
+}
+
+// 既読化は anon が呼べる RPC mark_read(p_url, p_via) を使う(read_via/read_at を記録するため)。
+// RPCが失敗したURLだけ従来のPATCH(is_read)にフォールバックする。
+// 大量(RPC_READ_MAX件超)の一括操作は従来どおり1回のPATCHにまとめる(リクエスト数を増やさない)。
+const RPC_READ_MAX = 5;
+async function rpcMarkRead(url, via) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/mark_read`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ p_url: url, p_via: via }),
+    });
+    return res.ok;
+  } catch (err) { return false; }
+}
+
+async function patchIsRead(urls, markRead) {
+  const inList = urls.map((u) => encodeURIComponent(u)).join(",");
+  await sbFetch(`x_posts?post_url=in.(${inList})`, {
+    method: "PATCH",
+    headers: { Prefer: "return=minimal" },
+    body: JSON.stringify({ is_read: markRead }),
+  });
+}
+
+// 聴く/流すモード用: 画面全体の再描画(render)は走らせず、ローカル状態とDBだけ更新する。
+// 一覧の再描画は一覧モードへ入る時にまとめて行う(listDirty)。
+let listDirty = false;
+async function markReadQuiet(url, via) {
+  if (typeof snapMarkRead === "function") snapMarkRead(url);
+  const p = allPosts.find((x) => x.post_url === url);
+  if (p) { p.is_read = true; p.read_via = via; p.read_at = new Date().toISOString(); }
+  listDirty = true;
+  if (!(await rpcMarkRead(url, via))) {
+    try { await patchIsRead([url], true); } catch (err) { console.error("read state update failed", err); return false; }
+  }
+  return true;
+}
+
+async function setReadState(postUrls, markRead, via = "user") {
+  // 低情報フィルタで非表示の投稿も既読化できるよう、生データ(allPosts)から探す。
+  const targets = postUrls.filter((u) => {
+    const p = allPosts.find((p) => p.post_url === u);
+    return p && p.is_read !== markRead;
+  });
+  if (targets.length === 0) return;
+  try {
+    if (markRead && targets.length <= RPC_READ_MAX) {
+      const oks = await Promise.all(targets.map((u) => rpcMarkRead(u, via)));
+      const failed = targets.filter((u, i) => !oks[i]);
+      if (failed.length > 0) await patchIsRead(failed, true);
+    } else {
+      await patchIsRead(targets, markRead);
+    }
+    for (const u of targets) {
+      const p = allPosts.find((p) => p.post_url === u);
+      if (p) p.is_read = markRead;
+    }
+    render();
+  } catch (err) {
+    console.error("read state update failed", err);
+  }
+}
+
+function updateHeaderHeightVar() {
+  const h = document.getElementById("headerBar").offsetHeight;
+  document.documentElement.style.setProperty("--header-h", `${h}px`);
+}
+
+// A row can sit under two stacked sticky elements: the page header-bar, and
+// (in grouped mode) its own group's author header, which sticks right below
+// the header-bar. Any scroll target for a row must clear both, or the row's
+// top ends up hidden underneath the author header.
+function getStickyOffset(rowEl) {
+  const headerH = document.getElementById("headerBar").offsetHeight;
+  const groupHeader = rowEl.closest(".group")?.querySelector(".group-header");
+  return groupHeader ? headerH + groupHeader.offsetHeight : headerH;
+}
+
+function scrollRowIntoPlace(rowEl) {
+  const offset = getStickyOffset(rowEl);
+  const rect = rowEl.getBoundingClientRect();
+  const targetTop = window.pageYOffset + rect.top - offset - 10;
+  // アニメーション("smooth")は、遷移の途中でカードがヘッダーの下に隠れたり
+  // 別の位置を経由したりして見え、視認性を損なうため使わない。常に瞬時移動。
+  window.scrollTo({ top: targetTop, behavior: "auto" });
+}
+
+// カードへスクロールした直後は、遅延読み込み画像の完了などでリスト全体の高さが
+// 動き、狙った位置から行がズレることがある。ズレたまま次のmoveCard()が
+// isActiveRowVisible()を判定すると「見えていない」と誤認して、本来の次カードではなく
+// 画面上部にたまたま来ている行へ飛んでしまう。リストの高さ変化(ResizeObserver)を
+// 直接検知して、レイアウトが落ち着くまで今のカードを所定位置に固定し直す。
+const PIN_SETTLE_MS = 1500;
+let pinObserver = null;
+let pinSettleTimer = null;
+
+function releasePin() {
+  if (pinObserver) { pinObserver.disconnect(); pinObserver = null; }
+  if (pinSettleTimer) { clearTimeout(pinSettleTimer); pinSettleTimer = null; }
+}
+
+function pinActiveRow(url) {
+  releasePin();
+  if (typeof ResizeObserver === "undefined") return;
+  const armSettleTimer = () => {
+    if (pinSettleTimer) clearTimeout(pinSettleTimer);
+    pinSettleTimer = setTimeout(releasePin, PIN_SETTLE_MS);
+  };
+  pinObserver = new ResizeObserver(() => {
+    if (activeUrl !== url) { releasePin(); return; }
+    const el = document.querySelector(`.row[data-url="${CSS.escape(url)}"]`);
+    if (!el) { releasePin(); return; }
+    scrollRowIntoPlace(el);
+    armSettleTimer(); // 高さ変化が続く間は監視を延長し、止まってから解除する
+  });
+  pinObserver.observe(document.getElementById("list"));
+  armSettleTimer();
+}
+
+function highlightActiveRow(scroll) {
+  document.querySelectorAll(".row.active-read").forEach((el) => el.classList.remove("active-read"));
+  if (!activeUrl) return;
+  const rowEl = document.querySelector(`.row[data-url="${CSS.escape(activeUrl)}"]`);
+  if (rowEl) {
+    rowEl.classList.add("active-read");
+    if (scroll) {
+      // Scroll so the card lands just below the sticky header(s) (not
+      // centered, and not hidden underneath them). Heights are measured live
+      // so this adapts to the filter accordion state and grouped/ungrouped mode.
+      scrollRowIntoPlace(rowEl);
+      pinActiveRow(activeUrl);
+    }
+  }
+}
+
+function isActiveRowVisible() {
+  if (!activeUrl) return false;
+  const rowEl = document.querySelector(`.row[data-url="${CSS.escape(activeUrl)}"]`);
+  if (!rowEl) return false;
+  const offset = getStickyOffset(rowEl);
+  const rect = rowEl.getBoundingClientRect();
+  return rect.bottom > offset && rect.top < window.innerHeight;
+}
+
+function getTopVisibleIndex() {
+  for (let i = 0; i < flatOrder.length; i++) {
+    const rowEl = document.querySelector(`.row[data-url="${CSS.escape(flatOrder[i].post_url)}"]`);
+    if (!rowEl) continue;
+    const offset = getStickyOffset(rowEl);
+    const rect = rowEl.getBoundingClientRect();
+    if (rect.bottom > offset + 4) return i;
+  }
+  return flatOrder.length > 0 ? flatOrder.length - 1 : -1;
+}
+
+function resyncToVisible() {
+  // If the stored active card has been scrolled out of view (user browsed
+  // manually without clicking a row), snap to whichever card is actually
+  // visible instead of moving further away from it. Returns true if resynced.
+  if (activeUrl && isActiveRowVisible()) return false;
+  const topIdx = getTopVisibleIndex();
+  if (topIdx === -1) return false;
+  activeUrl = flatOrder[topIdx].post_url;
+  // セッションで最初にactiveUrlが確立される瞬間だけ履歴に記録する。以降の
+  // resync（スクロール補正）は毎回起きるノイズなので記録しない —
+  // navHistoryが空かどうかで「最初の1回」だけを見分ける。
+  if (navHistory.length === 0) recordVisit(activeUrl);
+  return true;
+}
+
+// --- カードナビゲーション履歴（▲▼の「戻る/進む」） ---------------------
+
+function recordVisit(url) {
+  if (!url) return;
+  if (navHistory[navHistoryIndex] === url) return; // 同じ場所への再記録は無視
+  // 戻った後に新しい場所へ進んだ場合、古い「進む」側の履歴は捨てる
+  // （ブラウザのhistoryスタックと同じ挙動）。
+  if (navHistoryIndex < navHistory.length - 1) {
+    navHistory = navHistory.slice(0, navHistoryIndex + 1);
+  }
+  navHistory.push(url);
+  navHistoryIndex = navHistory.length - 1;
+  restoreUnreadOnlyIfAtFrontier();
+}
+
+// 履歴を遡って「未読のみ表示」を一時OFFにしていた場合、進んで最先端
+// （フロンティア）まで追いついたら自動的に元へ戻す。
+function restoreUnreadOnlyIfAtFrontier() {
+  if (!historyBrowsing) return;
+  if (navHistoryIndex !== navHistory.length - 1) return;
+  const checkbox = document.getElementById("unreadOnly");
+  checkbox.checked = historyBrowsingSavedUnread;
+  historyBrowsing = false;
+  historyBrowsingSavedUnread = null;
+  render();
+}
+
+// 対象URLの行が今のフィルタ済みDOMに存在しない場合、「未読のみ表示」を
+// 一時的に解除して出現させる（検索語や★のみ表示が原因で見つからない場合は
+// 何もしない — highlightActiveRowが今まで通り黙って何もしない挙動に委ねる）。
+function revealForHistoryIfNeeded(url) {
+  if (document.querySelector(`.row[data-url="${CSS.escape(url)}"]`)) return;
+  const checkbox = document.getElementById("unreadOnly");
+  if (!checkbox.checked) return;
+  if (!historyBrowsing) historyBrowsingSavedUnread = checkbox.checked;
+  checkbox.checked = false;
+  historyBrowsing = true;
+  render();
+}
+
+// navHistory配列自体は書き換えず、postsにまだ存在するURLが見つかるまで
+// カーソルだけを動かす（保持期間切れ等でpostsから消えたURLは自動的に
+// 読み飛ばす）。見つからなければnullを返し、呼び出し側は既存の空間的な
+// フォールバックに委ねる。
+function historyStepBack() {
+  let i = navHistoryIndex;
+  while (i > 0) {
+    i--;
+    if (posts.some((p) => p.post_url === navHistory[i])) {
+      navHistoryIndex = i;
+      return navHistory[i];
+    }
+  }
+  return null;
+}
+
+function historyStepForward() {
+  let i = navHistoryIndex;
+  while (i < navHistory.length - 1) {
+    i++;
+    if (posts.some((p) => p.post_url === navHistory[i])) {
+      navHistoryIndex = i;
+      restoreUnreadOnlyIfAtFrontier(); // フロンティアに追いついたら自動復元
+      return navHistory[i];
+    }
+  }
+  return null;
+}
+
+function groupInfoForIndex(idx) {
+  let start = 0;
+  for (const b of authorBoundaries) {
+    if (b <= idx) start = b;
+    else break;
+  }
+  const nextBoundary = authorBoundaries.find((b) => b > idx);
+  const end = nextBoundary !== undefined ? nextBoundary : flatOrder.length;
+  return { position: idx - start + 1, total: end - start };
+}
+
+function speechText(idx) {
+  const grouped = document.getElementById("groupByAuthor").checked;
+  const p = flatOrder[idx];
+  const theme = p.gist || (p.content || "").replace(/\s+/g, " ").slice(0, 60);
+  const body = p.summary || "要約はまだありません。";
+  const bodyPart = readMode === 1 ? "" : `${body}`;
+
+  if (!grouped) {
+    const who = p.author_name || p.author_handle || "";
+    return `${who}。${theme}。${bodyPart}`;
+  }
+
+  const info = groupInfoForIndex(idx);
+  let prefix = "";
+  if (info.position === 1) {
+    const who = p.author_name || p.author_handle || "";
+    prefix = `${who} ${info.total}件の投稿です。`;
+  }
+  return `${prefix}${info.position}. ${theme}。${bodyPart}`;
+}
+
+function speakCurrent() {
+  window.speechSynthesis.cancel();
+  if (flatOrder.length === 0) return;
+  let idx = flatOrder.findIndex((p) => p.post_url === activeUrl);
+  if (idx === -1) {
+    idx = 0;
+    activeUrl = flatOrder[idx].post_url;
+    highlightActiveRow(true);
+    recordVisit(activeUrl);
+  }
+  const spokenUrl = flatOrder[idx].post_url;
+  const utter = new SpeechSynthesisUtterance(speechText(idx));
+  utter.lang = "ja-JP";
+  utter.rate = currentSpeedRate;
+  utter.onend = async () => {
+    const curIdx = flatOrder.findIndex((pp) => pp.post_url === activeUrl);
+    // Auto-advance skips over already-read cards instead of stopping on each one:
+    // grouped "unread only" view keeps read cards on screen (so you can scroll back
+    // to them), but there's no reason to read them aloud again. Manual ▲▼ navigation
+    // is unaffected — it still moves one card at a time regardless of read state.
+    let nextUrl = null;
+    if (isPlaying) {
+      for (let i = curIdx + 1; i < flatOrder.length; i++) {
+        if (!flatOrder[i].is_read) { nextUrl = flatOrder[i].post_url; break; }
+      }
+    }
+    // Mark read only after the card has actually finished being read aloud —
+    // marking it up front would make it vanish from an "unread only" filtered
+    // view before playback even starts. Wait for the render() this triggers
+    // to settle before scrolling to the next card: that render() can drop
+    // the just-finished card from an "unread only" view, shrinking the list,
+    // so scrolling before it settles can leave the next card shifted up
+    // underneath the sticky header.
+    await markAsRead([spokenUrl]);
+    if (!isPlaying) return;
+    if (nextUrl) {
+      activeUrl = nextUrl;
+      highlightActiveRow(true);
+      recordVisit(activeUrl);
+      speakCurrent();
+    } else {
+      isPlaying = false;
+      updatePlayButton();
+    }
+  };
+  window.speechSynthesis.speak(utter);
+}
+
+function updatePlayButton() {
+  const btn = document.getElementById("btnPlayPause");
+  btn.textContent = isPlaying ? "⏸️" : "▶️";
+  btn.classList.toggle("playing", isPlaying);
+}
+
+function moveCard(delta) {
+  if (flatOrder.length === 0) return;
+  if (resyncToVisible()) {
+    highlightActiveRow(true);
+    if (isPlaying) speakCurrent();
+    return "resynced";
+  }
+  const prevUrl = activeUrl;
+
+  // 履歴を遡る: 未読のみ表示＋グループ化で投稿者グループが全既読になり
+  // 画面から消えていても、実際に訪れたカードへ▲で戻れるようにする。
+  if (delta < 0 && navHistoryIndex > 0) {
+    const url = historyStepBack();
+    if (url) {
+      revealForHistoryIfNeeded(url);
+      activeUrl = url;
+      highlightActiveRow(true);
+      // 履歴の閲覧は「読み直し」ではないので既読化しない。ただし読み上げ中の
+      // 離脱は既存仕様通り既読化する(課題5の不変条件を壊さない)。
+      if (prevUrl && isPlaying) markAsRead([prevUrl]);
+      if (isPlaying) speakCurrent();
+      return;
+    }
+    // 履歴が尽きている(purge済み含む)場合は下の空間的フォールバックへ。
+  }
+
+  // 履歴を辿って進む: まだフロンティアに追いついていない間は記録済みの
+  // 順路をそのまま再生する。
+  if (delta > 0 && navHistoryIndex < navHistory.length - 1) {
+    const url = historyStepForward();
+    if (url) {
+      activeUrl = url;
+      highlightActiveRow(true);
+      if (prevUrl) markAsRead([prevUrl]); // 既読済みなら実質no-op
+      if (isPlaying) speakCurrent();
+      return;
+    }
+  }
+
+  let idx = flatOrder.findIndex((p) => p.post_url === activeUrl);
+  if (idx === -1) idx = delta > 0 ? -1 : 0;
+  idx = Math.min(Math.max(idx + delta, 0), flatOrder.length - 1);
+  activeUrl = flatOrder[idx].post_url;
+  highlightActiveRow(true);
+  // 課題4: 前進移動は常に離脱カードを既読化(クリック/キーボード/自動送り共通)
+  // 課題5: 読み上げ中は方向を問わず離脱(＝読み上げ中断)カードを既読化
+  if (prevUrl && (delta > 0 || isPlaying)) {
+    const movedToUrl = activeUrl;
+    // markAsRead()が引き起こすrender()は、既読で消えた投稿者グループの分だけ
+    // スクロール位置と実際の表示がずれる(render()自体はscroll:falseで呼ばれるため)。
+    // このズレがisActiveRowVisible()を誤らせ、次の1クリックがresyncToVisible()に
+    // 食われて「反応しない」ように見える原因だった。render()確定後にもう一度だけ
+    // 現在地へスクロールし直して補正する(その間に別のカードへ移動済みなら何もしない)。
+    markAsRead([prevUrl]).then(() => {
+      if (activeUrl === movedToUrl) highlightActiveRow(true);
+    });
+  }
+  // 前進で新しい場所へ着いた場合のみ履歴に記録する(戻る側のフォールバックは
+  // 記録しない — navHistoryIndexが現在地とズレたまま進んだ扱いになると、
+  // 次の「進む」操作が全く違うカードへ飛ぶ不具合になるため)。
+  if (delta > 0) recordVisit(activeUrl);
+  if (isPlaying) speakCurrent();
+}
+
+function moveAuthor(delta) {
+  if (flatOrder.length === 0 || authorBoundaries.length === 0) return;
+  if (autoMoveDirection !== 0) stopAutoMove();
+  if (resyncToVisible()) {
+    highlightActiveRow(true);
+    if (isPlaying) speakCurrent();
+    return;
+  }
+  let idx = flatOrder.findIndex((p) => p.post_url === activeUrl);
+  if (idx === -1) idx = 0;
+  let newIdx;
+  if (delta > 0) {
+    const next = authorBoundaries.find((b) => b > idx);
+    newIdx = next !== undefined ? next : flatOrder.length - 1;
+  } else {
+    const prevCandidates = authorBoundaries.filter((b) => b < idx);
+    newIdx = prevCandidates.length ? prevCandidates[prevCandidates.length - 1] : 0;
+  }
+  activeUrl = flatOrder[newIdx].post_url;
+  highlightActiveRow(true);
+  recordVisit(activeUrl);
+  if (isPlaying) speakCurrent();
+}
+
+function setSpeed(v) {
+  currentSpeedRate = v;
+  const btn = document.getElementById("btnSpeed");
+  const textNode = Array.from(btn.childNodes).find((n) => n.nodeType === Node.TEXT_NODE);
+  if (textNode) textNode.textContent = `${v}x`;
+  buildSpeedHoverGroup();
+  if (isPlaying) speakCurrent();
+}
+
+// 課題3: 長押しによる無音自動カード送り。読み上げ速度(x1〜x3)に応じて
+// カード滞在時間を線形補間する: x1→2000ms, x2→1500ms, x3→1000ms。
+function dwellMs(speed) {
+  return 2000 - 500 * (speed - 1);
+}
+
+// resyncToVisible()がスクロール位置の一時的なズレのせいで「たまたま同じカードに
+// 巻き戻す」ことがあり、これを本当にリスト末尾に到達したのと区別できないと
+// 自動移動が途中で誤って止まってしまう。数回だけ様子を見てから諦める。
+let autoMoveStallCount = 0;
+const AUTO_MOVE_MAX_STALLS = 3;
+
+function stopAutoMove() {
+  if (autoMoveTimerHandle) { clearTimeout(autoMoveTimerHandle); autoMoveTimerHandle = null; }
+  document.getElementById("btnCardPrev").classList.remove("auto-moving");
+  document.getElementById("btnCardNext").classList.remove("auto-moving");
+  autoMoveDirection = 0;
+  autoMoveStallCount = 0;
+}
+
+function scheduleAutoMoveStep() {
+  autoMoveTimerHandle = setTimeout(autoMoveStep, dwellMs(currentSpeedRate));
+}
+
+function autoMoveStep() {
+  if (autoMoveDirection === 0 || flatOrder.length === 0) { stopAutoMove(); return; }
+  const before = activeUrl;
+  const result = moveCard(autoMoveDirection);
+  if (activeUrl === before) {
+    // resyncToVisible()由来の「進んでいない」は、スクロールのズレが原因の誤検知
+    // かもしれないので即座には諦めない。次のtickで解消されることが多い。
+    if (result === "resynced" && autoMoveStallCount < AUTO_MOVE_MAX_STALLS) {
+      autoMoveStallCount++;
+      scheduleAutoMoveStep();
+      return;
+    }
+    stopAutoMove(); // 本当に端に到達、これ以上動かない
+    return;
+  }
+  autoMoveStallCount = 0;
+  if (autoMoveDirection > 0) {
+    const cur = flatOrder.find((p) => p.post_url === activeUrl);
+    if (cur && cur.is_read) { autoMoveStep(); return; } // 既読カードは待たずスキップ
+  }
+  scheduleAutoMoveStep();
+}
+
+function startAutoMove(direction, btnEl) {
+  stopAutoMove();
+  if (isPlaying) { // 音声モードとは排他
+    isPlaying = false;
+    window.speechSynthesis.cancel();
+    updatePlayButton();
+  }
+  autoMoveDirection = direction;
+  btnEl.classList.add("auto-moving");
+  scheduleAutoMoveStep();
+}
+
+function setupCardLongPress(btnEl, direction) {
+  let pressTimer = null;
+  let longPressed = false;
+  btnEl.addEventListener("pointerdown", () => {
+    longPressed = false;
+    pressTimer = setTimeout(() => { longPressed = true; startAutoMove(direction, btnEl); }, 450);
+  });
+  btnEl.addEventListener("pointerup", () => {
+    clearTimeout(pressTimer);
+    if (longPressed) return;
+    if (autoMoveDirection === direction) { stopAutoMove(); return; } // 同じ矢印を再タップ→停止
+    if (autoMoveDirection !== 0) stopAutoMove(); // 逆方向タップ→自動送り解除して単発移動
+    moveCard(direction);
+  });
+  btnEl.addEventListener("pointerleave", () => clearTimeout(pressTimer));
+}
+
+function buildSpeedHoverGroup() {
+  const group = document.getElementById("speedHoverGroup");
+  group.innerHTML = "";
+  for (const v of speedOptions) {
+    const btn = document.createElement("div");
+    btn.className = "speed-hover-btn" + (Math.abs(v - currentSpeedRate) < 0.01 ? " active-speed" : "");
+    btn.textContent = `${v}x`;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      setSpeed(v);
+      document.getElementById("speedHoverGroup").classList.remove("visible");
+    });
+    group.appendChild(btn);
+  }
+}
+
+function restoreFilterState() {
+  try {
+    const unread = localStorage.getItem(LS_KEY_UNREAD_ONLY);
+    if (unread !== null) document.getElementById("unreadOnly").checked = unread === "true";
+    // 未設定(初回訪問)ならチェックボックスの初期値どおりOFF=非表示のまま
+    const showSummary = localStorage.getItem(LS_KEY_SHOW_SUMMARY);
+    if (showSummary !== null) document.getElementById("showSummary").checked = showSummary === "true";
+    document.body.classList.toggle("summary-hidden", !document.getElementById("showSummary").checked);
+    const sort = localStorage.getItem(LS_KEY_GROUP_SORT);
+    const validSorts = ["count_desc", "count_asc", "name_asc", "name_desc"];
+    if (sort !== null && validSorts.includes(sort)) document.getElementById("groupSort").value = sort;
+    const postSort = localStorage.getItem(LS_KEY_POST_SORT);
+    const validPostSorts = ["posted_desc", "posted_asc"];
+    if (postSort !== null && validPostSorts.includes(postSort)) document.getElementById("postSort").value = postSort;
+    const thumbSize = localStorage.getItem(LS_KEY_THUMB_SIZE);
+    const validThumbSizes = ["s", "m", "l"];
+    if (thumbSize !== null && validThumbSizes.includes(thumbSize)) document.getElementById("thumbSize").value = thumbSize;
+    document.body.dataset.thumbSize = document.getElementById("thumbSize").value;
+    const lowValueMode = localStorage.getItem(LS_KEY_LOW_VALUE);
+    const validLowValueModes = ["hide", "include", "only"];
+    if (lowValueMode !== null && validLowValueModes.includes(lowValueMode)) document.getElementById("lowValueMode").value = lowValueMode;
+  } catch (err) { /* localStorage不可(プライベートモード等) — デフォルト値のまま続行 */ }
+}
+
+function saveFilterState() {
+  try {
+    localStorage.setItem(LS_KEY_UNREAD_ONLY, String(document.getElementById("unreadOnly").checked));
+    localStorage.setItem(LS_KEY_SHOW_SUMMARY, String(document.getElementById("showSummary").checked));
+    localStorage.setItem(LS_KEY_GROUP_SORT, document.getElementById("groupSort").value);
+    localStorage.setItem(LS_KEY_POST_SORT, document.getElementById("postSort").value);
+    localStorage.setItem(LS_KEY_THUMB_SIZE, document.getElementById("thumbSize").value);
+    localStorage.setItem(LS_KEY_LOW_VALUE, document.getElementById("lowValueMode").value);
+  } catch (err) { /* ignore */ }
+}
+
+// 更新ダイジェスト（前回取得分／24H／週間）の開閉状態は、投稿データの
+// 再読込とは無関係な純粋なUI状態なので、restoreFilterStateには混ぜず
+// 独立させてスクリプト初期化時に一度だけ適用する。
+function restoreDigestState() {
+  try {
+    const open = localStorage.getItem(LS_KEY_DIGEST_OPEN);
+    if (open !== null) {
+      document.getElementById("digest").classList.toggle("collapsed", open === "false");
+      document.getElementById("digestCaret").textContent = open === "false" ? "▼ 開く" : "▲ 閉じる";
+    }
+    const tileRaw = localStorage.getItem(LS_KEY_DIGEST_TILE);
+    if (tileRaw) {
+      const parsed = JSON.parse(tileRaw);
+      for (const key of ["last_run", "24h", "7d"]) {
+        if (typeof parsed[key] === "boolean") digestTileOpen[key] = parsed[key];
+      }
+    }
+  } catch (err) { /* localStorage不可(プライベートモード等) — デフォルト値のまま続行 */ }
+  applyDigestTileState();
+}
+
+function saveDigestState() {
+  try {
+    const collapsed = document.getElementById("digest").classList.contains("collapsed");
+    localStorage.setItem(LS_KEY_DIGEST_OPEN, String(!collapsed));
+    localStorage.setItem(LS_KEY_DIGEST_TILE, JSON.stringify(digestTileOpen));
+  } catch (err) { /* ignore */ }
+}
+
+function applyDigestTileState() {
+  document.querySelectorAll("#digest .tile").forEach((tile) => {
+    const key = tile.dataset.tile;
+    const open = digestTileOpen[key];
+    tile.classList.toggle("open", open);
+    document.querySelector(`.drawer[data-drawer="${key}"]`).classList.toggle("show", open);
+  });
+}
+
+function fmtTimeHHMM(iso) {
+  const d = new Date(iso);
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+}
+
+// タイルの件数・未読数は`posts`配列から数えない。load()の投稿取得クエリは
+// PostgRESTの既定行数上限(実測1000行)に達しており、7日窓だけで実件数の
+// 約半分しかメモリに載っていないケースを確認済み。件数はsbCountで都度
+// 個別に問い合わせる。
+async function loadDigest() {
+  try {
+    const [runsData, summariesData] = await Promise.all([
+      sbFetch(`fetch_runs?select=*&order=finished_at.desc&limit=20`),
+      sbFetch(`digest_summaries?select=*`),
+    ]);
+    const runs = runsData || [];
+    const summaries = {};
+    for (const s of summariesData || []) summaries[s.period_type] = s;
+    const lastRun = runs[0] || null;
+
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    // Postgresが返すタイムスタンプ文字列は"+00:00"のようなオフセットを含む。
+    // encodeURIComponentせずクエリ文字列に埋め込むと"+"が(application/x-www-form-urlencoded
+    // の慣習で)スペースとして解釈され、PostgREST側で日時パースエラー(400)になる
+    // （実際にこれで前回/24H/週間の全タイルが巻き込まれて空になる事故が発生した）。
+    const enc = encodeURIComponent;
+    const filter24h = `or=(posted_at.gte.${enc(since24h)},and(posted_at.is.null,fetched_at.gte.${enc(since24h)}))`;
+    const filter7d = `or=(posted_at.gte.${enc(since7d)},and(posted_at.is.null,fetched_at.gte.${enc(since7d)}))`;
+
+    const keys = ["count24h", "unread24h", "count7d", "unread7d", "unreadLastRun"];
+    const promises = [
+      sbCount(`x_posts?select=id&${filter24h}`),
+      sbCount(`x_posts?select=id&${filter24h}&is_read=eq.false`),
+      sbCount(`x_posts?select=id&${filter7d}`),
+      sbCount(`x_posts?select=id&${filter7d}&is_read=eq.false`),
+      lastRun
+        ? sbCount(`x_posts?select=id&fetched_at=gte.${enc(lastRun.started_at)}&fetched_at=lte.${enc(lastRun.finished_at)}&is_read=eq.false`)
+        : Promise.resolve(0),
+    ];
+    // allSettledで個別に失敗を吸収する — 1つのクエリが失敗しても、他のタイルまで
+    // 巻き込んで空表示になることがないようにする（今回の事故の再発防止）。
+    const settled = await Promise.allSettled(promises);
+    const counts = {};
+    keys.forEach((k, i) => {
+      const r = settled[i];
+      if (r.status === "rejected") console.error(`digest count failed (${k})`, r.reason);
+      counts[k] = r.status === "fulfilled" ? r.value : 0;
+    });
+
+    digestData = { runs, summaries, lastRun, counts, since24h };
+    renderDigest();
+  } catch (err) {
+    console.error("digest load failed", err);
+  }
+}
+
+function renderDigest() {
+  if (!digestData) return;
+  const { runs, summaries, lastRun, counts } = digestData;
+
+  const tileLast = document.querySelector('.tile[data-tile="last_run"]');
+  if (lastRun) {
+    tileLast.querySelector(".t-count").innerHTML = `${lastRun.new_post_count}<small>件</small>`;
+    tileLast.querySelector(".t-unread").textContent = lastRun.new_post_count > 0 ? `未読${counts.unreadLastRun}` : "";
+  } else {
+    tileLast.querySelector(".t-count").textContent = "–";
+    tileLast.querySelector(".t-unread").textContent = "";
+  }
+
+  const tile24h = document.querySelector('.tile[data-tile="24h"]');
+  tile24h.querySelector(".t-count").innerHTML = `${counts.count24h}<small>件</small>`;
+  tile24h.querySelector(".t-unread").textContent = `未読${counts.unread24h}`;
+
+  const tile7d = document.querySelector('.tile[data-tile="7d"]');
+  tile7d.querySelector(".t-count").innerHTML = `${counts.count7d}<small>件</small>`;
+  tile7d.querySelector(".t-unread").textContent = `未読${counts.unread7d}`;
+
+  renderLastRunDrawer(lastRun, summaries.last_run, counts.unreadLastRun);
+  render24hDrawer(runs, summaries["24h"]);
+  render7dDrawer(summaries["7d"]);
+  if (typeof onDigestRendered === "function") onDigestRendered(); // beta: 取得遅れの帯
+}
+
+function renderLastRunDrawer(lastRun, summaryRow, unreadCount) {
+  const el = document.querySelector('.drawer[data-drawer="last_run"]');
+  if (!lastRun) {
+    el.innerHTML = `<p class="drawer-empty">まだ取得実行の記録がありません。</p>`;
+    return;
+  }
+  const runLine = `<div class="run-row"><span class="run-time">${fmtTimeHHMM(lastRun.finished_at)}</span>${lastRun.source === "scheduled" ? "自動実行（定期）" : "手動実行"} <span class="run-count">${lastRun.new_post_count}件取得</span></div>`;
+
+  if (lastRun.new_post_count === 0) {
+    el.innerHTML = `
+      <div class="drawer-section"><p class="drawer-eyebrow">実行ログ</p><div class="drawer-runs">${runLine}</div></div>
+      <p class="drawer-empty">今回は新着投稿がありませんでした。</p>
+    `;
+    return;
+  }
+
+  const body = summaryRow?.body;
+  if (!body) {
+    el.innerHTML = `
+      <div class="drawer-section"><p class="drawer-eyebrow">実行ログ</p><div class="drawer-runs">${runLine}</div></div>
+      <p class="drawer-empty">ダイジェストを生成中です…</p>
+    `;
+    return;
+  }
+
+  const highlightsHtml = (body.highlights || []).slice(0, 5).map((h) => `
+    <div class="highlight-item"><span class="hi-bullet">・</span><span class="hi-who">${escapeHtml(h.author_handle || "")}</span>${escapeHtml(h.text || "")}</div>
+  `).join("");
+  const tagsHtml = (body.new_terms || []).map((t) => `<span class="tag-chip"><span class="tag-new">NEW</span>${escapeHtml(t)}</span>`).join("");
+
+  el.innerHTML = `
+    <div class="drawer-section"><p class="drawer-eyebrow">実行ログ</p><div class="drawer-runs">${runLine}</div></div>
+    <div class="drawer-section">
+      <p class="drawer-eyebrow">新着ハイライト（この回だけ）</p>
+      <div class="highlight-list">${highlightsHtml || '<p class="drawer-empty">なし</p>'}</div>
+    </div>
+    ${tagsHtml ? `<div class="drawer-section"><p class="drawer-eyebrow">初出ワード</p><div class="tag-row">${tagsHtml}</div></div>` : ""}
+  `;
+}
+
+function render24hDrawer(runs, summaryRow) {
+  const el = document.querySelector('.drawer[data-drawer="24h"]');
+  const since = digestData.since24h;
+  const runsIn24h = (runs || []).filter((r) => r.finished_at >= since).slice(0, 8);
+  const runsHtml = runsIn24h.map((r) => `
+    <div class="run-row"><span class="run-time">${fmtTimeHHMM(r.finished_at)}</span>${r.source === "scheduled" ? "自動実行（定期）" : "手動実行"} <span class="run-count">${r.new_post_count}件取得</span></div>
+  `).join("") || `<p class="drawer-empty">実行記録がありません。</p>`;
+
+  const body = summaryRow?.body;
+  let contentHtml;
+  if (!body) {
+    contentHtml = `<p class="drawer-empty">ダイジェストを生成中です…</p>`;
+  } else if (body.empty) {
+    contentHtml = `<p class="drawer-empty">直近24時間の投稿がありませんでした。</p>`;
+  } else {
+    contentHtml = `
+      <div class="drawer-section"><p class="drawer-eyebrow">今日の傾向</p><p class="drawer-text">${escapeHtml(body.summary || "")}</p></div>
+      <div class="drawer-section"><p class="drawer-eyebrow">深掘りアドバイス</p><div class="advice-box"><span class="advice-mark">💡</span><p>${escapeHtml(body.advice || "")}</p></div></div>
+    `;
+  }
+
+  el.innerHTML = `
+    <div class="drawer-section"><p class="drawer-eyebrow">実行ログ（直近24時間）</p><div class="drawer-runs">${runsHtml}</div></div>
+    ${contentHtml}
+    ${summaryRow ? `<p class="drawer-generated">生成: ${fmtDate(summaryRow.generated_at)}</p>` : ""}
+  `;
+}
+
+function render7dDrawer(summaryRow) {
+  const el = document.querySelector('.drawer[data-drawer="7d"]');
+  const body = summaryRow?.body;
+  if (!body) {
+    el.innerHTML = `<p class="drawer-empty">ダイジェストを生成中です…</p>`;
+    return;
+  }
+  const daily = body.daily || [];
+  const maxTotal = Math.max(1, ...daily.map((d) => d.total));
+  const todayStr = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Tokyo" });
+
+  const barsHtml = daily.map((d) => {
+    const readPct = d.total > 0 ? ((d.total - d.unread) / d.total) * 100 : 0;
+    const unreadPct = d.total > 0 ? (d.unread / d.total) * 100 : 0;
+    const heightPx = Math.round((d.total / maxTotal) * 96);
+    return `
+      <div class="bar-col">
+        <div class="bar-total">${d.total}</div>
+        <div class="bar-stack" style="height:${Math.max(heightPx, d.total > 0 ? 4 : 0)}px">
+          <div class="seg-read" style="height:${readPct}%"></div>
+          <div class="seg-unread" style="height:${unreadPct}%"></div>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const axisHtml = daily.map((d) => {
+    const [, m, dd] = d.date.split("-");
+    const isToday = d.date === todayStr;
+    return `<div class="axis-label${isToday ? " today" : ""}">${parseInt(m, 10)}/${parseInt(dd, 10)}<span class="dow">${escapeHtml(d.weekday)}</span></div>`;
+  }).join("");
+
+  const bodyContent = body.empty ? `<p class="drawer-empty">直近7日間の投稿がありませんでした。</p>` : `
+    <div class="drawer-section"><p class="drawer-eyebrow">今週の傾向</p><p class="drawer-text">${escapeHtml(body.trend || "")}</p></div>
+    <div class="drawer-section"><p class="drawer-eyebrow">シニアライフアドバイザーより</p><div class="advice-box"><span class="advice-mark">🌱</span><p>${escapeHtml(body.advice || "")}</p></div></div>
+  `;
+
+  el.innerHTML = `
+    <div class="drawer-section">
+      <p class="drawer-eyebrow">週間の取得・既読状況</p>
+      <div class="chart-wrap">
+        <div class="chart">${barsHtml}</div>
+        <div class="chart-axis">${axisHtml}</div>
+        <div class="chart-legend">
+          <span><i class="legend-swatch" style="background:#3d84c9"></i>既読</span>
+          <span><i class="legend-swatch" style="background:#7fa3c4"></i>未読</span>
+        </div>
+      </div>
+    </div>
+    ${bodyContent}
+    <p class="drawer-generated">生成: ${fmtDate(summaryRow.generated_at)}</p>
+  `;
+}
+
+// --- 低情報投稿(意味のない極短文・本文なし)の表示フィルタ -------------------
+// DB・要約側は変更せず、表示側だけで判定する(物理削除はしない)。理由コードは将来DBに
+// 列 low_value_reason(案B)を足すときと同じ文字列にしてあり、列があればそれを優先する。
+// 保守的なルール(誤って隠すと情報が静かに消え、誤って残しても読み上げが約2秒延びるだけ):
+//   empty        本文が空で画像もない
+//   short_ref    URL除去後14字以内・画像なし・要約=原文コピーで、参照語(こちら/詳細/リンク等)だけ
+//   short_repeat 同上で、同一投稿者の同一本文が3件以上
+//   short_tiny   同上で、4字以内かつ英数字を含まない(「草」「おおー」など)
+// 画像付き・スター付きは常に残す。判定でエラーが出た投稿も残す(fail-open)。
+// LV-BEGIN
+const LV_VERSION = 1;
+const LV_SHORT_MAX = 14;
+const LV_AUTO_DISABLE_RATE = 0.2;    // 非表示率がこれを超えたら取得側の異常とみなしフィルタを自動停止
+const LV_AUTO_DISABLE_MIN_POSTS = 50;
+const LV_REF_ONLY = /^(こちら|詳細|詳しく|参照|参考|元|リンク|続き|記事|note|ノート|あとで|後で|読む|読み|チェック|前回|話|まで|から|ぜひ|是非|活用|よろしく|ご|お|は|を|も|で|に|が|の|です|ます|ください|下さい)+$/i;
+const LV_LABELS = { empty: "本文なし", short_ref: "参照のみ", short_repeat: "同文の繰り返し", short_tiny: "極短文" };
+
+function lvNormalize(s) { return String(s ?? "").normalize("NFKC").replace(/\s+/g, " ").trim(); }
+function lvText(p) { return lvNormalize(String(p.content ?? "").replace(/https?:\/\/\S+/g, "")); }
+function lvHasImages(p) { return Array.isArray(p.image_urls) && p.image_urls.length > 0; }
+function lvIsShortEcho(p) {
+  const len = [...lvText(p)].length;
+  return len >= 1 && len <= LV_SHORT_MAX && lvNormalize(p.summary) === lvNormalize(p.content);
+}
+function lvRepeatKey(p) { return lvNormalize(p.author_handle) + "\u0000" + lvText(p); }
+
+function classifyLowValue(p, repeatCounts) {
+  if (p.low_value_reason) return { rule: p.low_value_reason, version: LV_VERSION };
+  if (p.is_starred || lvHasImages(p)) return null;
+  if (String(p.content ?? "").trim() === "") return { rule: "empty", version: LV_VERSION };
+  if (!lvIsShortEcho(p)) return null;
+  const text = lvText(p);
+  const compact = text.replace(/[\p{P}\p{S}\s]/gu, "");
+  if (compact && LV_REF_ONLY.test(compact)) return { rule: "short_ref", version: LV_VERSION };
+  if ((repeatCounts.get(lvRepeatKey(p)) || 0) >= 3) return { rule: "short_repeat", version: LV_VERSION };
+  if ([...text].length <= 4 && !/[A-Za-z0-9]/.test(text)) return { rule: "short_tiny", version: LV_VERSION };
+  return null;
+}
+
+// 生データ全体を判定し、{info: post_url→rule, stats} を返す。
+function computeLowValue(rawPosts) {
+  const info = new Map();
+  const stats = { total: rawPosts.length, hidden: 0, byRule: {}, autoDisabled: false, rate: 0 };
+  const counts = new Map();
+  for (const p of rawPosts) {
+    try {
+      if (!p.is_starred && !lvHasImages(p) && lvIsShortEcho(p)) {
+        const k = lvRepeatKey(p);
+        counts.set(k, (counts.get(k) || 0) + 1);
+      }
+    } catch (err) { /* fail-open */ }
+  }
+  for (const p of rawPosts) {
+    try {
+      const r = classifyLowValue(p, counts);
+      if (r) {
+        info.set(p.post_url, r.rule);
+        stats.byRule[r.rule] = (stats.byRule[r.rule] || 0) + 1;
+        stats.hidden++;
+      }
+    } catch (err) { /* fail-open: 判定できない投稿は残す */ }
+  }
+  stats.rate = stats.total ? stats.hidden / stats.total : 0;
+  if (stats.total >= LV_AUTO_DISABLE_MIN_POSTS && stats.rate > LV_AUTO_DISABLE_RATE) {
+    stats.autoDisabled = true;
+    info.clear();
+  }
+  return { info, stats };
+}
+// LV-END
+
+const LV_DISABLED = (() => { try { return new URLSearchParams(location.search).get("lv") === "off"; } catch { return false; } })();
+let lowValueInfo = new Map(); // post_url -> rule(判定は読み込み時と切替時のみ。星を外しても再読込まで再判定しない)
+let lowValueStats = { total: 0, hidden: 0, byRule: {}, autoDisabled: false, rate: 0 };
+
+function lvMode() {
+  const el = document.getElementById("lowValueMode");
+  return el ? el.value : "hide";
+}
+
+function recomputeVisiblePosts() {
+  let result = { info: new Map(), stats: { total: allPosts.length, hidden: 0, byRule: {}, autoDisabled: false, rate: 0 } };
+  if (!LV_DISABLED) {
+    try { result = computeLowValue(allPosts); } catch (err) { console.warn("low-value filter failed; showing everything", err); }
+  }
+  lowValueInfo = result.info;
+  lowValueStats = result.stats;
+  const mode = lvMode();
+  if (mode === "only") posts = allPosts.filter((p) => lowValueInfo.has(p.post_url));
+  else if (mode === "hide" && lowValueInfo.size > 0) posts = allPosts.filter((p) => !lowValueInfo.has(p.post_url));
+  else posts = allPosts;
+  updateLowValueNote();
+}
+
+function updateLowValueNote() {
+  const el = document.getElementById("lowValueNote");
+  if (!el) return;
+  const s = lowValueStats;
+  const mode = lvMode();
+  const detail = Object.entries(s.byRule).map(([r, n]) => `${LV_LABELS[r] || r}${n}`).join("・");
+  el.className = "";
+  if (LV_DISABLED) {
+    el.className = "warn";
+    el.textContent = "低情報フィルタ: 停止中（?lv=off）";
+    el.hidden = false;
+  } else if (s.autoDisabled) {
+    el.className = "warn";
+    el.textContent = `低情報が${Math.round(s.rate * 100)}%（${s.hidden}件）と多すぎるため、フィルタを自動停止しました（取得側の異常の可能性）`;
+    el.hidden = false;
+  } else if (s.hidden === 0) {
+    el.hidden = true;
+  } else if (mode === "hide") {
+    el.textContent = `低情報${s.hidden}件を非表示（${detail}）・タップで確認　※上部ダイジェストの件数には含まれます`;
+    el.hidden = false;
+  } else if (mode === "only") {
+    el.textContent = `低情報のみ表示中（${s.hidden}件：${detail}）・タップで隠す`;
+    el.hidden = false;
+  } else {
+    el.textContent = `低情報${s.hidden}件を含めて表示中（理由バッジ付き）・タップで隠す`;
+    el.hidden = false;
+  }
+}
+
+function applyLowValueMode() {
+  recomputeVisiblePosts();
+  document.getElementById("status").textContent = `${posts.length}件`;
+  saveFilterState();
+  render();
+}
+
+async function load() {
+  // 再読込でpostsが総入れ替えされた後に古いナビゲーション履歴が残らないように。
+  navHistory = [];
+  navHistoryIndex = -1;
+  historyBrowsing = false;
+  historyBrowsingSavedUnread = null;
+  restoreFilterState();
+  document.getElementById("status").textContent = "読み込み中...";
+  const oneMonthAgo = new Date(Date.now() - 30*24*60*60*1000).toISOString();
+  const filter = `or=(posted_at.gte.${oneMonthAgo},posted_at.is.null)`;
+  try {
+    const data = await sbFetch(`x_posts?select=*&${filter}&order=fetched_at.desc`);
+    allPosts = data || [];
+    recomputeVisiblePosts();
+    document.getElementById("status").textContent = `${posts.length}件`;
+    render();
+    loadDigest(); // 独自にtry/catchを持つ非同期処理。失敗してもメイン一覧の表示は巻き込まない。
+    if (typeof onPostsLoaded === "function") onPostsLoaded(); // beta: 今日タブの再計算
+  } catch (err) {
+    document.getElementById("status").textContent = "読み込みエラー: " + err.message;
+  }
+}
+
+// render()は毎回リスト全体を作り直すため、新品の<img>は読み込み直しが終わるまで表示されず、
+// カード移動のたびに画面が一瞬ちらつく(Lサイズではページ高さも縮んで別カードの画像が映る)。
+// 作り直す直前に読み込み済みの<img>を退避し、同じ画像(data-kとsrcが一致)なら新品と入れ替えて
+// 使い回す。処理の流れ(render()が唯一の描画元)は変えないので、表示と状態がズレる心配はない。
+// ?fullrender=1 で従来どおり全て作り直す(iPhone実機で問題が出た場合の切り分け用)。
+const FULL_RENDER = (() => { try { return new URLSearchParams(location.search).get("fullrender") === "1"; } catch { return false; } })();
+let imgReuse = null; // render()中だけ有効: data-k -> 読み込み済みの<img>
+
+function collectLoadedImages(listEl) {
+  const map = new Map();
+  if (FULL_RENDER) return map;
+  for (const img of listEl.querySelectorAll("img.detail-img[data-k]")) {
+    if (img.complete && img.naturalWidth > 0) map.set(img.dataset.k, img); // 読み込み失敗・途中のものは再利用しない
+  }
+  return map;
+}
+
+function reuseLoadedImages(detail) {
+  if (!imgReuse || imgReuse.size === 0) return;
+  for (const fresh of detail.querySelectorAll("img.detail-img[data-k]")) {
+    const old = imgReuse.get(fresh.dataset.k);
+    if (old && old.getAttribute("src") === fresh.getAttribute("src")) fresh.replaceWith(old);
+  }
+}
+
+// 低情報を表示している間(含める/低情報のみ)だけ、なぜ低情報と判定されたかをバッジで示す。
+function lowValueBadgeHtml(p) {
+  const rule = lowValueInfo.get(p.post_url);
+  if (!rule || lvMode() === "hide") return "";
+  return ` <span class="lv-badge">${escapeHtml(LV_LABELS[rule] || rule)}</span>`;
+}
+
+// ---- beta: カードの点数バッジ・種類+理由行・暫定チップ(一覧/聴く/流す/保留で共通) ----
+const KIND_LABELS = { duplicate: "重複", announce: "告知宣伝", ref_only: "参照のみ", primary: "一次情報", news: "新発表", numbers: "数値・比較", howto: "手順・実践", explain: "解説", opinion: "意見・感想" };
+const PROVISIONAL_MODEL_RE = /2\.5/; // 暫定=2.5系モデルでの採点(本番モデルへ切り替わるまで)
+function isProvisional(p) { return p.score != null && p.score_state === "scored" && PROVISIONAL_MODEL_RE.test(String(p.scored_model || "")); }
+function scoreNum(p) {
+  if (p.score === null || p.score === undefined || p.score === "") return null;
+  const n = Math.round(Number(p.score));
+  return Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : null;
+}
+function scoreBadgeHtml(p) {
+  const n = scoreNum(p);
+  return n === null ? `<span class="sbadge s0" title="未採点">–</span>` : `<span class="sbadge s${n}" title="点数${n}">${n}</span>`;
+}
+function kindLineHtml(p) {
+  const kind = KIND_LABELS[p.score_kind] || "";
+  const reason = String(p.score_reason || "").trim();
+  const prov = isProvisional(p);
+  if (!kind && !reason && !prov) return "";
+  return `<div class="kindline">${kind ? `<b>${escapeHtml(kind)}</b>` : ""}${kind && reason ? "・" : ""}${escapeHtml(reason)}${prov ? `<span class="chip-prov">暫定</span>` : ""}</div>`;
+}
+
+function buildRow(p) {
+  const row = document.createElement("div");
+  row.className = "row" + (p.is_read ? " read" : "");
+  row.dataset.url = p.post_url;
+  const hasGist = !!p.gist;
+  const gistText = p.gist || (p.content || "").replace(/\s+/g, " ").slice(0, 60);
+  row.innerHTML = `
+    <div class="row-main">
+      <span class="date">${fmtDate(p.posted_at || p.fetched_at)}</span>
+      <span class="star ${p.is_starred ? "on" : "off"}">★</span>
+      <span class="handle">${escapeHtml(p.author_handle)}</span>${lowValueBadgeHtml(p)}
+    </div>
+    <div class="title-block"><div class="title-line">${scoreBadgeHtml(p)}<a class="gist ${hasGist ? "" : "nogist"}" href="${escapeHtml(p.post_url)}" target="_blank" rel="noopener">${escapeHtml(gistText)}</a></div>${kindLineHtml(p)}</div>
+  `;
+  const detail = document.createElement("div");
+  detail.className = "detail" + (collapsedUrls.has(p.post_url) ? " hidden" : "");
+  const images = Array.isArray(p.image_urls) ? p.image_urls : [];
+  const imagesHtml = images.length > 0 ? `
+    <div class="detail-images${images.length > 1 ? " multi" : ""}">
+      ${images.map((u, idx) => `<a class="detail-img-link" href="${escapeHtml(xImageVariant(u, "orig"))}" target="_blank" rel="noopener"><img class="detail-img" data-k="${escapeHtml(p.post_url)}#${idx}" src="${escapeHtml(xImageVariant(u, "small"))}" loading="lazy" alt=""></a>`).join("")}
+    </div>
+  ` : "";
+  detail.innerHTML = `
+    <div class="tldr">${p.summary ? escapeHtml(p.summary) : "まだ要約がありません。チャットで「この投稿要約して」と頼んでください。"}</div>
+    ${imagesHtml}
+  `;
+  reuseLoadedImages(detail);
+  row.addEventListener("click", (e) => {
+    if (e.target.classList.contains("star")) return;
+    if (autoMoveDirection !== 0) stopAutoMove();
+    const isHidden = detail.classList.toggle("hidden");
+    if (isHidden) collapsedUrls.add(p.post_url);
+    else collapsedUrls.delete(p.post_url);
+    activeUrl = p.post_url;
+    highlightActiveRow(false);
+  });
+  row.querySelector(".star").addEventListener("click", async (e) => {
+    e.stopPropagation();
+    const newVal = !p.is_starred;
+    try {
+      await sbFetch(`x_posts?post_url=eq.${encodeURIComponent(p.post_url)}`, {
+        method: "PATCH",
+        headers: { Prefer: "return=minimal" },
+        body: JSON.stringify({ is_starred: newVal }),
+      });
+      p.is_starred = newVal;
+      render();
+    } catch (err) {
+      console.error("star update failed", err);
+    }
+  });
+  row.querySelector(".gist").addEventListener("click", (e) => {
+    e.stopPropagation();
+    markAsRead([p.post_url]);
+  });
+  return { row, detail };
+}
+
+function render() {
+  const starOnly = document.getElementById("starOnly").checked;
+  const unreadOnly = document.getElementById("unreadOnly").checked;
+  const grouped = document.getElementById("groupByAuthor").checked;
+  const groupSort = document.getElementById("groupSort").value;
+  const postSort = document.getElementById("postSort").value;
+  const q = document.getElementById("search").value.trim().toLowerCase();
+  const listEl = document.getElementById("list");
+  imgReuse = collectLoadedImages(listEl); // 全消去の前に、読み込み済みの画像を退避
+  listEl.innerHTML = "";
+  flatOrder = [];
+  authorBoundaries = [];
+
+  const unreadCount = posts.filter(p => !p.is_read).length;
+  document.getElementById("pageTitle").textContent = `Xリスト ダイジェスト（未読 ${unreadCount}件）`;
+  document.getElementById("markAllRead").textContent = (posts.length > 0 && unreadCount === 0) ? "すべて未読に戻す" : "すべて既読";
+
+  const scopedOld = posts.filter(olderThan24h);
+  const scopedOldAllRead = scopedOld.length > 0 && scopedOld.every((p) => p.is_read);
+  document.getElementById("mark24hRead").textContent = scopedOldAllRead
+    ? "24H以前を未読に戻す"
+    : `24H以前全既読(${scopedOld.filter((p) => !p.is_read).length}件)`;
+
+  document.getElementById("groupSort").disabled = !grouped;
+
+  const baseFiltered = posts.filter(p => {
+    if (starOnly && !p.is_starred) return false;
+    if (q && !((p.content||"").toLowerCase().includes(q) || (p.author_handle||"").toLowerCase().includes(q) || (p.author_name||"").toLowerCase().includes(q))) return false;
+    return true;
+  });
+
+  let filtered;
+  if (unreadOnly && grouped) {
+    // Keep a whole author group on screen (including cards already marked read)
+    // until every post in it is read. Otherwise a card vanishes the instant it's
+    // read mid-group, shifting the rest of the group up and making it impossible
+    // to scroll back to something you just passed.
+    const unreadAuthors = new Set(baseFiltered.filter(p => !p.is_read).map(p => p.author_handle || "(unknown)"));
+    filtered = baseFiltered.filter(p => unreadAuthors.has(p.author_handle || "(unknown)"));
+  } else if (unreadOnly) {
+    filtered = baseFiltered.filter(p => !p.is_read);
+  } else {
+    filtered = baseFiltered;
+  }
+
+  // 投稿の並び順は常にposted_at基準(取得順のfetched_atではない)。
+  // グループ化時もグループ内の並びに同じ基準を使う。
+  filtered = filtered.slice().sort((a, b) => {
+    const ta = a.posted_at ? new Date(a.posted_at).getTime() : -Infinity;
+    const tb = b.posted_at ? new Date(b.posted_at).getTime() : -Infinity;
+    return postSort === "posted_asc" ? ta - tb : tb - ta;
+  });
+
+  if (!grouped) {
+    for (const p of filtered) {
+      const { row, detail } = buildRow(p);
+      listEl.appendChild(row);
+      listEl.appendChild(detail);
+      if (flatOrder.length === 0 || flatOrder[flatOrder.length-1].author_handle !== p.author_handle) {
+        authorBoundaries.push(flatOrder.length);
+      }
+      flatOrder.push(p);
+    }
+    imgReuse = null;
+    updateHeaderHeightVar();
+    highlightActiveRow(false);
+    return;
+  }
+
+  const groups = new Map();
+  for (const p of filtered) {
+    const key = p.author_handle || "(unknown)";
+    if (!groups.has(key)) groups.set(key, { author_handle: p.author_handle, author_name: p.author_name, posts: [] });
+    groups.get(key).posts.push(p);
+  }
+
+  let groupList = Array.from(groups.values());
+  groupList.sort((a, b) => {
+    if (groupSort === "count_desc") return b.posts.length - a.posts.length;
+    if (groupSort === "count_asc") return a.posts.length - b.posts.length;
+    if (groupSort === "name_asc") return (a.author_handle||"").localeCompare(b.author_handle||"");
+    if (groupSort === "name_desc") return (b.author_handle||"").localeCompare(a.author_handle||"");
+    return 0;
+  });
+
+  for (const g of groupList) {
+    const groupEl = document.createElement("div");
+    groupEl.className = "group";
+
+    const allRead = g.posts.every((p) => p.is_read);
+    const header = document.createElement("div");
+    header.className = "group-header";
+    header.innerHTML = `<span class="gh-name">${escapeHtml(g.author_handle)}</span> <span>${escapeHtml(g.author_name||"")}</span> <span class="gh-count">${g.posts.length}件</span> <button class="gh-read-btn">${allRead ? "未読に戻す" : "既読にする"}</button>`;
+    header.querySelector(".gh-read-btn").addEventListener("click", () => {
+      setReadState(g.posts.map((p) => p.post_url), !allRead);
+    });
+    groupEl.appendChild(header);
+    authorBoundaries.push(flatOrder.length);
+    for (const p of g.posts) {
+      const { row, detail } = buildRow(p);
+      groupEl.appendChild(row);
+      groupEl.appendChild(detail);
+      flatOrder.push(p);
+    }
+    listEl.appendChild(groupEl);
+  }
+
+  imgReuse = null;
+  updateHeaderHeightVar();
+  highlightActiveRow(false);
+}
+
+document.getElementById("starOnly").addEventListener("change", render);
+document.getElementById("unreadOnly").addEventListener("change", () => {
+  // ユーザーが自分でチェックボックスを操作した場合、履歴閲覧による自動復元が
+  // 後から横から割り込んでその意思を上書きしないようにする。
+  historyBrowsing = false;
+  historyBrowsingSavedUnread = null;
+});
+document.getElementById("unreadOnly").addEventListener("change", render);
+document.getElementById("unreadOnly").addEventListener("change", saveFilterState);
+document.getElementById("showSummary").addEventListener("change", () => {
+  document.body.classList.toggle("summary-hidden", !document.getElementById("showSummary").checked);
+  saveFilterState();
+});
+document.getElementById("groupByAuthor").addEventListener("change", render);
+document.getElementById("groupSort").addEventListener("change", render);
+document.getElementById("groupSort").addEventListener("change", saveFilterState);
+document.getElementById("postSort").addEventListener("change", render);
+document.getElementById("postSort").addEventListener("change", saveFilterState);
+document.getElementById("thumbSize").addEventListener("change", () => {
+  document.body.dataset.thumbSize = document.getElementById("thumbSize").value;
+  saveFilterState();
+});
+document.getElementById("lowValueMode").addEventListener("change", applyLowValueMode);
+document.getElementById("lowValueNote").addEventListener("click", () => {
+  if (LV_DISABLED || lowValueStats.autoDisabled) return;
+  const sel = document.getElementById("lowValueMode");
+  sel.value = sel.value === "hide" ? "only" : "hide";
+  applyLowValueMode();
+});
+document.getElementById("search").addEventListener("input", render);
+document.getElementById("reload").addEventListener("click", load);
+document.getElementById("markAllRead").addEventListener("click", () => {
+  const allRead = posts.length > 0 && posts.every((p) => p.is_read);
+  // 既読にする場合は、非表示の低情報分も既読にする(ダイジェストのDB集計に未読を残さないため)。
+  // 未読に戻すのと、隠す以外のモードでは、表示中のものだけを対象にする。
+  const targets = (allRead || lvMode() !== "hide") ? posts : allPosts;
+  setReadState(targets.map((p) => p.post_url), !allRead);
+});
+document.getElementById("mark24hRead").addEventListener("click", () => {
+  const scoped = posts.filter(olderThan24h);
+  const allRead = scoped.length > 0 && scoped.every((p) => p.is_read);
+  const targets = (allRead || lvMode() !== "hide") ? scoped : allPosts.filter(olderThan24h);
+  setReadState(targets.map((p) => p.post_url), !allRead);
+});
+
+let allExpanded = true; // matches the default (empty collapsedUrls = all expanded)
+document.getElementById("toggleAll").addEventListener("click", () => {
+  allExpanded = !allExpanded;
+  if (allExpanded) {
+    collapsedUrls.clear();
+  } else {
+    for (const p of posts) collapsedUrls.add(p.post_url);
+  }
+  document.getElementById("toggleAll").textContent = allExpanded ? "すべて閉じる" : "すべて開く";
+  render();
+});
+
+document.getElementById("accordionToggle").addEventListener("click", () => {
+  const panel = document.getElementById("controlsPanel");
+  const btn = document.getElementById("accordionToggle");
+  const collapsed = panel.classList.toggle("collapsed");
+  btn.setAttribute("aria-expanded", String(!collapsed));
+  btn.textContent = collapsed ? "▼ フィルター" : "▲ 閉じる";
+  updateHeaderHeightVar();
+});
+
+document.getElementById("digestTitlebar").addEventListener("click", () => {
+  const digestEl = document.getElementById("digest");
+  const collapsed = digestEl.classList.toggle("collapsed");
+  document.getElementById("digestCaret").textContent = collapsed ? "▼ 開く" : "▲ 閉じる";
+  saveDigestState();
+  updateHeaderHeightVar();
+});
+
+document.querySelectorAll("#digest .tile").forEach((tile) => {
+  tile.addEventListener("click", () => {
+    const key = tile.dataset.tile;
+    const nowOpen = !tile.classList.contains("open");
+    tile.classList.toggle("open", nowOpen);
+    document.querySelector(`.drawer[data-drawer="${key}"]`).classList.toggle("show", nowOpen);
+    digestTileOpen[key] = nowOpen;
+    saveDigestState();
+    updateHeaderHeightVar();
+  });
+});
+
+window.addEventListener("resize", updateHeaderHeightVar);
+
+document.getElementById("btnPlayPause").addEventListener("click", () => {
+  if (isPlaying) {
+    isPlaying = false;
+    window.speechSynthesis.cancel();
+  } else {
+    if (autoMoveDirection !== 0) stopAutoMove();
+    resyncToVisible();
+    highlightActiveRow(true);
+    isPlaying = true;
+    speakCurrent();
+  }
+  updatePlayButton();
+});
+
+document.getElementById("btnReadMode").addEventListener("click", () => {
+  readMode = readMode === 0 ? 1 : 0;
+  const btn = document.getElementById("btnReadMode");
+  btn.textContent = readMode === 0 ? "▶" : "▶▶";
+  btn.classList.toggle("title-only", readMode === 1);
+});
+
+setupCardLongPress(document.getElementById("btnCardPrev"), -1);
+setupCardLongPress(document.getElementById("btnCardNext"), 1);
+document.getElementById("btnAuthorPrev").addEventListener("click", () => moveAuthor(-1));
+document.getElementById("btnAuthorNext").addEventListener("click", () => moveAuthor(1));
+
+document.addEventListener("keydown", (e) => {
+  if (document.body.dataset.view && document.body.dataset.view !== "list") return; // beta: 一覧モード以外ではカード送りのキーを無効化
+  const tag = (document.activeElement && document.activeElement.tagName) || "";
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (e.key === "ArrowDown" || (e.key === " " && !e.shiftKey)) {
+    e.preventDefault();
+    if (autoMoveDirection !== 0) stopAutoMove();
+    moveCard(1);
+  } else if (e.key === "ArrowUp" || (e.key === " " && e.shiftKey)) {
+    e.preventDefault();
+    if (autoMoveDirection !== 0) stopAutoMove();
+    moveCard(-1);
+  }
+});
+
+buildSpeedHoverGroup();
+const speedBtn = document.getElementById("btnSpeed");
+const speedHoverGroup = document.getElementById("speedHoverGroup");
+let speedPressTimer = null;
+let speedLongPressed = false;
+
+speedBtn.addEventListener("pointerdown", () => {
+  speedLongPressed = false;
+  speedPressTimer = setTimeout(() => {
+    speedLongPressed = true;
+    speedHoverGroup.classList.add("visible");
+  }, 450);
+});
+speedBtn.addEventListener("pointerup", (e) => {
+  clearTimeout(speedPressTimer);
+  if (e.target.closest(".speed-hover-btn")) return;
+  if (!speedLongPressed) {
+    let idx = speedOptions.indexOf(currentSpeedRate);
+    if (idx === -1) idx = 0;
+    idx = (idx + 1) % speedOptions.length;
+    setSpeed(speedOptions[idx]);
+  }
+});
+speedBtn.addEventListener("pointerleave", () => clearTimeout(speedPressTimer));
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#btnSpeed")) speedHoverGroup.classList.remove("visible");
+});
+
+// 「その他」ボタン: 読み上げ速度・投稿者送りをここに格納し、常時表示のFAB列を短くする
+const moreBtn = document.getElementById("btnMore");
+const moreMenu = document.getElementById("moreMenu");
+moreBtn.addEventListener("click", (e) => {
+  if (e.target.closest(".more-menu")) return; // メニュー内のボタン操作は各ボタン自身のリスナーに任せる
+  moreMenu.classList.toggle("visible");
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#btnMore")) moreMenu.classList.remove("visible");
+});
+
+restoreDigestState(); // 開閉状態はデータ再読込と無関係なUI初期化なので、load()の外で一度だけ適用
+load();
+</script>
+<script>
+// =====================================================================
+// beta: タブ・今日・聴く・流す・端末キュー(index_beta.html の追加部分)
+// 既存の一覧モード(上のスクリプト)には手を入れず、ここから呼び出す。
+// =====================================================================
+(function () {
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } };
+const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) { /* ignore */ } };
+const lsDel = (k) => { try { localStorage.removeItem(k); } catch (e) { /* ignore */ } };
+
+const K = {
+  speed: "xdash_listen_speed",       // 聴く速度(既定1.2)
+  voice: "xdash_voice_quality",      // high | standard
+  flowSec: "xdash_flow_sec",         // 流す: 1枚あたり秒
+  introDay: "xdash_intro_day",       // 今日の要点→…を再生済みの日(JST02:00区切りのキー)
+  session: "xdash_listen_session",   // 中断した聴くセッション
+  tab: "xdash_tab",
+  queue: "xdash_admin_queue",        // 端末キュー(管理操作)
+  token: "xdash_admin_token",        // 管理トークン(第2段のログインが保存する)
+  holdOff: "xdash_hold_open",
+  cache: "xdash_listen_cache",       // ▶押下時に確保した、その日の聴くカード(通信できなくても続きから再生できる)
+};
+const CPS = 6.5;                       // 読み上げ文字/秒(速度1.0)
+const LISTEN_THRESHOLD = 4;            // 「上限で流すに回った」とみなす点数
+const EXTRA_SEC = 600;                 // 「+10分」
+const UNDO_MS = 5000;                  // 「これは不要」の取り消し猶予
+const FLOW_MARK_MS = 2000;             // 流す: 2秒以上表示で既読
+const FETCH_LATE_HOURS = 18;           // 最終取得からこれ以上で「取得遅れ」
+const SPEEDS = [0.8, 1.0, 1.2, 1.5, 1.8, 2.0];
+const FLOW_SECS = [3, 4, 5, 6, 8];
+const PAUSE_MS = () => (Number.isFinite(window.XDASH_PAUSE_MS) ? window.XDASH_PAUSE_MS : 400);
+
+const esc = (s) => escapeHtml(String(s == null ? "" : s));
+
+// ---------------------------------------------------------------- 設定
+function listenSpeed() { const v = parseFloat(lsGet(K.speed, "1.2")); return Number.isFinite(v) && v >= 0.5 && v <= 3 ? v : 1.2; }
+function voiceQuality() { return lsGet(K.voice, "high") === "standard" ? "standard" : "high"; }
+function flowSec() { const v = parseFloat(lsGet(K.flowSec, "4")); return Number.isFinite(v) && v >= 2 && v <= 20 ? v : 4; }
+if (lsGet(K.speed, null) === null) lsSet(K.speed, "1.2"); // 既定速度を保存
+
+// ---------------------------------------------------------------- 日(JST 02:00 起点)
+const JST_MS = 9 * 3600e3;
+function dayKey(ms) { return new Date(ms + JST_MS - 2 * 3600e3).toISOString().slice(0, 10); }
+function dayStartMs(ms) { return Date.parse(dayKey(ms) + "T02:00:00+09:00"); }
+
+// ================================================================ 端末キュー(管理操作)
+// tier_set / label_submit は操作ID付きで localStorage に積み、トークンがあれば即送信。
+// 失敗・未ログインなら溜めて後で再送し、サーバーが受理(ok:true / duplicate:true)した後にだけ削除する。
+// ログイン画面は出さない(設定タブと細い帯のみ)。第2段は AdminQueue.setToken / call / flush を使う。
+const AdminQueue = (() => {
+  const listeners = new Set();
+  let flushing = null;
+  let needLogin = false;
+  let timer = null;
+  const AUTH_ERR = /unauth|token|login|expired|forbidden/i;
+
+  const load = () => { try { const a = JSON.parse(lsGet(K.queue, "[]")); return Array.isArray(a) ? a : []; } catch (e) { return []; } };
+  const save = (q) => { lsSet(K.queue, JSON.stringify(q)); notify(); };
+  const notify = () => { for (const f of listeners) { try { f(stats()); } catch (e) { /* ignore */ } } };
+  const newOpId = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : `op_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`;
+
+  function getToken() { return lsGet(K.token, "") || ""; }
+  function setToken(t) { if (t) lsSet(K.token, t); else lsDel(K.token); needLogin = false; notify(); if (t) flushSoon(); }
+  function stats() {
+    const q = load();
+    return { total: q.length, pending: q.filter((o) => !o.dead).length, dead: q.filter((o) => o.dead).length, hasToken: !!getToken(), needLogin };
+  }
+  function list() { return load(); }
+  function onChange(f) { listeners.add(f); return () => listeners.delete(f); }
+
+  function add(kind, payload, opId) {
+    const q = load();
+    const id = opId || newOpId();
+    const dup = q.find((o) => o.op_id === id);
+    if (dup) return dup; // 同じ操作IDは二重に積まない(冪等)
+    const op = { op_id: id, kind, payload: payload || {}, at: Date.now(), tries: 0 };
+    q.push(op);
+    save(q);
+    flushSoon();
+    return op;
+  }
+  function discard(opId) { save(load().filter((o) => o.op_id !== opId)); }
+  function clearDead() { save(load().filter((o) => !o.dead)); }
+
+  // admin-api を1回呼ぶ。応答に token があれば端末のトークンを置き換える。
+  async function call(action, body) {
+    const token = getToken();
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/admin-api`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, ...(token ? { "x-admin-token": token } : {}) },
+      body: JSON.stringify({ action, ...(body || {}) }),
+    });
+    let json = null;
+    try { json = await res.json(); } catch (e) { json = null; }
+    if (json && json.token) { lsSet(K.token, json.token); }
+    return { status: res.status, ok: !!(res.ok && json && json.ok), json: json || {} };
+  }
+
+  async function doFlush() {
+    let sent = 0;
+    const skipped = new Set();
+    if (!getToken()) { needLogin = load().length > 0; notify(); return { sent, remaining: load().length, reason: "no_token" }; }
+    for (;;) {
+      const q = load();
+      const op = q.find((o) => !o.dead && !skipped.has(o.op_id));
+      if (!op) break;
+      let r;
+      try {
+        r = await call(op.kind, { ...op.payload, op_id: op.op_id });
+      } catch (e) {
+        return { sent, remaining: load().length, reason: "network" };
+      }
+      if (r.ok) { // 受理(重複受理 duplicate:true も成功扱い)
+        save(load().filter((o) => o.op_id !== op.op_id));
+        sent++;
+        needLogin = false;
+        continue;
+      }
+      const err = String((r.json && r.json.error) || "");
+      if (r.status === 401 || r.status === 403 || AUTH_ERR.test(err)) { needLogin = true; notify(); return { sent, remaining: load().length, reason: "auth" }; }
+      if (r.status === 429 || r.status >= 500 || r.status === 0) return { sent, remaining: load().length, reason: "retry_later" };
+      // その他の4xx(操作そのものが不正など): 試行回数を数え、5回で保留(dead)にして先へ進む
+      const q2 = load();
+      const cur = q2.find((o) => o.op_id === op.op_id);
+      if (cur) { cur.tries = (cur.tries || 0) + 1; cur.last_error = err || String(r.status); if (cur.tries >= 5) cur.dead = true; save(q2); }
+      skipped.add(op.op_id);
+    }
+    return { sent, remaining: load().length };
+  }
+  function flush() {
+    if (flushing) return flushing;
+    flushing = doFlush().finally(() => { flushing = null; });
+    return flushing;
+  }
+  function flushSoon() { clearTimeout(timer); timer = setTimeout(() => { flush().catch(() => {}); }, 30); }
+
+  window.addEventListener("online", flushSoon);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") flushSoon(); });
+  setInterval(() => { if (load().some((o) => !o.dead)) flushSoon(); }, 60000);
+
+  return { add, flush, call, list, discard, clearDead, getToken, setToken, stats, onChange, newOpId };
+})();
+window.AdminQueue = AdminQueue;
+
+// ================================================================ 上部の帯(同時に1件)
+// 優先順: 取得遅れ > 聴き残し > 通知先未設定 > 暫定 > 未送信N件
+const TopBand = (() => {
+  const ORDER = ["late", "leftover", "notify", "provisional", "unsent"];
+  const flags = {};
+  function render() {
+    const el = $("topBand");
+    const kind = ORDER.find((k) => flags[k]);
+    if (!kind) { el.hidden = true; el.textContent = ""; el.removeAttribute("data-kind"); return; }
+    el.hidden = false;
+    el.dataset.kind = kind;
+    el.textContent = flags[kind].text;
+  }
+  function set(kind, info) { if (info) flags[kind] = info; else delete flags[kind]; render(); }
+  $("topBand").addEventListener("click", () => {
+    const kind = ORDER.find((k) => flags[k]);
+    if (kind && flags[kind].onClick) flags[kind].onClick();
+  });
+  return { set, render, current: () => ORDER.find((k) => flags[k]) || null };
+})();
+window.TopBand = TopBand;
+
+AdminQueue.onChange((st) => {
+  TopBand.set("unsent", st.pending > 0 ? { text: `📤 未送信の操作が${st.pending}件あります${st.needLogin ? "(ログインが必要です・設定タブ)" : ""}`, onClick: () => Tabs.show("settings") } : null);
+});
+
+// ================================================================ ビュー切替・タブ
+function setView(v) {
+  document.body.dataset.view = v;
+  $("appShell").hidden = v !== "tabs";
+  $("listMode").hidden = v !== "list";
+  $("listenView").hidden = v !== "listen";
+  $("flowView").hidden = v !== "flow";
+  if (v === "tabs") { refreshToday(); window.scrollTo(0, 0); }
+  if (v === "list") {
+    if (listDirty) { listDirty = false; render(); }
+    updateHeaderHeightVar();
+    window.scrollTo(0, 0);
+  }
+  document.dispatchEvent(new CustomEvent("xdash:view", { detail: { view: v } }));
+}
+
+const Tabs = {
+  current: "today",
+  show(name) {
+    if (!document.querySelector(`[data-tab-body="${name}"]`)) name = "today";
+    this.current = name;
+    lsSet(K.tab, name);
+    document.querySelectorAll("#tabBar button").forEach((b) => b.classList.toggle("on", b.dataset.tab === name));
+    document.querySelectorAll("[data-tab-body]").forEach((el) => { el.hidden = el.dataset.tabBody !== name; });
+    if (document.body.dataset.view !== "tabs") setView("tabs");
+    document.dispatchEvent(new CustomEvent("xdash:tab", { detail: { tab: name } }));
+  },
+};
+window.Tabs = Tabs;
+document.querySelectorAll("#tabBar button").forEach((b) => b.addEventListener("click", () => Tabs.show(b.dataset.tab)));
+
+// ================================================================ カードのデータ処理
+const postTime = (p) => Date.parse(p.posted_at || p.fetched_at) || 0;
+const tierTime = (p) => Date.parse(p.tier_assigned_at || p.fetched_at) || 0;
+const scoreOrNeg = (p) => { const n = scoreNum(p); return n === null ? -1 : n; };
+
+// 聴く順: 手動昇格 → 点数降順 → 新しい順
+function rankCmp(a, b) {
+  const pa = a.manual_action === "promote", pb = b.manual_action === "promote";
+  if (pa !== pb) return pa ? -1 : 1;
+  if (pa && pb) { const d = (Date.parse(b.manual_at) || 0) - (Date.parse(a.manual_at) || 0); if (d) return d; }
+  const sd = scoreOrNeg(b) - scoreOrNeg(a);
+  if (sd) return sd;
+  return postTime(b) - postTime(a);
+}
+
+function titleOf(p) { return String(p.speech_title || p.gist || p.content || "").replace(/\s+/g, " ").trim().slice(0, 60); }
+function bodyOf(p) { return String(p.speech_body || p.summary || "").trim(); }
+
+function utterOf(p) {
+  if (window.TTS && typeof TTS.utterances === "function") { try { return TTS.utterances(p) || []; } catch (e) { /* fallthrough */ } }
+  const out = [];
+  const t = titleOf(p), b = bodyOf(p);
+  if (t) out.push({ kind: "title", text: t });
+  if (b) out.push({ kind: "body", text: b });
+  return out;
+}
+// 冒頭の重要度読み上げは5点と手動昇格のみ
+function cardItems(p) {
+  const items = [];
+  const tag = [];
+  if (scoreNum(p) === 5) tag.push("重要度5。");
+  if (p.manual_action === "promote") tag.push("昇格した投稿です。");
+  if (tag.length) items.push({ kind: "title", text: tag.join("") });
+  for (const it of utterOf(p)) items.push(it);
+  return items;
+}
+const itemsChars = (items) => items.reduce((n, it) => n + String(it.text || "").length, 0);
+const cardSec = (p, speed) => itemsChars(cardItems(p)) / (CPS * speed);
+const minutesLabel = (sec) => Math.max(1, Math.round(sec / 60));
+
+// 今日の区分(降格・失効を反映した現在値)
+//  聴く: listen区分の未読(昨日からの聴き残しを含む) / 流す: 今日(02:00 JST以降)区分された未読skim / 保留: 今日の保留
+function computeToday(now) {
+  now = now || Date.now();
+  const ds = dayStartMs(now);
+  const listen = [], skim = [], hold = [];
+  let carry = 0;
+  for (const p of allPosts) {
+    const tier = p.listen_tier;
+    if (!tier) continue;
+    if (tier === "listen") {
+      if (!p.is_read) { listen.push(p); if (tierTime(p) < ds) carry++; }
+    } else if (tier === "skim") {
+      if (!p.is_read && tierTime(p) >= ds) skim.push(p);
+    } else if (tier === "hold") {
+      if (Math.max(tierTime(p), Date.parse(p.manual_at) || 0) >= ds) hold.push(p);
+    }
+  }
+  listen.sort(rankCmp);
+  skim.sort(rankCmp);
+  hold.sort(rankCmp);
+  const speed = listenSpeed();
+  const listenSecTotal = listen.reduce((n, p) => n + cardSec(p, speed), 0);
+  const skimHigh = skim.filter((p) => scoreOrNeg(p) >= LISTEN_THRESHOLD);
+  // 保留上位5件(見出し読み上げ用): 手動降格を除く・未読
+  const holdTop = hold.filter((p) => p.manual_action !== "demote" && !p.is_read).slice(0, 5);
+  return { dayStart: ds, dayKey: dayKey(now), listen, skim, hold, holdTop, skimHigh, carry, listenSec: listenSecTotal, listenMin: listen.length ? minutesLabel(listenSecTotal) : 0 };
+}
+
+// ---- 今日の要点(digest_daily)
+const DG = { state: "none", row: null };
+async function loadDigestDaily() {
+  try {
+    const rows = await sbFetch(`digest_daily?select=*&order=day.desc&limit=1`);
+    const r = Array.isArray(rows) ? rows[0] : null;
+    if (r && r.day) {
+      if (typeof r.topics === "string") { try { r.topics = JSON.parse(r.topics); } catch (e) { r.topics = []; } }
+      DG.state = "row"; DG.row = r;
+    } else { DG.state = "none"; DG.row = null; }
+  } catch (e) { DG.state = "error"; DG.row = null; } // テーブルが無い等でも画面を壊さない
+  refreshToday();
+}
+function digestTopics(day) {
+  const r = DG.row;
+  if (DG.state !== "row" || !r || r.day !== day || !Array.isArray(r.topics)) return [];
+  return r.topics.filter((t) => t && (t.headline || t.summary)).slice(0, 4);
+}
+
+// ================================================================ 今日タブの描画
+let holdOpen = lsGet(K.holdOff, "0") === "1";
+
+function loadSession() {
+  try {
+    const s = JSON.parse(lsGet(K.session, "null"));
+    if (!s || typeof s !== "object") return null;
+    if (s.day !== dayKey(Date.now())) { lsDel(K.session); return null; }
+    return s;
+  } catch (e) { return null; }
+}
+// 保存されたセッションのうち、まだ聴けるもの
+function resumable(s) {
+  if (!s) return { cards: [], hold: [], digest: false, n: 0 };
+  const cards = (s.cardUrls || []).map(postByUrl).filter((p) => p && !p.is_read && p.listen_tier === "listen");
+  const hold = (s.holdUrls || []).map(postByUrl).filter((p) => p && !p.is_read && p.listen_tier === "hold");
+  const digest = !!s.withDigest && digestTopics(s.day).length > 0;
+  return { cards, hold, digest, n: cards.length + hold.length + (digest ? 1 : 0) };
+}
+
+let todayCache = null;
+function refreshToday() {
+  const T = computeToday();
+  todayCache = T;
+  const now = Date.now();
+  $("todayDate").textContent = new Date(now + JST_MS - 2 * 3600e3).toISOString().slice(5, 10).replace("-", "/");
+
+  // 主ボタン / 案内
+  const sess = loadSession();
+  const rs = resumable(sess);
+  $("resumeBox").hidden = rs.n === 0;
+  if (rs.n > 0) $("resumeSub").textContent = rs.cards.length ? `残り${rs.cards.length}件` : "";
+  const hasListen = T.listen.length > 0;
+  $("btnListen").hidden = !hasListen;
+  $("btnListen").textContent = `▶聴く(約${T.listenMin}分)`;
+  $("listenGuide").hidden = hasListen;
+  if (!hasListen) {
+    $("listenGuide").textContent = T.skim.length || T.hold.length
+      ? "今日の「聴く」カードはありません。「流す」または「一覧」で見られます。"
+      : "今日の「聴く」カードはまだありません。新しい投稿が区分されるとここに出ます。";
+  }
+  const showExtra = !hasListen && T.skimHigh.length > 0;
+  $("btnExtraToday").hidden = !showExtra;
+  if (showExtra) $("btnExtraToday").textContent = `上限で流すに回った${LISTEN_THRESHOLD}点以上が${T.skimHigh.length}件 ・ +10分聴く`;
+
+  // 内訳
+  $("breakdown").innerHTML = `聴く<b>${T.listen.length}</b>件・約<b>${T.listenMin}</b>分 / 流す<b>${T.skim.length}</b>件 / 保留<b>${T.hold.length}</b>件`;
+  $("btnFlow").textContent = `🌊 流す(${T.skim.length})`;
+  $("btnFlow").disabled = T.skim.length === 0;
+
+  renderDigestCard(T);
+  renderHold(T);
+  updateBands(T, sess, rs);
+}
+
+function renderDigestCard(T) {
+  const el = $("digestCard");
+  if (DG.state === "error") { el.hidden = true; return; }
+  el.hidden = false;
+  const r = DG.row;
+  const isToday = DG.state === "row" && r && r.day === T.dayKey;
+  let html = `<h2>📌 今日の要点</h2>`;
+  if (!isToday) {
+    html += `<div class="muted" style="font-size:14px">今日の要点はまだありません。</div>`;
+  } else {
+    const topics = digestTopics(T.dayKey);
+    if (r.status === "paused") html += `<div style="font-size:14px;color:#ffb3c0;margin-bottom:6px">⏸ 費用上限のため、要点の生成を停止中です。</div>`;
+    if (topics.length) {
+      html += topics.map((t) => `<div class="topic"><b>${esc(t.headline)}</b>${t.is_followup ? ` <span class="chip-prov">続報</span>` : ""}<p>${esc(t.summary)}</p></div>`).join("");
+    } else if (r.status === "failed") html += `<div class="muted" style="font-size:14px">今日の要点を生成できませんでした。</div>`;
+    else if (r.status !== "paused") html += `<div class="muted" style="font-size:14px">要点にできる新着がまだありません。</div>`;
+    if (r.generated_at) {
+      const d = new Date(r.generated_at);
+      html += `<div class="sub" style="margin-top:8px;text-align:right">生成 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}</div>`;
+    }
+  }
+  el.innerHTML = html;
+}
+
+function holdItemHtml(p) {
+  const demoted = p.manual_action === "demote";
+  return `<div class="holditem" data-url="${esc(p.post_url)}">
+    <div class="hi-body"><div class="hi-title">${scoreBadgeHtml(p)}${esc(titleOf(p))}${demoted ? ` <span class="chip-prov">手動降格</span>` : ""}</div>${kindLineHtml(p)}</div>
+    <button type="button" class="btn small" data-act="promote">聴くへ戻す</button>
+  </div>`;
+}
+function renderHold(T) {
+  $("holdLabel").textContent = `保留 ${T.hold.length}件`;
+  $("btnHoldToggle").setAttribute("aria-expanded", String(holdOpen));
+  $("holdCaret").textContent = holdOpen ? "⌄" : "›";
+  const el = $("holdList");
+  el.hidden = !holdOpen;
+  if (!holdOpen) { el.innerHTML = ""; return; }
+  el.innerHTML = T.hold.length ? T.hold.map(holdItemHtml).join("") : `<div class="muted" style="padding:12px">保留はありません。</div>`;
+}
+$("btnHoldToggle").addEventListener("click", () => { holdOpen = !holdOpen; lsSet(K.holdOff, holdOpen ? "1" : "0"); refreshToday(); });
+$("holdList").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-act=promote]");
+  if (!btn) return;
+  const url = btn.closest(".holditem").dataset.url;
+  const p = allPosts.find((x) => x.post_url === url);
+  if (p) { promoteCard(p); refreshToday(); }
+});
+
+function updateBands(T, sess, rs) {
+  // 取得遅れ
+  let last = 0;
+  for (const p of allPosts) { const t = Date.parse(p.fetched_at); if (t > last) last = t; }
+  try { const fr = digestData && digestData.lastRun && Date.parse(digestData.lastRun.finished_at); if (fr > last) last = fr; } catch (e) { /* ignore */ }
+  const lateH = last ? (Date.now() - last) / 3600e3 : 0;
+  TopBand.set("late", allPosts.length && lateH >= FETCH_LATE_HOURS ? { text: `⚠️ 取得が遅れています(最終取得 ${Math.floor(lateH)}時間前)`, onClick: () => load() } : null);
+  // 聴き残し
+  const leftover = rs.n > 0 ? `⏸ 中断した続きがあります(残り${rs.cards.length || rs.n}件)` : T.carry > 0 ? `🎧 昨日からの聴き残しが${T.carry}件あります(聴くに含まれます)` : null;
+  TopBand.set("leftover", leftover ? { text: leftover, onClick: () => Tabs.show("today") } : null);
+  // 暫定
+  const prov = T.listen.concat(T.skim, T.hold).some(isProvisional);
+  TopBand.set("provisional", prov ? { text: "🧪 点数は暫定です(採点モデル切替前)。目安として見てください。" } : null);
+  // 未送信は AdminQueue.onChange が設定
+}
+
+window.onPostsLoaded = function () { refreshToday(); loadDigestDaily(); };
+window.onDigestRendered = function () { if (todayCache) refreshToday(); };
+
+// ================================================================ 昇格/降格(端末キュー経由)
+function localPromote(p) {
+  p.listen_tier = "listen"; p.manual_action = "promote"; p.manual_at = new Date().toISOString(); p.tier_assigned_at = p.manual_at; p.tier_reason = "manual_promote";
+  listDirty = true;
+}
+function promoteCard(p) {
+  const wasRead = !!p.is_read;
+  localPromote(p);
+  AdminQueue.add("tier_set", { post_url: p.post_url, how: "promote" });
+  if (wasRead) { // 既読化済み(流すで2秒超など)は未読へ戻す(anonでis_readは書き込める)
+    p.is_read = false;
+    sbFetch(`x_posts?post_url=eq.${encodeURIComponent(p.post_url)}`, { method: "PATCH", headers: { Prefer: "return=minimal" }, body: JSON.stringify({ is_read: false }) }).catch((e) => console.error("unread failed", e));
+  }
+}
+
+// ================================================================ 聴くモード
+const LP = {
+  active: false, state: "idle", // idle|playing|paused|interrupted|finished
+  items: [], segs: [], cum: [], player: null,
+  curSeg: -1, curItem: null, extra: false, undo: null, voices: [],
+};
+
+function ttsAvailable() { return !!(window.TTS && typeof TTS.createPlayer === "function" && window.speechSynthesis); }
+
+function getVoice() {
+  try {
+    const vs = (window.speechSynthesis && speechSynthesis.getVoices && speechSynthesis.getVoices()) || [];
+    return window.TTS && TTS.pickVoice ? TTS.pickVoice(vs, voiceQuality()) : null;
+  } catch (e) { return null; }
+}
+
+function cleanText(t) { return window.TTS && TTS.clean ? TTS.clean(String(t || "")) : String(t || ""); }
+function splitText(t) { return window.TTS && TTS.split ? TTS.split(t) : [t]; }
+
+function buildSequence(opts) {
+  // opts: {topics:[], cards:[posts], hold:[posts]}
+  const segs = [], items = [];
+  const push = (seg, its) => {
+    seg.start = items.length;
+    for (const it of its) items.push({ kind: it.kind, text: it.text, seg: segs.length });
+    seg.end = items.length - 1;
+    if (seg.end >= seg.start) segs.push(seg);
+  };
+  if (opts.topics && opts.topics.length) {
+    const its = [{ kind: "title", text: "今日の要点です。" }];
+    for (const t of opts.topics) {
+      const h = cleanText(t.headline); if (h) its.push({ kind: "title", text: h });
+      for (const s of splitText(cleanText(t.summary))) if (s) its.push({ kind: "body", text: s });
+    }
+    push({ type: "digest", topics: opts.topics }, its);
+  }
+  for (const p of opts.cards || []) push({ type: "card", url: p.post_url }, cardItems(p));
+  if (opts.hold && opts.hold.length) {
+    const its = [{ kind: "title", text: "保留の上位の見出しです。" }];
+    for (const p of opts.hold) { const h = cleanText(titleOf(p)); if (h) its.push({ kind: "title", text: h }); }
+    push({ type: "hold", urls: opts.hold.map((p) => p.post_url) }, its);
+  }
+  // 累計文字数(残り時間の計算用)
+  const cum = []; let n = 0;
+  for (const it of items) { n += String(it.text).length; cum.push(n); }
+  return { segs, items, cum };
+}
+
+// ▶押下時に当日の聴く全件を端末に確保する(読み上げに必要な項目だけ)。再読込後に通信できなくても続きから再生できる。
+const SNAP_FIELDS = ["post_url", "author_handle", "author_name", "gist", "summary", "content", "speech_title", "speech_body", "score", "score_kind", "score_reason", "score_state", "scored_model", "manual_action", "manual_at", "listen_tier", "tier_assigned_at", "is_read", "posted_at", "fetched_at", "image_urls"];
+let snapMap = null;
+function snapLoad() {
+  if (snapMap) return snapMap;
+  snapMap = new Map();
+  try {
+    const c = JSON.parse(lsGet(K.cache, "null"));
+    if (c && c.day === dayKey(Date.now()) && Array.isArray(c.posts)) for (const p of c.posts) snapMap.set(p.post_url, p);
+  } catch (e) { /* ignore */ }
+  return snapMap;
+}
+function snapSave(posts) {
+  snapMap = new Map();
+  const arr = posts.map((p) => { const o = {}; for (const f of SNAP_FIELDS) o[f] = p[f] === undefined ? null : p[f]; return o; });
+  for (const o of arr) snapMap.set(o.post_url, o);
+  lsSet(K.cache, JSON.stringify({ day: dayKey(Date.now()), savedAt: Date.now(), posts: arr }));
+}
+function snapMarkRead(url) {
+  const o = snapLoad().get(url);
+  if (!o || o.is_read) return;
+  o.is_read = true;
+  lsSet(K.cache, JSON.stringify({ day: dayKey(Date.now()), savedAt: Date.now(), posts: [...snapMap.values()] }));
+}
+const postByUrl = (u) => allPosts.find((p) => p.post_url === u) || snapLoad().get(u) || null;
+
+function remainingSec(i) {
+  if (!LP.cum.length) return 0;
+  const total = LP.cum[LP.cum.length - 1];
+  const done = i > 0 ? LP.cum[i - 1] : 0;
+  return (total - done) / (CPS * listenSpeed());
+}
+
+function showFinishPanel(show) { $("plFinish").hidden = !show; }
+function showInterruptPanel(show) { $("plInterrupted").hidden = !show; }
+
+function updateToggle() {
+  const t = $("plToggle");
+  t.innerHTML = LP.state === "paused" ? "▶ 再開" : "⏸ 止める";
+}
+function updateSpeedBtn() { $("plSpeed").textContent = `${listenSpeed()}x`; }
+
+function renderPlayerSeg() {
+  const seg = LP.segs[LP.curSeg];
+  const el = $("plCard");
+  if (!seg) { el.innerHTML = ""; return; }
+  const cards = LP.segs.filter((s) => s.type === "card");
+  let pos = "";
+  if (seg.type === "card") {
+    const no = cards.indexOf(seg) + 1;
+    pos = `${no} / ${cards.length}`;
+    const p = postByUrl(seg.url) || {};
+    const meta = `${esc(p.author_name || p.author_handle || "")} ${esc(p.author_handle && p.author_name ? p.author_handle : "")}`;
+    el.innerHTML = `<div class="pl-title">${scoreBadgeHtml(p)}${esc(titleOf(p))}</div>${kindLineHtml(p)}
+      <div class="pl-body">${esc(bodyOf(p))}</div><div class="pl-meta">${meta}</div>`;
+    $("plReject").disabled = false;
+  } else if (seg.type === "digest") {
+    pos = "今日の要点";
+    el.innerHTML = `<div class="pl-title">📌 今日の要点</div>` + seg.topics.map((t) => `<div class="topic"><b>${esc(t.headline)}</b><p>${esc(t.summary)}</p></div>`).join("");
+    $("plReject").disabled = true;
+  } else {
+    pos = "保留の見出し";
+    el.innerHTML = `<div class="pl-title">🗂 保留の上位</div><div class="pl-list">${seg.urls.map((u) => { const p = postByUrl(u) || {}; return `<div>${scoreBadgeHtml(p)}${esc(titleOf(p))}</div>`; }).join("")}</div>`;
+    $("plReject").disabled = true;
+  }
+  const rem = remainingSec(LP.items.findIndex((it) => it.seg === LP.curSeg));
+  $("plPos").textContent = `${pos} ・ 残り約${minutesLabel(rem)}分`;
+  el.scrollTop = 0;
+}
+
+function saveSession() {
+  if (!LP.active || LP.curSeg < 0) return;
+  const cur = LP.segs[LP.curSeg];
+  const cardUrls = [], holdUrls = [];
+  for (let i = Math.max(0, LP.curSeg); i < LP.segs.length; i++) {
+    const s = LP.segs[i];
+    if (s.type === "card") { const p = postByUrl(s.url); if (p && !p.is_read) cardUrls.push(s.url); }
+    else if (s.type === "hold") holdUrls.push(...s.urls);
+  }
+  const withDigest = !!cur && cur.type === "digest";
+  if (!cardUrls.length && !holdUrls.length && !withDigest) { lsDel(K.session); return; }
+  lsSet(K.session, JSON.stringify({ day: dayKey(Date.now()), cardUrls, holdUrls, withDigest, savedAt: Date.now() }));
+}
+
+function makePlayer() {
+  return TTS.createPlayer({
+    synth: window.speechSynthesis,
+    Utterance: window.SpeechSynthesisUtterance,
+    getVoice,
+    getRate: listenSpeed,
+    pauseMs: PAUSE_MS(),
+    onItemStart(i) {
+      if (!LP.active || LP.state === "interrupted" || LP.state === "finished") return;
+      const it = LP.items[i];
+      if (!it) return;
+      LP.curItem = i;
+      if (it.seg !== LP.curSeg) {
+        LP.curSeg = it.seg;
+        renderPlayerSeg();
+        saveSession();
+      } else {
+        const rem = remainingSec(i);
+        const base = $("plPos").textContent.split(" ・ ")[0];
+        $("plPos").textContent = `${base} ・ 残り約${minutesLabel(rem)}分`;
+      }
+    },
+    onItemEnd(i, why) {
+      if (!LP.active || LP.state !== "playing" || LP.curItem !== i) return;
+      if (why === "forced") return; // 読み上げが詰まって強制送りになった場合は既読にしない
+      const it = LP.items[i];
+      const seg = it && LP.segs[it.seg];
+      if (seg && seg.type === "card" && i === seg.end) {
+        // 最後まで再生した → 既読(聴く)。途中停止は既読にしない。
+        const p = postByUrl(seg.url);
+        if (p && !p.is_read) markReadQuiet(seg.url, "listen");
+      }
+    },
+    onDone() { if (LP.active && LP.state === "playing") finishSequence(); },
+    onStall() { if (LP.active && LP.state === "playing") interrupt("stall"); },
+  });
+}
+
+function startSequence(seq, opts) {
+  opts = opts || {};
+  if (!ttsAvailable()) { alert("音声モジュール(TTS)を読み込めませんでした。一覧モードをご利用ください。"); return false; }
+  // 他の再生を止める
+  try { if (typeof isPlaying !== "undefined" && isPlaying) { isPlaying = false; window.speechSynthesis.cancel(); updatePlayButton(); } if (autoMoveDirection !== 0) stopAutoMove(); } catch (e) { /* ignore */ }
+  killPlayer();
+  if (!seq.items.length) return false;
+  LP.active = true; LP.state = "playing"; LP.items = seq.items; LP.segs = seq.segs; LP.cum = seq.cum;
+  LP.curSeg = 0; LP.curItem = null; LP.extra = !!opts.extra;
+  LP.player = makePlayer();
+  setView("listen");
+  showFinishPanel(false); showInterruptPanel(false);
+  hideToast();
+  updateToggle(); updateSpeedBtn();
+  renderPlayerSeg();
+  LP.player.play(LP.items, 0);
+  return true;
+}
+
+function killPlayer() {
+  const pl = LP.player;
+  LP.player = null;
+  const prev = LP.state;
+  LP.state = "finished"; // 以降の onStall/onItemEnd を無視させる
+  if (pl) { try { pl.stop(); } catch (e) { /* ignore */ } }
+  LP.state = prev === "playing" || prev === "paused" ? "idle" : prev;
+}
+
+function startListenNormal() {
+  const T = computeToday();
+  if (!T.listen.length) return;
+  const first = lsGet(K.introDay, "") !== T.dayKey;
+  const topics = first ? digestTopics(T.dayKey) : [];
+  const seq = buildSequence({ topics, cards: T.listen, hold: first ? T.holdTop : [] });
+  snapSave(T.listen.concat(first ? T.holdTop : []));
+  lsDel(K.session);
+  if (startSequence(seq)) { if (first) lsSet(K.introDay, T.dayKey); }
+}
+
+function startResume() {
+  const s = loadSession();
+  const rs = resumable(s);
+  if (!rs.n) { refreshToday(); return; }
+  const topics = rs.digest ? digestTopics(s.day) : [];
+  const seq = buildSequence({ topics, cards: rs.cards, hold: rs.hold });
+  startSequence(seq);
+}
+
+function startExtraTen() {
+  const T = computeToday();
+  const speed = listenSpeed();
+  const pick = []; let sec = 0;
+  for (const p of T.skimHigh) { if (sec >= EXTRA_SEC) break; pick.push(p); sec += cardSec(p, speed); }
+  if (!pick.length) { refreshToday(); return; }
+  snapSave(pick);
+  startSequence(buildSequence({ cards: pick }), { extra: true });
+}
+
+function finishSequence() {
+  if (!LP.active) return;
+  const pl = LP.player; LP.player = null;
+  LP.state = "finished";
+  if (pl) { try { pl.stop(); } catch (e) { /* ignore */ } }
+  lsDel(K.session);
+  const T = computeToday();
+  const n = T.skimHigh.length;
+  $("plFinishMsg").textContent = LP.extra ? "✅ 追加分を聴き終わりました。" : "✅ 聴き終わりました。";
+  $("plOverflow").hidden = n === 0;
+  $("plMoreTen").hidden = n === 0;
+  $("plOverflow").textContent = n > 0 ? `上限で流すに回った${LISTEN_THRESHOLD}点以上が${n}件あります。続けますか` : "";
+  showFinishPanel(true);
+}
+
+function interrupt(reason) {
+  if (!LP.active || LP.state === "interrupted" || LP.state === "finished" || LP.state === "idle") return;
+  saveSession();
+  LP.state = "interrupted";
+  const pl = LP.player; LP.player = null;
+  if (pl) { try { pl.stop(); } catch (e) { /* ignore */ } }
+  commitPendingDemote();
+  showInterruptPanel(true);
+}
+
+function leaveListen() {
+  const pl = LP.player; LP.player = null;
+  if (pl) { try { pl.stop(); } catch (e) { /* ignore */ } }
+  LP.active = false; LP.state = "idle";
+  commitPendingDemote();
+  setView("tabs");
+}
+
+function jumpToSeg(n) {
+  LP.curItem = null;
+  if (n >= LP.segs.length) { finishSequence(); return; }
+  if (LP.state === "paused") { try { window.speechSynthesis.resume(); } catch (e) { /* ignore */ } }
+  LP.state = "playing";
+  updateToggle();
+  LP.player.play(LP.items, LP.segs[n].start);
+}
+
+function curCardPost() {
+  const seg = LP.segs[LP.curSeg];
+  return seg && seg.type === "card" ? postByUrl(seg.url) : null;
+}
+
+// 次へ = 既読にして対象外
+function skipCurrent() {
+  if (!LP.active || LP.state === "interrupted" || LP.state === "finished") return;
+  const seg = LP.segs[LP.curSeg];
+  if (seg && seg.type === "card") { const p = postByUrl(seg.url); if (p && !p.is_read) markReadQuiet(seg.url, "user"); }
+  jumpToSeg(LP.curSeg + 1);
+}
+
+// 止める・再開
+function toggleCurrent() {
+  if (!LP.active || !LP.player) return;
+  if (LP.state === "playing") { LP.state = "paused"; LP.player.pause(); }
+  else if (LP.state === "paused") { LP.state = "playing"; LP.player.resume(); }
+  updateToggle();
+}
+
+// これは不要 = 保留へ降格 + 既読(5秒の取り消し付き)
+function rejectCurrent() {
+  if (!LP.active || LP.state === "interrupted" || LP.state === "finished") return;
+  const p = curCardPost();
+  if (!p) return;
+  commitPendingDemote(); // 直前の保留中の降格は確定
+  const prev = { listen_tier: p.listen_tier, manual_action: p.manual_action, manual_at: p.manual_at, is_read: p.is_read, tier_reason: p.tier_reason };
+  p.listen_tier = "hold"; p.manual_action = "demote"; p.manual_at = new Date().toISOString(); p.is_read = true;
+  listDirty = true;
+  const segIdx = LP.curSeg;
+  const u = { url: p.post_url, prev, segIdx, timer: null, tick: null, until: Date.now() + UNDO_MS };
+  u.timer = setTimeout(commitPendingDemote, UNDO_MS);
+  LP.undo = u;
+  showToast(p);
+  jumpToSeg(LP.curSeg + 1);
+}
+
+function showToast(p) {
+  $("plToastMsg").textContent = `「${titleOf(p).slice(0, 24)}」を保留へ降格しました`;
+  $("plUndo").textContent = "取り消し(5秒)";
+  $("plToast").hidden = false;
+}
+function hideToast() { $("plToast").hidden = true; }
+
+function commitPendingDemote() {
+  const u = LP.undo;
+  if (!u) return;
+  LP.undo = null;
+  clearTimeout(u.timer);
+  hideToast();
+  AdminQueue.add("tier_set", { post_url: u.url, how: "demote" });
+  rpcMarkRead(u.url, "user").then((ok) => { if (!ok) patchIsRead([u.url], true).catch(() => {}); });
+}
+
+function undoDemote() {
+  const u = LP.undo;
+  if (!u) return;
+  LP.undo = null;
+  clearTimeout(u.timer);
+  hideToast();
+  const p = postByUrl(u.url);
+  if (p) Object.assign(p, u.prev);
+  listDirty = true;
+  // その場でそのカードへ戻って続きを聴く
+  if (LP.active && LP.state !== "finished" && LP.state !== "interrupted" && LP.player && LP.segs[u.segIdx]) jumpToSeg(u.segIdx);
+  else if (LP.active && LP.state === "finished") { /* 聴き終わり後は元の状態に戻すだけ(次回▶で聴ける) */ }
+}
+
+$("plNext").addEventListener("click", skipCurrent);
+$("plToggle").addEventListener("click", toggleCurrent);
+$("plReject").addEventListener("click", rejectCurrent);
+$("plUndo").addEventListener("click", undoDemote);
+$("plExit").addEventListener("click", () => { if (LP.active && (LP.state === "playing" || LP.state === "paused")) saveSession(); leaveListen(); });
+$("plBackA").addEventListener("click", leaveListen);
+$("plBackB").addEventListener("click", leaveListen);
+$("plResume").addEventListener("click", () => { showInterruptPanel(false); startResume(); });
+$("plMoreTen").addEventListener("click", () => { showFinishPanel(false); startExtraTen(); });
+$("plSpeed").addEventListener("click", () => {
+  let i = SPEEDS.findIndex((v) => Math.abs(v - listenSpeed()) < 0.01);
+  i = (i + 1) % SPEEDS.length;
+  lsSet(K.speed, String(SPEEDS[i]));
+  updateSpeedBtn();
+  if (LP.player && LP.state === "playing") LP.player.setRate(listenSpeed());
+});
+
+// 画面が裏に回ったら中断扱い(iPhoneは裏で読み上げが止まるため。途中停止は未読のまま)
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    if (document.body.dataset.view === "listen") interrupt("hidden");
+    commitPendingDemote();
+  }
+});
+window.addEventListener("pagehide", () => { commitPendingDemote(); if (document.body.dataset.view === "listen") interrupt("pagehide"); });
+
+// ================================================================ 流すモード
+const FL = { queue: [], idx: -1, elapsed: 0, marked: false, paused: false, timer: null, last: 0 };
+
+function startFlow() {
+  const T = computeToday();
+  if (!T.skim.length) return;
+  try { if (typeof isPlaying !== "undefined" && isPlaying) { isPlaying = false; window.speechSynthesis.cancel(); updatePlayButton(); } if (autoMoveDirection !== 0) stopAutoMove(); } catch (e) { /* ignore */ }
+  FL.queue = T.skim.slice();
+  FL.idx = -1; FL.paused = false;
+  setView("flow");
+  $("flEnd").hidden = true;
+  $("flSecLabel").textContent = `${flowSec()}秒`;
+  flowNext();
+  clearInterval(FL.timer);
+  FL.last = Date.now();
+  FL.timer = setInterval(flowTick, 100);
+}
+function flowCur() { return FL.queue[FL.idx] || null; }
+function flowRender() {
+  const p = flowCur();
+  if (!p) return;
+  const img = Array.isArray(p.image_urls) && p.image_urls[0] ? `<img alt="" src="${esc(xImageVariant(p.image_urls[0], "small"))}">` : "";
+  $("flCard").innerHTML = `<div class="fl-title">${scoreBadgeHtml(p)}${esc(titleOf(p))}</div>${kindLineHtml(p)}<div class="fl-body">${esc(bodyOf(p).slice(0, 200))}</div>${img}
+    <div class="pl-meta">${esc(p.author_name || p.author_handle || "")}</div>`;
+  $("flPos").textContent = `${FL.idx + 1} / ${FL.queue.length}`;
+  $("flProg").style.width = "0%";
+  $("flPaused").hidden = !FL.paused;
+}
+function flowNext() {
+  FL.idx++;
+  FL.elapsed = 0; FL.marked = false;
+  if (FL.idx >= FL.queue.length) { flowEnd(); return; }
+  flowRender();
+}
+function flowEnd() {
+  clearInterval(FL.timer); FL.timer = null;
+  $("flEndMsg").textContent = `🌊 流し終わりました(${FL.queue.length}件)。`;
+  $("flEnd").hidden = false;
+}
+function flowTick() {
+  const now = Date.now();
+  const dt = Math.min(500, now - FL.last);
+  FL.last = now;
+  const p = flowCur();
+  if (!p || FL.paused || document.body.dataset.view !== "flow") return;
+  FL.elapsed += dt;
+  if (!FL.marked && FL.elapsed >= FLOW_MARK_MS) { FL.marked = true; if (!p.is_read) markReadQuiet(p.post_url, "flow"); }
+  const sec = flowSec() * 1000;
+  $("flProg").style.width = `${Math.min(100, (FL.elapsed / sec) * 100)}%`;
+  if (FL.elapsed >= sec) flowNext();
+}
+function flowToggle() { if (!flowCur()) return; FL.paused = !FL.paused; $("flPaused").hidden = !FL.paused; }
+function flowListenThis() {
+  const p = flowCur();
+  if (!p) return;
+  promoteCard(p); // 聴く待ちの先頭へ(手動昇格)
+  FL.queue.splice(FL.idx, 1);
+  FL.idx--; // flowNext が同じ位置の次カードへ進む
+  flowNext();
+}
+function flowExit() {
+  clearInterval(FL.timer); FL.timer = null;
+  setView("tabs");
+}
+$("flCard").addEventListener("click", flowToggle);
+$("flListen").addEventListener("click", flowListenThis);
+$("flExit").addEventListener("click", flowExit);
+$("flBack").addEventListener("click", flowExit);
+function setFlowSec(v) { lsSet(K.flowSec, String(v)); $("flSecLabel").textContent = `${flowSec()}秒`; renderSettings(); }
+$("flSecDown").addEventListener("click", () => setFlowSec(Math.max(2, flowSec() - 1)));
+$("flSecUp").addEventListener("click", () => setFlowSec(Math.min(20, flowSec() + 1)));
+
+// ================================================================ 今日タブのボタン
+$("btnListen").addEventListener("click", startListenNormal);
+$("btnResume").addEventListener("click", startResume);
+$("btnExtraToday").addEventListener("click", startExtraTen);
+$("btnFlow").addEventListener("click", startFlow);
+$("btnList").addEventListener("click", () => setView("list"));
+$("btnTodayReload").addEventListener("click", () => { load(); });
+$("btnBackToday").addEventListener("click", () => {
+  try { if (isPlaying) { isPlaying = false; window.speechSynthesis.cancel(); updatePlayButton(); } if (autoMoveDirection !== 0) stopAutoMove(); releasePin(); } catch (e) { /* ignore */ }
+  setView("tabs");
+});
+
+// ================================================================ 設定: 再生
+function renderSettings() {
+  const sp = listenSpeed();
+  $("setSpeedBtns").innerHTML = SPEEDS.map((v) => `<button type="button" data-speed="${v}" class="${Math.abs(v - sp) < 0.01 ? "on" : ""}">${v}x</button>`).join("");
+  const vq = voiceQuality();
+  $("setVoiceBtns").innerHTML = `<button type="button" data-voice="high" class="${vq === "high" ? "on" : ""}">高音質</button><button type="button" data-voice="standard" class="${vq === "standard" ? "on" : ""}">標準</button>`;
+  const fs = flowSec();
+  $("setFlowBtns").innerHTML = FLOW_SECS.map((v) => `<button type="button" data-flow="${v}" class="${v === fs ? "on" : ""}">${v}秒</button>`).join("");
+}
+$("setSpeedBtns").addEventListener("click", (e) => { const b = e.target.closest("button[data-speed]"); if (!b) return; lsSet(K.speed, b.dataset.speed); renderSettings(); updateSpeedBtn(); refreshToday(); });
+$("setVoiceBtns").addEventListener("click", (e) => { const b = e.target.closest("button[data-voice]"); if (!b) return; lsSet(K.voice, b.dataset.voice); renderSettings(); });
+$("setFlowBtns").addEventListener("click", (e) => { const b = e.target.closest("button[data-flow]"); if (!b) return; setFlowSec(Number(b.dataset.flow)); });
+$("btnVoiceTest").addEventListener("click", () => {
+  try {
+    const synth = window.speechSynthesis; synth.cancel();
+    const u = new SpeechSynthesisUtterance("これは声のテストです。聴く速度はこのくらいです。");
+    u.lang = "ja-JP"; u.rate = listenSpeed();
+    const v = getVoice(); if (v) u.voice = v;
+    synth.speak(u);
+  } catch (e) { /* ignore */ }
+});
+renderSettings();
+
+// ================================================================ 起動
+(function init() {
+  const start = lsGet(K.tab, "today");
+  if (document.body.dataset.view === "list") { /* #list で直接一覧モード */ }
+  else Tabs.show(start === "today" || document.querySelector(`[data-tab-body="${start}"]`) ? start : "today");
+  const st = AdminQueue.stats();
+  TopBand.set("unsent", st.pending > 0 ? { text: `📤 未送信の操作が${st.pending}件あります${st.needLogin ? "(ログインが必要です・設定タブ)" : ""}`, onClick: () => Tabs.show("settings") } : null);
+  if (allPosts.length) onPostsLoaded(); // 投稿の読み込みが先に終わっていた場合
+  AdminQueue.flush().catch(() => {});
+})();
+
+// テスト・第2段向けの公開
+window.Beta = { computeToday, rankCmp, dayKey, dayStartMs, cardItems, listenSpeed, setView, refreshToday, startListenNormal, startFlow, LP, FL, DG, K };
+})();
+</script>
+</body>
+</html>
