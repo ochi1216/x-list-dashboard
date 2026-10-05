@@ -229,7 +229,7 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     await p.fill("#sxLoginPass", "wrong-pass"); await p.click("#sxLoginBtn"); await sleep(250);
     check("パスフレーズ違いはメッセージのみ", (await txt(p, "#sxAuthMsg")).includes("パスフレーズが違います") && !(await tok(p)));
     st.locked = true;
-    await p.fill("#sxLoginPass", PASS); await p.click("#sxLoginBtn"); await sleep(250);
+    await p.fill("#sxLoginPass", "my-new-passphrase-ok"); await p.click("#sxLoginBtn"); await sleep(250);
     check("待ち時間(429)は秒数を表示しボタンを止める", /あと\d+秒/.test(await txt(p, "#sxAuthMsg")) && await p.$eval("#sxLoginBtn", (b) => b.disabled), await txt(p, "#sxAuthMsg"));
     st.locked = false;
     check("待ち時間が過ぎるとボタンが戻る", !!(await until(() => p.$eval("#sxLoginBtn", (b) => !b.disabled), 5000, 100)));
@@ -474,8 +474,6 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     const lc = callsOf(st, "label_create")[0];
     check("label_create{n:20}→label_next で1枚目を表示・画像も出る", lc.body.n === 20 && (await txt(p, "#lbRemain")) === "2" && (await p.$$("#lbCard img")).length === 1);
     await s.ctx.close();
-    const s2 = await open(browser, base, { token: "tok-seed", st: newState(), netDown: () => false });
-    await s2.ctx.close();
   } catch (e) { check("答え合わせ(開始)のテストが完走", false, e.stack); }
 
   // ================================================================ 5. 費用タブ
@@ -523,7 +521,6 @@ const openAll = (page) => page.evaluate(() => document.querySelectorAll("#sx-con
     check("設定タブ: 未設定の案内を表示・テスト通知ボタンは出さない", (await txt(p, "#sx-notify")).includes("まだ設定されていません") && !(await p.$("#sxNotifyTest")));
     await p.click("#topBand").catch(() => {});
     check("再生(聴く)の設定は壊れていない(速度ボタンが残る)", (await p.$$("#setSpeedBtns button")).length > 0);
-    check("初期表示(今日タブ)で週次/費用/設定の管理APIを呼びすぎない", true);
     await s.ctx.close();
     const s2 = await open(browser, base, { token: "tok-seed" });
     await sleep(500);

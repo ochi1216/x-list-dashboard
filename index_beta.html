@@ -2992,7 +2992,7 @@ function errMsg(r) {
   if (ERR_JA[code]) return ERR_JA[code];
   return `うまくいきませんでした(${code || (r && r.status) || "不明"})。`;
 }
-const setMsg = (el, text, kind) => { if (!el) return; el.textContent = text || ""; el.className = `fmsg${kind ? ` ${kind}` : ""}`; };
+const setMsg = (el, text, kind) => { if (!el) return; el.textContent = text || ""; el.classList.add("fmsg"); el.classList.remove("err", "ok"); if (kind) el.classList.add(kind); };
 
 // ---------------------------------------------------------------- 認証状態
 const Auth = { state: "unknown", setupDone: null, forceSetup: false };
