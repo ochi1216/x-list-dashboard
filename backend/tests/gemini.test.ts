@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { callGemini, isGoneResponse, resolveGeminiBase, sanitize } from "../functions/_shared/gemini.ts";
+import { callGemini, isAuthResponse, isGoneResponse, reportGeminiAuthError, resolveGeminiBase, sanitize } from "../functions/_shared/gemini.ts";
 import type { GeminiCtx } from "../functions/_shared/gemini.ts";
 
 const KEY = "AIzaSyFAKEFAKEFAKEFAKEFAKEFAKE0123456789";
@@ -261,12 +261,56 @@ test("429が続いても再試行は1回だけ(500/503も同様)", async () => {
 });
 
 test("400(通常エラー)は再試行もモデル切替もしない", async () => {
-  const h = harness([{ status: 400, body: { error: { message: "API key not valid" } } }]);
+  const h = harness([{ status: 400, body: { error: { message: "Invalid JSON payload received" } } }]);
   const r = await callGemini(h.ctx, REQ);
   assert.equal(h.fetches.length, 1);
   assert.equal(r.ok, false);
   if (!r.ok) assert.equal(r.kind, "http");
   assert.ok(!h.rpcCalls.some((c) => c.name === "model_report_gone"));
+});
+
+test("認証系エラー(401/403、400のAPI key not valid・API_KEY_INVALID・PERMISSION_DENIED)は kind=auth。再試行・モデル切替をせず使用量は記録", async () => {
+  const cases: [number, unknown][] = [
+    [401, { error: { message: "unauthorized" } }],
+    [403, { error: { message: "billing disabled" } }],
+    [403, { error: { status: "PERMISSION_DENIED", message: "The caller does not have permission" } }],
+    [400, { error: { message: "API key not valid. Please pass a valid API key.", details: [{ reason: "API_KEY_INVALID" }] } }],
+    [400, { error: { status: "PERMISSION_DENIED", message: "denied for model x" } }],
+  ];
+  for (const [status, body] of cases) {
+    const h = harness([{ status, body }, { status: 200, body: okBody("{}") }]);
+    const r = await callGemini(h.ctx, REQ);
+    assert.equal(h.fetches.length, 1, `再実行しない ${status}`);
+    assert.equal(h.sleeps.length, 0);
+    assert.equal(r.ok, false);
+    if (!r.ok) { assert.equal(r.kind, "auth", `kind ${status}`); assert.equal(r.status, status); }
+    assert.ok(!h.rpcCalls.some((c) => c.name === "model_report_gone"), "モデル切替の報告をしない");
+    assert.equal(h.usage.length, 1);
+    assert.equal(h.usage[0].status, "error");
+  }
+});
+
+test("isAuthResponse: 401/403は常に。400は本文が鍵不正・権限なしのときだけ。他は対象外", () => {
+  assert.equal(isAuthResponse(401, ""), true);
+  assert.equal(isAuthResponse(403, "anything"), true);
+  assert.equal(isAuthResponse(400, "API key not valid"), true);
+  assert.equal(isAuthResponse(400, '{"status":"PERMISSION_DENIED"}'), true);
+  assert.equal(isAuthResponse(400, "API_KEY_INVALID"), true);
+  assert.equal(isAuthResponse(400, "Invalid JSON payload"), false);
+  assert.equal(isAuthResponse(404, "API key not valid"), false);
+  assert.equal(isAuthResponse(500, "PERMISSION_DENIED"), false);
+  assert.equal(isAuthResponse(429, "quota"), false);
+});
+
+test("reportGeminiAuthError: ops_event('error','gemini_auth',…,{detail:'http <status>'},360)", async () => {
+  const calls: { name: string; args: any }[] = [];
+  const db = { rpc: async (name: string, args?: Record<string, unknown>) => { calls.push({ name, args }); return { data: null, error: null }; }, insertUsage: async () => 1 };
+  await reportGeminiAuthError(db, 403);
+  assert.deepEqual(calls, [{ name: "ops_event", args: {
+    p_level: "error", p_kind: "gemini_auth", p_message: "Gemini APIの認証エラー", p_data: { detail: "http 403" }, p_dedupe_minutes: 360,
+  } }]);
+  // 失敗しても例外にしない
+  await reportGeminiAuthError({ rpc: async () => { throw new Error("x"); }, insertUsage: async () => 1 }, 401);
 });
 
 test("404×3でモデル切替: 3回目のmodel_report_goneがswitchedなら新モデルで同一要求を再実行", async () => {

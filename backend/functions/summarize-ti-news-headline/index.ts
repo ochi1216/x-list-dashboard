@@ -57,7 +57,7 @@ Deno.serve(async (req: Request) => {
   } catch {
     body = {};
   }
-  const MAX_ITEMS = 30; // 追加: 1回の呼び出しで処理する上限
+  const MAX_ITEMS = 100; // 追加: 1回の呼び出しで処理する上限(原本は無制限。超過分は応答の dropped で返す)
   const allItems = Array.isArray(body.items) ? body.items : [];
   const items = allItems.slice(0, MAX_ITEMS);
   const dropped = Math.max(0, allItems.length - MAX_ITEMS); // 上限超過分は処理しない。無通知で落とさず件数を返す

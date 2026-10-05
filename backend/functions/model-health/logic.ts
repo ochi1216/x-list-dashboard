@@ -6,6 +6,7 @@ export const HTTP_TIMEOUT_MS = 40_000; // 1回のHTTP要求の上限(無いと�
 export const GONE_BODY_RE = /not found|no longer|deprecated|retired|decommission|discontinued/i;
 export const REHEARSE_MIN_POSTS = 20; // 予行演習の最小件数(commit の根拠になる標本の大きさ)
 export const COMMIT_MIN_RATE = 0.9;
+export const SUMMARY_MAX_OUTPUT_TOKENS = 600; // 本番の要約(summarize-x-post の本文のみ)と同じ値。違うと本番で途切れるモデルを通してしまう
 const MODEL_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._\-]{0,80}$/;
 
 export type Rpc = (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: { message: string } | null }>;
@@ -477,7 +478,7 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
         // 採点は本番と同じプロンプト・スキーマ・出力上限(scoring.ts)。要約は従来の予行演習用プロンプト。
         prompt: isSum ? `${SUMMARY_PROMPT}\n\n本文:\n${t.post.content!.slice(0, 3000)}` : scoring.buildPrompt(profileText, t.post),
         schema: isSum ? SUMMARY_SCHEMA : scoring.schema,
-        maxOutputTokens: isSum ? 800 : scoring.maxOutputTokens,
+        maxOutputTokens: isSum ? SUMMARY_MAX_OUTPUT_TOKENS : scoring.maxOutputTokens,
         extraConfig: isSum ? extraSummary : extraScore, state: stateOk,
       });
       if (r.guard) { guard = true; return; }
@@ -535,6 +536,10 @@ export async function runRehearse(deps: HealthDeps, o: RehearseOpts): Promise<Re
     if (posts.length < REHEARSE_MIN_POSTS) reasons.push(`fewer than ${REHEARSE_MIN_POSTS} posts`);
     if (rate < COMMIT_MIN_RATE) reasons.push("json success rate below 0.9");
     if (leak) reasons.push("thought parts leaked");
+    // 単価が llm_prices に無いモデルは費用が計算できない(費用ガードが効かない)ので有効化しない
+    const price = state.configs?.[model];
+    const priced = price?.in_usd != null && price?.out_usd != null && Number.isFinite(Number(price.in_usd)) && Number.isFinite(Number(price.out_usd));
+    if (!priced) reasons.push("no price in llm_prices");
     if (reasons.length > 0) {
       result.commit_blocked = reasons;
     } else {

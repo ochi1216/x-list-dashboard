@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isGone, runHealth, runRehearse, sanitize } from "../functions/model-health/logic.ts";
+import { isGone, runHealth, runRehearse, sanitize, SUMMARY_MAX_OUTPUT_TOKENS } from "../functions/model-health/logic.ts";
 import type { HealthDeps, PostRow } from "../functions/model-health/logic.ts";
 import { buildScorePrompt, parseScoreResult, SCORE_MAX_OUTPUT_TOKENS, SCORE_SCHEMA } from "../functions/_shared/scoring.ts";
 
@@ -10,7 +10,11 @@ const KEY = "AIzaSyTESTKEY1234567890";
 const STATE = {
   current_model: "gemini-2.5-flash-lite",
   candidates: ["gemini-2.5-flash-lite", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"],
-  configs: { "gemini-2.5-flash-lite": { gen_config: { default: {} }, enabled: true, in_usd: 0.1, out_usd: 0.4 } },
+  configs: {
+    "gemini-2.5-flash-lite": { gen_config: { default: {} }, enabled: true, in_usd: 0.1, out_usd: 0.4 },
+    "gemini-3.5-flash-lite": { gen_config: { default: {} }, enabled: false, in_usd: 0.1, out_usd: 0.4 }, // 単価あり(commit できる)
+    // gemini-3.1-flash-lite は設定も単価も無い(commit しない)
+  },
 };
 
 type Handler = (url: string, init: RequestInit) => { status: number; body: unknown } | Promise<{ status: number; body: unknown }>;
@@ -382,4 +386,33 @@ test("rehearse: 成功率が90%以上のときだけ commit(89%は不可)", asyn
   const ro = await runRehearse(ok.deps, { model: "gemini-3.5-flash-lite", n: 20, commit: true }) as any;
   assert.ok(ro.json_success_rate >= 0.9, `rate=${ro.json_success_rate}`);
   assert.equal(ro.committed, true);
+});
+
+test("rehearse: 要約の maxOutputTokens は本番(600)と同じ・採点は SCORE_MAX_OUTPUT_TOKENS", async () => {
+  const sums = new Set<number>();
+  const gen: Handler = (u, init) => {
+    const b = JSON.parse(String(init.body));
+    if (Object.keys(b.generationConfig.responseSchema.properties).includes("gist")) sums.add(b.generationConfig.maxOutputTokens);
+    return goodGen(u, init);
+  };
+  const { deps } = setup({ generate: gen, posts: POSTS });
+  await runRehearse(deps, { model: "gemini-3.5-flash-lite", n: 20, commit: false });
+  assert.deepEqual([...sums], [600]);
+  assert.equal(SUMMARY_MAX_OUTPUT_TOKENS, 600);
+});
+
+test("rehearse: llm_prices に単価が無いモデルは(成功率が高くても)commit しない", async () => {
+  const { deps, rec } = setup({ posts: POSTS });
+  const r = await runRehearse(deps, { model: "gemini-3.1-flash-lite", n: 20, commit: true }) as any;
+  assert.equal(r.ok, true);
+  assert.equal(r.json_success_rate, 1);
+  assert.equal(r.committed, false);
+  assert.ok(r.commit_blocked.some((x: string) => x.includes("no price")), JSON.stringify(r.commit_blocked));
+  assert.equal(rec.commits.length, 0);
+  // 片方だけ単価があるのも不可
+  const half = { ...STATE, configs: { ...STATE.configs, "gemini-3.1-flash-lite": { gen_config: { default: {} }, enabled: false, in_usd: 0.1, out_usd: null } } };
+  const h = setup({ posts: POSTS, state: half });
+  const r2 = await runRehearse(h.deps, { model: "gemini-3.1-flash-lite", n: 20, commit: true }) as any;
+  assert.equal(r2.committed, false);
+  assert.equal(h.rec.commits.length, 0);
 });

@@ -158,7 +158,7 @@ Deno.test({ name: "summarize-x-post", ...T }, async (t) => {
     const err = (status: number, message = "x") => ({ status, body: JSON.stringify({ error: { message } }) });
     // 数える
     eq(await attemptsAfter(() => { gem.failNext = [err(400, "bad request")]; }), 1, "400");
-    eq(await attemptsAfter(() => { gem.failNext = [err(403, "permission denied")]; }), 1, "403");
+    eq(await attemptsAfter(() => { gem.failNext = [err(422, "unprocessable")]; }), 1, "422");
     eq(await attemptsAfter(() => { gem.failNext = [{ status: 200, body: JSON.stringify({ candidates: [{ content: { parts: [{ text: "not json {" }] }, finishReason: "STOP" }] }) }]; }), 1, "parse(JSON不正)");
     eq(await attemptsAfter(() => { gem.failNext = [{ status: 200, body: JSON.stringify({ candidates: [{ content: { parts: [{ text: " " }] }, finishReason: "STOP" }] }) }]; }), 1, "empty");
     // 数えない
@@ -167,6 +167,11 @@ Deno.test({ name: "summarize-x-post", ...T }, async (t) => {
     eq(await attemptsAfter(() => { gem.failNext = [err(503), err(503)]; }), 0, "503");
     eq(await attemptsAfter(() => { gem.failNext = [err(404, "models/x is not found")]; }), 0, "gone(404)");
     eq(await attemptsAfter(() => { gem.failNext = [err(400, "models/x is no longer available")]; }), 0, "gone(400+model+提供終了)");
+    // 認証系(鍵の誤設定・請求停止)は数えない
+    eq(await attemptsAfter(() => { gem.failNext = [err(401, "unauthorized")]; }), 0, "401");
+    eq(await attemptsAfter(() => { gem.failNext = [err(403, "permission denied")]; }), 0, "403");
+    eq(await attemptsAfter(() => { gem.failNext = [err(400, "API key not valid. Please pass a valid API key.")]; }), 0, "400 API key not valid");
+    eq(await attemptsAfter(() => { gem.failNext = [{ status: 400, body: JSON.stringify({ error: { status: "PERMISSION_DENIED", message: "denied" } }) }]; }), 0, "400 PERMISSION_DENIED");
     eq(await attemptsAfter(() => { denyByCost(); }), 0, "費用ガード拒否");
     eq(await attemptsAfter(() => { supa.failRpc.set("get_model_state", Infinity); }), 0, "モデル状態の取得失敗");
     eq(await attemptsAfter(() => { supa.failRpc.set("cost_guard", Infinity); }), 0, "cost_guardの取得失敗");
@@ -177,6 +182,27 @@ Deno.test({ name: "summarize-x-post", ...T }, async (t) => {
     await withFn(env, "summarize-x-post", {}, async (f) => {
       for (let i = 0; i < 4; i++) { gem.failNext = [err(400, "bad request")]; await f.call({}); }
       eq(q.summary_attempts, 3, "3回で打ち止め(4回目は対象外)");
+    });
+  });
+
+  await t.step("認証エラー(403): 全投稿を試行回数に数えず、その実行を直ちに打ち切り、ops_event(gemini_auth)を出す(鍵の誤設定で一括して未処理確定しない)", async () => {
+    fresh();
+    const ps = Array.from({ length: 12 }, (_, i) => supa.addPost({ content: JA_LONG + "あ".repeat(i) }));
+    gem.failNext = Array.from({ length: 12 }, () => ({ status: 403, body: JSON.stringify({ error: { message: "billing disabled" } }) }));
+    await withFn(env, "summarize-x-post", {}, async (f) => {
+      const r = await f.call({});
+      eq([r.status, r.json.processed, r.json.stopped], [200, 0, "gemini_auth"], "打ち切り");
+      assert(gem.calls.length <= 4, `並列分(4)を超えて呼ばない: ${gem.calls.length}`);
+      assert(ps.every((p) => p.summary_attempts === 0 && p.gist === null), "試行回数は増えず未処理のまま");
+      const ev = supa.rows("ops_events").filter((e) => e.kind === "gemini_auth");
+      eq(ev.length, 1, "ops_event 1件(dedupe)");
+      eq([ev[0].level, ev[0].message, ev[0].data.detail], ["error", "Gemini APIの認証エラー", "http 403"], "内容");
+      assertNoKey(r.text + JSON.stringify(ev), "応答/ops_event");
+      eq(supa.locks.size, 0, "ロック解放");
+      // 鍵が直れば次のtickで処理される
+      gem.failNext = [];
+      const r2 = await f.call({});
+      eq(r2.json.processed, 12, "復旧後は全件処理");
     });
   });
 
@@ -362,7 +388,7 @@ Deno.test({ name: "score-x-posts", ...T }, async (t) => {
     });
   });
 
-  await t.step("通信失敗: 試行回数を増やし、4連続で中断(ops_event)、3回で failed", async () => {
+  await t.step("通信失敗(5xx): 試行回数を増やさず、4連続で中断(ops_event)。何度失敗しても failed にならない", async () => {
     fresh();
     const { p1 } = mk();
     for (let i = 0; i < 4; i++) {
@@ -374,13 +400,57 @@ Deno.test({ name: "score-x-posts", ...T }, async (t) => {
       eq(r.status, 200, "status");
       assert(r.json.failed >= 4, `failed=${r.json.failed}`);
       assert(supa.rows("ops_events").some((e) => e.kind === "score_stalled"), "score_stalled");
-      assert(p1.score_attempts >= 1 || supa.rows("x_posts").some((p) => p.score_attempts === 1), "試行回数が増える");
+      eq(supa.rows("x_posts").map((p) => p.score_attempts), supa.rows("x_posts").map(() => 0), "通信系は試行回数に数えない");
       eq(supa.locks.size, 0, "ロック解放");
       await f.call({}, CRON);
       await f.call({}, CRON);
-      const failed = supa.rows("x_posts").filter((p) => p.score_state === "failed");
-      assert(failed.length >= 1, "3回失敗したものは failed になり以後の対象外");
-      assert(failed.every((p) => p.score_attempts === 3), "failed は3回");
+      await f.call({}, CRON);
+      assert(supa.rows("x_posts").every((p) => p.score_state !== "failed" && p.score_attempts === 0), "通信失敗では failed にならない");
+      assert(p1.score_state === null, "未採点のまま次のtickで再試行できる");
+    });
+  });
+
+  await t.step("応答不正(400)は試行回数を数え、3回で failed になり以後の対象外", async () => {
+    fresh();
+    const p = supa.addPost({ author_handle: "q", summary: "s", content: `SCORE=3 ${JA_LONG}` });
+    await withFn(env, "score-x-posts", {}, async (f) => {
+      for (let i = 0; i < 4; i++) {
+        gem.failNext = [{ status: 400, body: JSON.stringify({ error: { message: "bad request" } }) }];
+        await f.call({}, CRON);
+      }
+      eq([p.score_attempts, p.score_state], [3, "failed"], "3回で failed(4回目は対象外)");
+    });
+  });
+
+  await t.step("認証エラー(403): 採点を打ち切り・試行回数を数えず・読み下しもせず・ops_event(gemini_auth)。区分確定は実行", async () => {
+    fresh();
+    const { p1, p2 } = mk();
+    supa.rows("x_posts").forEach((p) => { if (p.score_state === null && p.summary) p.score_attempts = 1; });
+    gem.failNext = Array.from({ length: 20 }, () => ({ status: 403, body: JSON.stringify({ error: { message: "permission denied" } }) }));
+    await withFn(env, "score-x-posts", {}, async (f) => {
+      const r = await f.call({}, CRON);
+      eq([r.status, r.json.stopped, r.json.scored, r.json.speech], [200, "gemini_auth", 0, 0], "打ち切り");
+      assert(gem.calls.length <= 4, `並列分を超えて呼ばない: ${gem.calls.length}`);
+      eq([p1.score_state, p1.score_attempts, p2.score_state, p2.score_attempts], [null, 1, null, 1], "試行回数は据え置き・未採点");
+      const ev = supa.rows("ops_events").filter((e) => e.kind === "gemini_auth");
+      eq(ev.length, 1, "ops_event 1件");
+      eq([ev[0].level, ev[0].data.detail], ["error", "http 403"], "内容");
+      assert(supa.rpcCalls.some((c) => c.name === "finalize_tiers"), "区分確定は実行");
+      eq(supa.locks.size, 0, "ロック解放");
+    });
+  });
+
+  await t.step("読み下しで認証エラー(401): speech_at を記録せず打ち切り、ops_event を出す", async () => {
+    fresh();
+    const p = supa.addPost({ author_handle: "s", summary: "要約", content: `SCORE=5 ${JA_LONG}` });
+    await withFn(env, "score-x-posts", {}, async (f) => {
+      gem.speechFailStatus = 401;
+      const r = await f.call({}, CRON);
+      eq([p.listen_tier, p.speech_body, p.speech_at, r.json.stopped], ["listen", null, null, "gemini_auth"], "記録しない");
+      assert(supa.rows("ops_events").some((e) => e.kind === "gemini_auth"), "ops_event");
+      gem.speechFailStatus = null;
+      await f.call({}, CRON);
+      assert(p.speech_body, "復旧後は生成される");
     });
   });
 
@@ -707,6 +777,7 @@ Deno.test({ name: "model-health", ...T }, async (t) => {
   await t.step("rehearse: 不正なモデル名/不明なactionは400、n<20も400、commit で model_config を enabled にする(本番の採点プロンプト)", async () => {
     fresh();
     seedPosts(22);
+    supa.insert("llm_prices", { model: "gemini-3.1-flash", in_usd: 0.1, out_usd: 0.4 });
     await withFn(env, "model-health", {}, async (f) => {
       eq((await f.call({ action: "rehearse", model: "../etc/passwd" }, CRON)).status, 400, "不正なモデル名");
       eq((await f.call({ action: "nope" }, CRON)).status, 400, "不明なaction");
@@ -720,12 +791,25 @@ Deno.test({ name: "model-health", ...T }, async (t) => {
       const scoreCalls = gem.calls.filter((c) => c.body.generationConfig.responseSchema?.properties?.evidence);
       assert(scoreCalls.length >= 20, "本番スキーマの採点呼び出し");
       assert(scoreCalls.every((c) => c.body.contents[0].parts[0].text.includes("W1: AI全般の新発表と実践") && c.body.generationConfig.maxOutputTokens === 300), "プロファイル入り・出力上限300");
+      const sumCalls = gem.calls.filter((c) => c.body.generationConfig.responseSchema?.properties?.gist);
+      assert(sumCalls.length >= 20 && sumCalls.every((c) => c.body.generationConfig.maxOutputTokens === 600), "要約の出力上限は本番と同じ600");
       const r = await f.call({ action: "rehearse", model: "gemini-3.1-flash", n: 20, commit: true }, CRON);
       eq([r.json.ok, r.json.committed], [true, true], "commit");
       const mc = supa.rows("model_config").find((m) => m.model === "gemini-3.1-flash")!;
       eq(mc.enabled, true, "enabled");
       assert(mc.verified_at, "verified_at");
       assertKeyOnlyInHeader();
+    });
+  });
+
+  await t.step("rehearse: llm_prices に単価が無いモデルは commit しない(enabled にしない)", async () => {
+    fresh();
+    seedPosts(22);
+    await withFn(env, "model-health", {}, async (f) => {
+      const r = await f.call({ action: "rehearse", model: "gemini-3.1-flash", n: 20, commit: true }, CRON);
+      eq([r.json.ok, r.json.committed, r.json.json_success_rate], [true, false, 1], "成功率が高くても commit しない");
+      assert(r.json.commit_blocked.some((x: string) => x.includes("no price")), "理由");
+      eq(supa.rows("model_config").find((m) => m.model === "gemini-3.1-flash")!.enabled, false, "enabled のまま");
     });
   });
 
@@ -1017,16 +1101,16 @@ Deno.test({ name: "summarize-ti-news / headline / lesson", ...T }, async (t) => 
     });
   });
 
-  await t.step("summarize-ti-news-headline: 上限(30)超過は無通知で落とさず dropped を返す", async () => {
+  await t.step("summarize-ti-news-headline: 上限(100)超過は無通知で落とさず dropped を返す", async () => {
     fresh();
     await withFn(env, "summarize-ti-news-headline", {}, async (f) => {
-      const items = Array.from({ length: 33 }, (_, i) => ({ title: `見出し${i}`, source: "A" }));
+      const items = Array.from({ length: 103 }, (_, i) => ({ title: `見出し${i}`, source: "A" }));
       const r = await f.call({ items });
       eq([r.status, r.json.ok, r.json.dropped], [200, true, 3], "dropped");
-      eq(Object.keys(r.json.results).length, 30, "処理は30件");
-      assert(!("見出し30" in r.json.results), "上限超過分は処理しない");
-      const r2 = await f.call({ items: items.slice(0, 2) });
-      eq(r2.json.dropped, 0, "上限内は 0");
+      eq(Object.keys(r.json.results).length + (r.json.deferred ?? 0), 100, "処理(または時間切れの持ち越し)は100件");
+      assert(!("見出し100" in r.json.results), "上限超過分は処理しない");
+      const r2 = await f.call({ items: items.slice(0, 40) });
+      eq([r2.json.dropped, Object.keys(r2.json.results).length], [0, 40], "40件は全て処理(旧上限30を超えても落とさない)");
     });
   });
 

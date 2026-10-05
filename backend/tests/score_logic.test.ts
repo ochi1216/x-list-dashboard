@@ -48,6 +48,14 @@ test("failureClass / wantRescore", () => {
   assert.equal(failureClass("guard"), "guard");
   assert.equal(failureClass("parse"), "content");
   assert.equal(failureClass("http"), "transport");
+  assert.equal(failureClass("auth", 403), "auth");
+  assert.equal(failureClass("empty"), "content");
+  // 通信系(network・5xx・429・提供終了)は数えない / 認証系は auth / 429・認証系以外の4xxは応答不正として数える
+  assert.equal(failureClass("network"), "transport");
+  for (const st of [429, 500, 503]) assert.equal(failureClass("http", st), "transport", `http ${st}`);
+  assert.equal(failureClass("gone", 404), "transport");
+  for (const st of [400, 404, 422]) assert.equal(failureClass("http", st), "content", `http ${st}`);
+  for (const st of [401, 403]) assert.equal(failureClass("http", st), "transport", `http ${st}(通常は auth で来る)`);
   assert.equal(wantRescore({ rescore: true }, 3, 4), true);
   assert.equal(wantRescore({ rescore: true }, 4, 4), true);
   assert.equal(wantRescore({ rescore: true }, 5, 4), false);
@@ -88,4 +96,5 @@ test("speechDecision: guard停止のときだけ記録しない。それ以外�
   assert.equal(speechDecision({ ok: false, kind: "http" }, false, false), "record_failure");
   assert.equal(speechDecision({ ok: false, kind: "network" }, false, false), "record_failure");
   assert.equal(speechDecision({ ok: false, kind: "guard" }, false, false), "guard_stop");
+  assert.equal(speechDecision({ ok: false, kind: "auth" }, false, false), "auth_stop"); // 認証エラーも記録せず打ち切る
 });

@@ -193,13 +193,15 @@ test("newBatchId / createBudget / clampInt", () => {
   assert.equal(clampInt(undefined, 3, 1, 5), 3);
 });
 
-test("isPermanentFailure: 数えるのは Gemini の4xx(429以外)・parse・empty だけ", () => {
+test("isPermanentFailure: 数えるのは Gemini の4xx(429と認証系を除く)・parse・empty だけ", () => {
   // 数える
-  for (const status of [400, 401, 403, 422]) assert.equal(isPermanentFailure({ kind: "http", status }), true, `http ${status}`);
+  for (const status of [400, 404, 422]) assert.equal(isPermanentFailure({ kind: "http", status }), true, `http ${status}`);
   assert.equal(isPermanentFailure({ kind: "parse" }), true);
   assert.equal(isPermanentFailure({ kind: "empty" }), true);
-  // 数えない: 429・5xx・通信・提供終了・費用ガード/状態取得失敗・不明
-  for (const status of [429, 500, 502, 503, 504]) assert.equal(isPermanentFailure({ kind: "http", status }), false, `http ${status}`);
+  // 数えない: 認証系(401/403・kind=auth)・429・5xx・通信・提供終了・費用ガード/状態取得失敗・不明
+  for (const status of [401, 403, 429, 500, 502, 503, 504]) assert.equal(isPermanentFailure({ kind: "http", status }), false, `http ${status}`);
+  assert.equal(isPermanentFailure({ kind: "auth", status: 403 }), false);
+  assert.equal(isPermanentFailure({ kind: "auth" }), false);
   assert.equal(isPermanentFailure({ kind: "http" }), false);
   assert.equal(isPermanentFailure({ kind: "network" }), false);
   assert.equal(isPermanentFailure({ kind: "gone", status: 404 }), false);
