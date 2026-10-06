@@ -34,6 +34,7 @@ xd_pipeline_secret_cron(cron→各関数)、xd_pipeline_secret_win(Windows→sum
    - 戻し: 関数ごとに前の版へ再デプロイ(新関数は削除でなく、cronに入れないことで停止)。
 4. summarize-x-post(005の `summary_attempts` を使う版。必ず手順1の後)。戻し: `backend/legacy/summarize-x-post.v7.ts` を再デプロイ。
 5. generate-digest-summary → TI系3関数。戻し: legacy を再デプロイ。
+   - 2026-10-06の本番配備では、generate-digest-summary は(巨大で手転記に向かないため)型を剥がしたJS(`index.js`+`_digest.js`ほか。esbuildで型除去・空白圧縮)で配備した。動作はTS版と同じ。次回の更新はCLI(`supabase functions deploy`)でTS版を配備するのが安全。
 6. 動作確認(cron前): 各関数を `x-pipeline-secret` つきで1回ずつ呼ぶ、または `select public.x_tick();` を実行し、`select * from net._http_response order by id desc limit 5;` で call_fn の結果(200)を確認。ops_events に error が無いこと。
 7. `tier_scope_from` を設定(初期設定手順の2。これを入れた時点から区分確定が始まるため、プロファイル承認とキー設定の後)。
 8. `20261005_004_cron.sql`(定期実行の登録。x_hourlyは毎時3分)。確認: cron.job が新6本+旧7本=13本。管理画面の費用・通知タブが開くこと。
