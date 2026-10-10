@@ -12,7 +12,7 @@ $RUN "$BIN/initdb" -D "$WORK/data" -A trust -E UTF8 --locale=C.UTF-8 >/dev/null
 $RUN "$BIN/pg_ctl" -D "$WORK/data" -o "-p $PORT -k $WORK -c listen_addresses=''" -l "$WORK/log" -w start >/dev/null
 PSQL="$RUN $BIN/psql -h $WORK -p $PORT -X -q -v ON_ERROR_STOP=1 -d postgres"
 $PSQL -f "$HERE/00_stub.sql"
-for f in "$MIG"/20261005_00{1a,1b,1c,1d,1e,2a,2b,2c,3a,3b,3c,4,5,6}_*.sql; do
+for f in "$MIG"/20261005_00{1a,1b,1c,1d,1e,2a,2b,2c,3a,3b,3c,4,5,6}_*.sql "$MIG"/20261009_007_*.sql; do
   echo "apply $(basename "$f")"; $PSQL -f "$f" >/dev/null
 done
 echo "== 006 を再適用(冪等性) =="; $PSQL -f "$MIG/20261005_006_review_fixes.sql" >/dev/null

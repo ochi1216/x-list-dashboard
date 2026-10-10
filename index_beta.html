@@ -222,6 +222,7 @@
   .holdline { width: 100%; text-align: left; display: flex; justify-content: space-between; align-items: center; min-height: 48px; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel); color: var(--text); font-size: 15px; cursor: pointer; }
   .holditem { padding: 10px 4px; border-bottom: 1px solid var(--line); display: flex; gap: 8px; align-items: flex-start; }
   .holditem .hi-body { flex: 1; min-width: 0; }
+  .holditem.hi-read { opacity: 0.55; }
   .holditem .hi-title { font-size: 14px; line-height: 1.5; }
   .seg-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .seg-btns button { min-height: 44px; min-width: 56px; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel2); color: var(--text); font-size: 15px; cursor: pointer; }
@@ -273,6 +274,11 @@
   .tap[disabled] { opacity: 0.35; }
   #plToast { position: fixed; left: 10px; right: 10px; top: calc(env(safe-area-inset-top) + 54px); z-index: 900; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #3b2a46; border: 1px solid var(--accent); font-size: 14px; }
   body:not([data-view="listen"]) #plToast { top: auto; bottom: calc(14px + env(safe-area-inset-bottom)); }
+  #bkToast { position: fixed; left: 10px; right: 10px; bottom: calc(14px + env(safe-area-inset-bottom)); z-index: 900; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 12px; background: #3b2a46; border: 1px solid var(--accent); font-size: 14px; }
+  #bkToast .msg { flex: 1; min-width: 0; line-height: 1.4; }
+  #bkToast button { min-height: 48px; min-width: 96px; border-radius: 10px; border: 0; background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; }
+  #holdBulk { padding: 8px 4px 4px; }
+  #holdBulk .btn { width: 100%; min-height: 48px; }
   #plToast .msg { flex: 1; min-width: 0; line-height: 1.4; }
   #plToast button { min-height: 48px; min-width: 96px; border-radius: 10px; border: 0; background: var(--accent); color: #fff; font-size: 16px; font-weight: 700; }
   .ov-full { position: absolute; top: 0; right: 0; bottom: 0; left: 0; z-index: 4; background: var(--bg); display: flex; flex-direction: column; justify-content: center; gap: 14px; padding: 24px 20px calc(24px + env(safe-area-inset-bottom)); text-align: center; }
@@ -288,8 +294,10 @@
   .fl-prog { height: 4px; background: var(--panel2); margin: 0 12px; border-radius: 2px; overflow: hidden; }
   .fl-prog i { display: block; height: 100%; width: 0; background: var(--accent); }
   #flPaused { text-align: center; color: var(--accent); font-weight: 700; padding: 6px; }
-  .fl-actions { padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); }
-  .fl-actions .btn { width: 100%; min-height: 64px; font-size: 20px; }
+  .fl-actions { padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); display: flex; gap: 8px; }
+  .fl-actions .btn { flex: 1; min-width: 0; min-height: 64px; font-size: 18px; padding-left: 4px; padding-right: 4px; }
+  .fl-actions .btn[disabled] { opacity: 0.35; }
+  .fl-actions .btn.wide { flex: 1.4; }
   /* 「‹ 今日」は既存の1行(更新ダイジェストの題名行)の中に置く。行の高さは右端の「▲ 閉じる」ピルと同じなので、固定ヘッダの高さは増えない */
   #btnBackToday { position: relative; background: none; border: 1px solid #333; border-radius: 6px; color: #ccc; font-size: 11px; cursor: pointer; padding: 3px 8px; margin-right: 8px; flex-shrink: 0; min-height: 0; line-height: normal; white-space: nowrap; }
   /* タップ領域は44px以上にする(見た目の高さ・固定ヘッダの高さは増やさない: 透明な ::before で上下左右へ広げる) */
@@ -554,6 +562,7 @@
 </div>
 
 <!-- 「これは不要」の取り消し帯: 聴く画面・中断パネル・今日タブのどこでも猶予の間は取り消せるよう body 直下に置く -->
+<div id="bkToast" hidden><span class="msg" id="bkToastMsg"></span><button type="button" id="bkUndo">取り消し</button></div>
 <div id="plToast" hidden><span class="msg" id="plToastMsg"></span><button type="button" id="plUndo">取り消し</button></div>
 
 <!-- ===== 流すモード ===== -->
@@ -566,7 +575,11 @@
   <div class="fl-card" id="flCard"></div>
   <div class="fl-prog"><i id="flProg"></i></div>
   <div id="flPaused" hidden>⏸ 一時停止中(カードをタップで再開)</div>
-  <div class="fl-actions"><button type="button" class="btn primary" id="flListen">🎧 これ聴く</button></div>
+  <div class="fl-actions">
+    <button type="button" class="btn" id="flPrev" disabled>⏮ 前へ</button>
+    <button type="button" class="btn" id="flPause">⏸ 止める</button>
+    <button type="button" class="btn primary wide" id="flListen">🎧 これ聴く</button>
+  </div>
   <div class="ov-full" id="flEnd" hidden>
     <p id="flEndMsg">🌊 流し終わりました。</p>
     <button type="button" class="btn primary big" id="flBack">今日へ戻る</button>
@@ -3127,22 +3140,81 @@ function renderDigestCard(T) {
 
 function holdItemHtml(p) {
   const demoted = p.manual_action === "demote";
-  return `<div class="holditem" data-url="${esc(p.post_url)}">
+  return `<div class="holditem${p.is_read ? " hi-read" : ""}" data-url="${esc(p.post_url)}">
     <div class="hi-body"><div class="hi-title">${scoreBadgeHtml(p)}${esc(titleOf(p))}${demoted ? ` <span class="chip-prov">手動降格</span>` : ""}</div>${kindLineHtml(p)}</div>
     <button type="button" class="btn small" data-act="promote">聴くへ戻す</button>
   </div>`;
 }
 function renderHold(T) {
-  $("holdLabel").textContent = `保留 ${T.hold.length}件`;
+  const holdUnread = T.hold.filter((x) => !x.is_read).length; // 既読(手動降格・一括既読)も一覧には残るので、未読の数を添える
+  $("holdLabel").textContent = `保留 ${T.hold.length}件${holdUnread !== T.hold.length ? `(未読${holdUnread}件)` : ""}`;
   $("btnHoldToggle").setAttribute("aria-expanded", String(holdOpen));
   $("holdCaret").textContent = holdOpen ? "⌄" : "›";
   const el = $("holdList");
   el.hidden = !holdOpen;
   if (!holdOpen) { el.innerHTML = ""; return; }
-  el.innerHTML = T.hold.length ? T.hold.map(holdItemHtml).join("") : `<div class="muted" style="padding:12px">保留はありません。</div>`;
+  const bulk = `<div id="holdBulk"><button type="button" class="btn" id="btnHoldReadAll">✅ 保留をすべて既読にする</button></div>`;
+  el.innerHTML = bulk + (T.hold.length ? T.hold.map(holdItemHtml).join("") : `<div class="muted" style="padding:12px">保留はありません。</div>`);
 }
+// ---- 保留の一括既読(日付に関係なく未読の保留すべて。サーバー側 bulk_read_hold / bulk_unread_hold)
+const BK_UNDO_MS = 8000;
+const BK = { at: null, n: 0, timer: null, busy: false };
+async function rpcJson(name, args) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, {
+      method: "POST",
+      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify(args || {}),
+    });
+    if (!res.ok) return null;
+    const t = await res.text();
+    return t ? JSON.parse(t) : {};
+  } catch (err) { return null; }
+}
+function showBulkToast(msg, undo) {
+  clearTimeout(BK.timer);
+  $("bkToastMsg").textContent = msg;
+  $("bkUndo").hidden = !undo;
+  $("bkToast").hidden = false;
+  BK.timer = setTimeout(() => { $("bkToast").hidden = true; BK.at = null; }, undo ? BK_UNDO_MS : 4000);
+}
+async function holdReadAll() {
+  if (BK.busy) return;
+  BK.busy = true;
+  try {
+    const dry = await rpcJson("bulk_read_hold", { p_dry: true });
+    if (!dry || typeof dry.n !== "number") { showBulkToast("通信できませんでした。もう一度押してください", false); return; }
+    if (dry.n === 0) { showBulkToast("未読の保留はありません", false); return; }
+    if (!window.confirm(`保留${dry.n}件をすべて既読にします。よろしいですか`)) return;
+    const r = await rpcJson("bulk_read_hold", { p_dry: false });
+    if (!r || typeof r.n !== "number" || !r.at) { showBulkToast("通信できませんでした。もう一度押してください", false); return; }
+    for (const p of allPosts) {
+      if (p.listen_tier === "hold" && !p.is_read) { p.is_read = true; p.read_via = "user"; p.read_at = r.at; }
+    }
+    listDirty = true;
+    BK.at = r.at; BK.n = r.n;
+    refreshToday();
+    showBulkToast(`保留${r.n}件を既読にしました`, true);
+  } finally { BK.busy = false; }
+}
+async function undoHoldReadAll() {
+  const at = BK.at;
+  if (!at) return;
+  clearTimeout(BK.timer);
+  const n = await rpcJson("bulk_unread_hold", { p_at: at });
+  if (n === null) { showBulkToast("取り消せませんでした。もう一度押してください", true); return; }
+  BK.at = null;
+  for (const p of allPosts) {
+    if (p.listen_tier === "hold" && p.is_read && p.read_via === "user" && p.read_at === at) { p.is_read = false; p.read_via = null; p.read_at = null; }
+  }
+  listDirty = true;
+  refreshToday();
+  showBulkToast(`${typeof n === "number" ? n : BK.n}件を未読に戻しました`, false);
+}
+$("bkUndo").addEventListener("click", undoHoldReadAll);
 $("btnHoldToggle").addEventListener("click", () => { holdOpen = !holdOpen; lsSet(K.holdOff, holdOpen ? "1" : "0"); refreshToday(); });
 $("holdList").addEventListener("click", (e) => {
+  if (e.target.closest("#btnHoldReadAll")) { holdReadAll(); return; }
   const btn = e.target.closest("button[data-act=promote]");
   if (!btn) return;
   const url = btn.closest(".holditem").dataset.url;
@@ -3677,6 +3749,7 @@ function startFlow() {
   try { if (typeof isPlaying !== "undefined" && isPlaying) { isPlaying = false; window.speechSynthesis.cancel(); updatePlayButton(); } if (autoMoveDirection !== 0) stopAutoMove(); } catch (e) { /* ignore */ }
   FL.queue = T.skim.slice();
   FL.idx = -1; FL.paused = false;
+  updateFlButtons();
   setView("flow");
   $("flEnd").hidden = true;
   $("flSecLabel").textContent = `${flowSec()}秒`;
@@ -3695,6 +3768,12 @@ function flowRender() {
   $("flPos").textContent = `${FL.idx + 1} / ${FL.queue.length}`;
   $("flProg").style.width = "0%";
   $("flPaused").hidden = !FL.paused;
+  updateFlButtons();
+}
+// 前へ(先頭では押せない)・止める/再開(状態に合わせて表示を替える)
+function updateFlButtons() {
+  $("flPrev").disabled = !(FL.idx > 0 && FL.idx < FL.queue.length);
+  $("flPause").textContent = FL.paused ? "▶ 再開" : "⏸ 止める";
 }
 function flowNext() {
   FL.idx++;
@@ -3704,6 +3783,7 @@ function flowNext() {
 }
 function flowEnd() {
   clearInterval(FL.timer); FL.timer = null;
+  updateFlButtons();
   $("flEndMsg").textContent = `🌊 流し終わりました(${FL.queue.length}件)。`;
   $("flEnd").hidden = false;
 }
@@ -3720,7 +3800,14 @@ function flowTick() {
   $("flProg").style.width = `${Math.min(100, (FL.elapsed / sec) * 100)}%`;
   if (FL.elapsed >= sec) flowNext();
 }
-function flowToggle() { if (!flowCur()) return; FL.paused = !FL.paused; $("flPaused").hidden = !FL.paused; }
+function flowToggle() { if (!flowCur()) return; FL.paused = !FL.paused; $("flPaused").hidden = !FL.paused; updateFlButtons(); }
+// ひとつ前のカードへ戻る。戻ったカードは既読のまま(「これ聴く」で未読に戻して聴く待ちへ)。時間は0からやり直す。
+function flowPrev() {
+  if (!(FL.idx > 0) || FL.idx >= FL.queue.length) return;
+  FL.idx--;
+  FL.elapsed = 0; FL.marked = false; // 既読済みなら flowTick は再記録しない(p.is_read を見る)
+  flowRender();
+}
 function flowListenThis() {
   const p = flowCur();
   if (!p) return;
@@ -3734,6 +3821,8 @@ function flowExit() {
   setView("tabs");
 }
 $("flCard").addEventListener("click", flowToggle);
+$("flPause").addEventListener("click", flowToggle);
+$("flPrev").addEventListener("click", flowPrev);
 $("flListen").addEventListener("click", flowListenThis);
 $("flExit").addEventListener("click", flowExit);
 $("flBack").addEventListener("click", flowExit);

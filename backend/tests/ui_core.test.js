@@ -80,7 +80,7 @@ const DIGEST = { day: dayKeyOf(NOW), generated_at: iso(NOW - 3600e3), model: "m"
 async function open(browser, base, o = {}) {
   const ctx = await browser.newContext({ viewport: { width: o.width || 390, height: 780 } });
   const page = await ctx.newPage();
-  const rec = { reads: [], patches: [], admin: [], errors: [], rpcMode: o.rpcMode || "ok", adminMode: o.adminMode || "ok", digest: o.digest === undefined ? "none" : o.digest, spoken: [] };
+  const rec = { bulk: [], bulkHold: o.bulkHold || 2, bulkFail: false, reads: [], patches: [], admin: [], errors: [], rpcMode: o.rpcMode || "ok", adminMode: o.adminMode || "ok", digest: o.digest === undefined ? "none" : o.digest, spoken: [] };
   page.on("pageerror", (e) => rec.errors.push(e.message));
   await page.addInitScript(({ storage, speakMs, silentMs, noWake, width }) => {
     for (const [k, v] of Object.entries(storage || {})) { try { localStorage.setItem(k, v); } catch (e) { /* */ } }
@@ -118,6 +118,16 @@ async function open(browser, base, o = {}) {
         return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(rec.digest === "none" ? [] : [rec.digest]) });
       }
       return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    }
+    if (req.method() === "POST" && url.includes("/rpc/bulk_read_hold")) {
+      const b = JSON.parse(req.postData() || "{}"); rec.bulk.push({ rpc: "read", dry: !!b.p_dry });
+      if (rec.bulkFail) return route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(b.p_dry ? { n: rec.bulkHold } : { n: rec.bulkHold, at: "2026-10-09T05:00:00.123456+00:00" }) });
+    }
+    if (req.method() === "POST" && url.includes("/rpc/bulk_unread_hold")) {
+      const b = JSON.parse(req.postData() || "{}"); rec.bulk.push({ rpc: "unread", at: b.p_at });
+      if (rec.bulkFail) return route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(rec.bulkHold) });
     }
     if (req.method() === "POST" && url.includes("/rpc/mark_read")) {
       if (rec.rpcMode === "fail") return route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
@@ -503,6 +513,69 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     check("JSエラーなし(流す)", s.rec.errors.length === 0, JSON.stringify(s.rec.errors));
     await s.ctx.close();
   } catch (e) { check("流すモードのテストが完走", false, e.stack); }
+
+  // ================================================================ 5b. 流す: 前へ・止める
+  console.log("\n--- 5b. 流す: 前へ・止める ---");
+  try {
+    const fp = [
+      mk(1, { listen_tier: "skim", tier_assigned_at: TODAY_T, score: 4 }),
+      mk(2, { listen_tier: "skim", tier_assigned_at: TODAY_T, score: 5 }),
+      mk(3, { listen_tier: "skim", tier_assigned_at: TODAY_T, score: 3 }),
+    ];
+    const s = await open(browser, base, { posts: fp, storage: { xdash_flow_sec: "3" } });
+    const p = s.page;
+    await p.click("#btnFlow");
+    check("流す: 先頭では「前へ」が押せない・止めるボタンがある", (await p.$eval("#flPrev", (e) => e.disabled)) && (await txt(p, "#flPause")).includes("止める") && (await vis(p, "#flPause")));
+    await until(async () => (await txt(p, "#flCard")).includes(titleOfId(1)), 5000);
+    check("2枚目では「前へ」が押せる", !(await p.$eval("#flPrev", (e) => e.disabled)) && /2 \/ 3/.test(await txt(p, "#flPos")));
+    await p.click("#flPrev"); await sleep(150);
+    check("前へ: 1枚目(5点)に戻る・時間は0から", (await txt(p, "#flCard")).includes(titleOfId(2)) && /1 \/ 3/.test(await txt(p, "#flPos")) && (await p.$eval("#flPrev", (e) => e.disabled)));
+    const readsBefore = s.rec.reads.length;
+    await p.click("#flPause"); await sleep(150);
+    check("止める: 一時停止表示・ボタンが「再開」に変わる", (await vis(p, "#flPaused")) && (await txt(p, "#flPause")).includes("再開"));
+    await sleep(3300);
+    check("止めている間は進まない・既読も増えない", (await txt(p, "#flCard")).includes(titleOfId(2)) && s.rec.reads.length === readsBefore);
+    await p.click("#flPause"); await sleep(150);
+    check("再開: 表示が「止める」に戻る", !(await vis(p, "#flPaused")) && (await txt(p, "#flPause")).includes("止める"));
+    check("戻った(既読済みの)カードは既読のまま・再記録しない", s.rec.reads.filter((r) => r.url.endsWith("/2")).length === 1);
+    await p.click("#flListen"); await sleep(200);
+    check("戻ったカードで「これ聴く」: 未読へ戻すPATCH(is_read=false)と昇格", s.rec.patches.some((x) => (x.body || "").includes('"is_read":false')) && (await queueOf(p)).some((q) => q.kind === "tier_set" && q.payload.how === "promote" && q.payload.post_url.endsWith("/2")), JSON.stringify(s.rec.patches));
+    check("昇格後も画面は進み、表示中の位置が正しい", /1 \/ 2/.test(await txt(p, "#flPos")));
+    check("流す(前へ/止める): 横スクロールなし・JSエラーなし", (await noOverflow(p)) && s.rec.errors.length === 0, JSON.stringify(s.rec.errors));
+    await s.ctx.close();
+  } catch (e) { check("流す(前へ・止める)のテストが完走", false, e.stack); }
+
+  // ================================================================ 5c. 保留の一括既読
+  console.log("\n--- 5c. 保留の一括既読 ---");
+  try {
+    const hp = [
+      mk(1, { listen_tier: "hold", tier_assigned_at: TODAY_T, score: 1 }),
+      mk(2, { listen_tier: "hold", tier_assigned_at: TODAY_T, score: 2 }),
+      mk(3, { listen_tier: "skim", tier_assigned_at: TODAY_T, score: 3 }),
+    ];
+    const s = await open(browser, base, { posts: hp, bulkHold: 5 });
+    const p = s.page;
+    const dialogs = [];
+    p.on("dialog", async (d) => { dialogs.push(d.message()); await d.dismiss(); });
+    await p.click("#btnHoldToggle");
+    check("保留一覧: 一括既読ボタンがある", await vis(p, "#btnHoldReadAll"));
+    await p.click("#btnHoldReadAll"); await sleep(300);
+    check("確認でキャンセル: 件数(サーバー全体=5件)を表示し、実行しない", dialogs.length === 1 && dialogs[0].includes("保留5件") && s.rec.bulk.length === 1 && s.rec.bulk[0].dry === true, JSON.stringify([dialogs, s.rec.bulk]));
+    p.removeAllListeners("dialog");
+    p.on("dialog", async (d) => { dialogs.push(d.message()); await d.accept(); });
+    await p.click("#btnHoldReadAll"); await sleep(400);
+    check("確認OK: 実行され、保留は「未読0件」・取り消し帯が出る", s.rec.bulk.filter((b) => b.rpc === "read" && !b.dry).length === 1 && (await txt(p, "#holdLabel")).includes("未読0件") && (await vis(p, "#bkToast")) && (await txt(p, "#bkToastMsg")).includes("5件"), await txt(p, "#holdLabel"));
+    const readN = await p.evaluate(() => __XD_TEST__.Beta.computeToday().hold.filter((x) => !x.is_read).length);
+    check("端末の状態も既読(未読の保留0件)・流す(skim)は影響なし", readN === 0 && (await txt(p, "#btnFlow")).includes("流す(1)"), String(readN));
+    await p.click("#bkUndo"); await sleep(400);
+    const un = s.rec.bulk.filter((b) => b.rpc === "unread");
+    check("取り消し: 実行時刻(at)を渡して未読へ戻し、保留2件が復活", un.length === 1 && un[0].at === "2026-10-09T05:00:00.123456+00:00" && (await txt(p, "#holdLabel")).includes("保留 2件"), JSON.stringify(un));
+    s.rec.bulkFail = true;
+    await p.click("#btnHoldReadAll"); await sleep(400);
+    check("通信失敗: 状態は変えず「通信できませんでした」", (await txt(p, "#bkToastMsg")).includes("通信できませんでした") && (await txt(p, "#holdLabel")).includes("保留 2件"));
+    check("保留一括: 横スクロールなし・JSエラーなし", (await noOverflow(p)) && s.rec.errors.length === 0, JSON.stringify(s.rec.errors));
+    await s.ctx.close();
+  } catch (e) { check("保留の一括既読のテストが完走", false, e.stack); }
 
   // ================================================================ 6. 上部の帯(同時に1件・優先順)
   console.log("\n--- 6. 上部の帯 ---");

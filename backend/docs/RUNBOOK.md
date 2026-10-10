@@ -40,6 +40,10 @@ xd_pipeline_secret_cron(cron→各関数)、xd_pipeline_secret_win(Windows→sum
 8. `20261005_004_cron.sql`(定期実行の登録。x_hourlyは毎時3分)。確認: cron.job が新6本+旧7本=13本。管理画面の費用・通知タブが開くこと。
 9. enforce への切替(認証必須化)は、取得スキルが `x-pipeline-secret`(win)を付けるようになり、旧cron 6/7/8(anon JWTのみ)を x_tick 等へ寄せ、取得スキルの post_url 指定の再要約(log中でも403)が無いことを確認してから。未付与の呼び出しは ops_events(unauth_call)で見るが、通知は360分に1回に集約されるため件数としては使えない。件数は `select count(*) from net._http_response ...` や関数ログで確認する。
 
+### 追加: 保留の一括既読(v1.1.0・加算のみ・冪等)
+- `20261009_007_bulk_hold.sql` を適用(`bulk_read_hold` / `bulk_unread_hold`)。戻し: `drop function public.bulk_read_hold(boolean); drop function public.bulk_unread_hold(timestamptz);`(画面は通信失敗の表示になるだけで他に影響しない)。
+- 適用後の確認: `select public.bulk_read_hold(true);`(件数だけ。何も変更しない)。
+
 ### 本番適用前チェック(006の直後・必須)
 anon / authenticated が書ける範囲を確認する。x_posts は `is_read` と `is_starred` の更新だけ、fetch_runs と digest_summaries は SELECT のみ。
 ```sql

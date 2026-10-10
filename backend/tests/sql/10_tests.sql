@@ -318,6 +318,39 @@ select pg_temp.chk('C notify_ops: 12種のラベルは日本語(kind名のまま
   (select string_agg(body ->> 'message', ' | ') from net._log where url = 'https://ntfy.sh'));
 delete from vault.secrets where name = 'xd_ntfy_topic';
 
+
+-- ============ 007: 保留の一括既読/取り消し ============
+do $$
+declare r_dry jsonb; r jsonb; v_at timestamptz; n_un int; n_dry_changed int; r2 int; n_old int; n_null int; n_manual int; v_cleared boolean;
+begin
+  truncate public.x_posts;
+  insert into public.x_posts(post_url, listen_tier, is_read) values
+    ('h_old1', 'hold', false), ('h_old2', 'hold', false), ('h_read', 'hold', true), ('h_skim', 'skim', false), ('h_listen', 'listen', false);
+  set local role anon;
+  r_dry := public.bulk_read_hold(true);
+  select count(*) into n_dry_changed from public.x_posts where is_read;
+  r := public.bulk_read_hold(false);
+  v_at := (r ->> 'at')::timestamptz;
+  r2 := (public.bulk_read_hold(false) ->> 'n')::int;
+  n_un := public.bulk_unread_hold(v_at);
+  select not is_read and read_via is null and read_at is null into v_cleared from public.x_posts where post_url = 'h_old1';
+  n_old := public.bulk_unread_hold(now() - interval '20 minutes');
+  n_null := public.bulk_unread_hold(null);
+  r := public.bulk_read_hold(false);
+  n_manual := public.bulk_unread_hold(now() - interval '1 minute');
+  reset role;
+  perform pg_temp.chk('007 dry: 未読の保留は2件(既読・他区分は数えない)', (r_dry ->> 'n')::int = 2, r_dry::text);
+  perform pg_temp.chk('007 dry: 何も変更しない(既読は最初の1件のまま)', n_dry_changed = 1, n_dry_changed::text);
+  perform pg_temp.chk('007 実行2回目: 0件', r2 = 0, r2::text);
+  perform pg_temp.chk('007 取り消し: 一括の2件だけ未読へ戻る(最初から既読のh_readは戻さない)', n_un = 2 and (select is_read from public.x_posts where post_url = 'h_read'), n_un::text);
+  perform pg_temp.chk('007 取り消し後: read_via/read_at を消す', v_cleared);
+  perform pg_temp.chk('007 15分超の時刻・NULLでは戻さない', n_old = 0 and n_null = 0, n_old || '/' || n_null);
+  perform pg_temp.chk('007 別時刻の指定では巻き込まない', n_manual = 0, n_manual::text);
+  perform pg_temp.chk('007 区分skim/listenは一括の対象外', (select not is_read from public.x_posts where post_url = 'h_skim') and (select not is_read from public.x_posts where post_url = 'h_listen'));
+  perform pg_temp.chk('007 anon に EXECUTE がある', has_function_privilege('anon', 'public.bulk_read_hold(boolean)', 'execute')
+    and has_function_privilege('anon', 'public.bulk_unread_hold(timestamptz)', 'execute'));
+end $$;
+
 -- ============ 結果 ============
 \o
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, case when ok then null else detail end as detail from _res order by n;
