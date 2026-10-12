@@ -78,7 +78,7 @@ const DIGEST = { day: dayKeyOf(NOW), generated_at: iso(NOW - 3600e3), model: "m"
 
 // ---- ページ生成(Supabase RESTとadmin-apiをモック)
 async function open(browser, base, o = {}) {
-  const ctx = await browser.newContext({ viewport: { width: o.width || 390, height: 780 } });
+  const ctx = await browser.newContext({ viewport: { width: o.width || 390, height: o.height || 780 } });
   const page = await ctx.newPage();
   const rec = { bulk: [], bulkHold: o.bulkHold || 2, bulkFail: false, reads: [], patches: [], admin: [], errors: [], rpcMode: o.rpcMode || "ok", adminMode: o.adminMode || "ok", digest: o.digest === undefined ? "none" : o.digest, spoken: [] };
   page.on("pageerror", (e) => rec.errors.push(e.message));
@@ -475,6 +475,62 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     check("端末の確保分から続きから再生できる(読み上げが始まる)", (await vis(p, "#listenView")) && (await p.evaluate(() => window.__spoken.length)) > 0 && (await txt(p, "#plCard")).includes(titleOfId(4)), await txt(p, "#plCard"));
     await s.ctx.close();
   } catch (e) { check("端末確保のテストが完走", false, e.stack); }
+
+  // ================================================================ 4b. 聴くモード: 画像・タイトルのリンク
+  console.log("\n--- 4b. 聴くモード: 画像・リンク ---");
+  try {
+    const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+    const IMG = (n) => `https://pbs.twimg.com/media/${n}.jpg?format=jpg&name=small`;
+    const L = (i, o = {}) => mk(i, { listen_tier: "listen", tier_assigned_at: TODAY_T, score: 5, ...o });
+    const imgPosts = [
+      L(1, { score: 5, image_urls: [IMG("a1"), IMG("a2")] }),
+      L(2, { score: 4, image_urls: [IMG("b1")] }),
+      L(3, { score: 3, image_urls: [] }),
+      L(4, { score: 2, image_urls: [IMG("bad1")] }),
+    ];
+    const s = await open(browser, base, { posts: imgPosts, speakMs: 100000 });
+    const p = s.page;
+    await s.ctx.route("**/pbs.twimg.com/**", (route) => route.request().url().includes("bad") ? route.fulfill({ status: 404, body: "" }) : route.fulfill({ status: 200, contentType: "image/png", body: PNG }));
+    const popups = []; s.ctx.on("page", async (pg) => { popups.push(pg); try { await pg.close(); } catch (e) { /* ignore */ } });
+    const geo = () => p.evaluate(() => { const t = document.querySelector("#listenView .pl-top").getBoundingClientRect(), b = document.querySelector("#plBottom").getBoundingClientRect(), n = document.querySelector("#plNext").getBoundingClientRect(); return { top: t.height / innerHeight, nextH: n.height, bottom: b.height / innerHeight }; });
+    await p.click("#btnListen");
+    await until(() => vis(p, "#listenView"), 3000);
+    await sleep(300);
+    const link = await p.$eval("#plCard .pl-link", (a) => ({ href: a.href, target: a.target, rel: a.rel, text: a.textContent }));
+    check("聴く: タイトルが投稿(x.com)へのリンク(新しいタブ・noopener)", link.href === "https://x.com/u1/status/1" && link.target === "_blank" && link.rel.includes("noopener") && link.text.includes(titleOfId(1)), JSON.stringify(link));
+    check("聴く: 画像1枚目(medium)と、2枚あるのでサムネイル2つ", (await p.$$("#plCard .pl-img")).length === 1 && (await p.$$("#plCard .pl-thumb")).length === 2 && (await p.$eval("#plCard .pl-img", (i) => i.src)).includes("name=medium") && (await p.$eval("#plCard .pl-img", (i) => i.src)).includes("/a1.jpg"));
+    const g1 = await geo();
+    check("画像あり: カード欄が約62%・操作ボタンは52px以上", g1.top > 0.58 && g1.top < 0.66 && g1.nextH >= 52, JSON.stringify(g1));
+    check("画像の高さは画面の約40%以内", await p.$eval("#plCard .pl-img", (i) => i.getBoundingClientRect().height <= innerHeight * 0.401));
+    await p.click("#plCard .pl-thumb[data-i='1']"); await sleep(150);
+    check("サムネイル: 2枚目に入れ替わる・再生は止まらない", (await p.$eval("#plCard .pl-img", (i) => i.src)).includes("/a2.jpg") && (await txt(p, "#plToggle")).includes("止める") && (await p.$eval("#plCard .pl-thumb[data-i='1']", (b) => b.classList.contains("on"))));
+    await p.click("#plCard .pl-img"); await sleep(150);
+    check("画像タップ: アプリ内で全画面(orig)・再生は続く", (await vis(p, "#imgViewer")) && (await p.$eval("#imgViewerImg", (i) => i.src)).includes("name=orig") && (await p.$eval("#imgViewerImg", (i) => i.src)).includes("/a2.jpg") && (await txt(p, "#plToggle")).includes("止める") && popups.length === 0);
+    await p.click("#imgViewer"); await sleep(100);
+    check("全画面: タップで閉じる", !(await vis(p, "#imgViewer")));
+    await p.click("#plNext"); await sleep(300);
+    check("次のカード: 画像1枚(サムネイルなし)・1枚目に戻る", (await p.$$("#plCard .pl-img")).length === 1 && (await p.$$("#plCard .pl-thumb")).length === 0 && (await p.$eval("#plCard .pl-img", (i) => i.src)).includes("/b1.jpg"));
+    await p.click("#plNext"); await sleep(300);
+    const g3 = await geo();
+    check("画像なしのカード: 枠なし・今まで通りの約50%配置", (await p.$$("#plCard .pl-imgbox")).length === 0 && g3.top > 0.44 && g3.top < 0.56, JSON.stringify(g3));
+    check("画像なしでもタイトルはリンク", (await p.$$("#plCard .pl-link")).length === 1);
+    await p.click("#plNext"); await sleep(400);
+    check("画像の読み込み失敗: 枠ごと消えて本文だけ・崩れない", (await p.$$("#plCard .pl-imgbox")).length === 0 && (await txt(p, "#plCard")).includes(titleOfId(4)) && (await geo()).top < 0.56);
+    check("聴く(画像): 横スクロールなし", await noOverflow(p));
+    // タイトルのリンク: 読み上げを止める(中断)・既読にしない
+    const readsBefore = s.rec.reads.length;
+    await p.click("#plCard .pl-link"); await sleep(400);
+    check("タイトルのリンク: 読み上げ停止(中断パネル)・既読にしない・新しいタブが開く", (await vis(p, "#plInterrupted")) && s.rec.reads.length === readsBefore && popups.length >= 1, `${popups.length} ${s.rec.reads.length}/${readsBefore}`);
+    check("聴く(画像・リンク): JSエラーなし", s.rec.errors.length === 0, JSON.stringify(s.rec.errors));
+    await s.ctx.close();
+    // 小さい画面(高さ667px)でも操作ボタンが押せる大きさ
+    const s2 = await open(browser, base, { posts: imgPosts.slice(0, 1), speakMs: 100000, height: 667 });
+    await s2.ctx.route("**/pbs.twimg.com/**", (route) => route.fulfill({ status: 200, contentType: "image/png", body: PNG }));
+    await s2.page.click("#btnListen"); await until(() => vis(s2.page, "#listenView"), 3000); await sleep(300);
+    const gs = await s2.page.evaluate(() => { const r = (id) => document.querySelector(id).getBoundingClientRect(); return { next: r("#plNext").height, tgl: r("#plToggle").height, rej: r("#plReject").height, bottomEdge: r("#plBottom").bottom, vh: innerHeight }; });
+    check("高さ667px: 画像ありでも操作ボタン3つが52px以上・画面内", gs.next >= 52 && gs.tgl >= 52 && gs.rej >= 52 && gs.bottomEdge <= gs.vh + 1, JSON.stringify(gs));
+    await s2.ctx.close();
+  } catch (e) { check("聴くモード(画像・リンク)のテストが完走", false, e.stack); }
 
   // ================================================================ 5. 流すモード
   console.log("\n--- 5. 流すモード ---");

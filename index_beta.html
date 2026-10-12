@@ -264,6 +264,20 @@
   .pl-card .pl-title .sbadge { height: 26px; min-width: 26px; font-size: 15px; vertical-align: 3px; }
   .pl-card .pl-body { font-size: 16px; line-height: 1.7; color: #d4d4e6; margin-top: 10px; white-space: pre-wrap; }
   .pl-card .pl-meta { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  /* 画像のあるカード: カード欄を約62%に広げ、下の操作ボタンは約38%(押しやすさの下限を保つ) */
+  #listenView.has-img .pl-top { flex-basis: 62%; }
+  #listenView.has-img .pl-bottom { flex-basis: 38%; }
+  .pl-card .pl-link { color: inherit; text-decoration: underline; text-decoration-color: rgba(255,255,255,0.35); text-underline-offset: 3px; }
+  .pl-imgbox { margin: 8px 0 4px; }
+  .pl-img { display: block; width: 100%; max-height: 40vh; object-fit: contain; background: #000; border-radius: 10px; cursor: zoom-in; }
+  .pl-thumbs { display: flex; gap: 8px; margin-top: 8px; overflow-x: auto; }
+  .pl-thumb { flex: 0 0 auto; width: 56px; height: 56px; padding: 0; border-radius: 8px; border: 2px solid transparent; background: #000; overflow: hidden; }
+  .pl-thumb.on { border-color: var(--accent); }
+  .pl-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  #imgViewer { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 950; background: rgba(0,0,0,0.94); display: flex; align-items: center; justify-content: center; }
+  #imgViewer[hidden] { display: none; }
+  #imgViewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  #imgViewer button { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: 12px; min-width: 48px; min-height: 48px; border-radius: 24px; border: 0; background: rgba(255,255,255,0.18); color: #fff; font-size: 22px; }
   .pl-bottom { flex: 0 0 50%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr); gap: 8px; padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
   .tap { border: 0; border-radius: 18px; font-size: clamp(14px, 4.6vw, 20px); font-weight: 800; color: #fff; line-height: 1.3; white-space: nowrap; min-width: 0; padding: 0 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
   .tap small { font-size: 12px; font-weight: 500; opacity: 0.8; }
@@ -562,6 +576,7 @@
 </div>
 
 <!-- 「これは不要」の取り消し帯: 聴く画面・中断パネル・今日タブのどこでも猶予の間は取り消せるよう body 直下に置く -->
+<div id="imgViewer" hidden><button type="button" id="imgViewerClose" aria-label="閉じる">✕</button><img id="imgViewerImg" alt=""></div>
 <div id="bkToast" hidden><span class="msg" id="bkToastMsg"></span><button type="button" id="bkUndo">取り消し</button></div>
 <div id="plToast" hidden><span class="msg" id="plToastMsg"></span><button type="button" id="plUndo">取り消し</button></div>
 
@@ -3411,6 +3426,54 @@ function updateToggle() {
 }
 function updateSpeedBtn() { $("plSpeed").textContent = `${listenSpeed()}x`; }
 
+// ---- 聴くモード: 画像・タイトルのリンク
+// DB由来の値なので https の画像だけ、リンクは x.com / twitter.com の投稿だけを使う
+function plImages(p) {
+  const a = Array.isArray(p && p.image_urls) ? p.image_urls : [];
+  return a.filter((u) => typeof u === "string" && /^https:\/\//i.test(u)).slice(0, 8);
+}
+function plPostLink(p) {
+  const u = p && p.post_url;
+  return typeof u === "string" && /^https:\/\/(www\.)?(x|twitter)\.com\//i.test(u) ? u : "";
+}
+const plPrefetched = new Set();
+function plPrefetchNext() { // 1枚先のカードの1枚目だけ先読みする
+  try {
+    for (let i = LP.curSeg + 1; i < LP.segs.length; i++) {
+      const sg = LP.segs[i];
+      if (sg.type !== "card") continue;
+      const first = plImages(postByUrl(sg.url))[0];
+      if (first) { const src = xImageVariant(first, "medium"); if (!plPrefetched.has(src)) { plPrefetched.add(src); const im = new Image(); im.referrerPolicy = "no-referrer"; im.src = src; } }
+      return;
+    }
+  } catch (e) { /* ignore */ }
+}
+function openImgViewer(url) { $("imgViewerImg").src = xImageVariant(url, "orig"); $("imgViewer").hidden = false; }
+function closeImgViewer() { $("imgViewer").hidden = true; $("imgViewerImg").removeAttribute("src"); }
+$("imgViewer").addEventListener("click", closeImgViewer);
+$("plCard").addEventListener("click", (e) => {
+  const th = e.target.closest(".pl-thumb");
+  if (th) { // サムネイル: 大きい画像を入れ替える(再生は止めない)
+    const i = Number(th.dataset.i), u = LP.imgs && LP.imgs[i];
+    const main = $("plCard").querySelector(".pl-img");
+    if (u && main) {
+      main.src = xImageVariant(u, "medium"); main.dataset.i = String(i);
+      $("plCard").querySelectorAll(".pl-thumb").forEach((b) => b.classList.toggle("on", b === th));
+    }
+    return;
+  }
+  const big = e.target.closest(".pl-img");
+  if (big) { const u = LP.imgs && LP.imgs[Number(big.dataset.i)]; if (u) openImgViewer(u); return; }
+  if (e.target.closest(".pl-link")) interrupt("link"); // 読み上げを止める(中断扱い。続きから再生できる・既読にはしない)。リンクは既定の動作で新しいタブへ
+});
+// 画像の読み込み失敗: 枠ごと消して本文だけにする(errorは伝播しないのでcaptureで受ける)
+$("plCard").addEventListener("error", (e) => {
+  const t = e.target;
+  if (!t || t.tagName !== "IMG") return;
+  if (t.classList.contains("pl-img")) { const box = t.closest(".pl-imgbox"); if (box) box.remove(); $("listenView").classList.remove("has-img"); }
+  else { const b = t.closest(".pl-thumb"); if (b) b.remove(); }
+}, true);
+
 function renderPlayerSeg() {
   const seg = LP.segs[LP.curSeg];
   const el = $("plCard");
@@ -3422,15 +3485,27 @@ function renderPlayerSeg() {
     pos = `${no} / ${cards.length}`;
     const p = postByUrl(seg.url) || {};
     const meta = `${esc(p.author_name || p.author_handle || "")} ${esc(p.author_handle && p.author_name ? p.author_handle : "")}`;
-    el.innerHTML = `<div class="pl-title">${scoreBadgeHtml(p)}${esc(titleOf(p))}</div>${kindLineHtml(p)}
+    const imgs = plImages(p);
+    LP.imgs = imgs;
+    const href = plPostLink(p);
+    const titleHtml = href ? `<a class="pl-link" href="${esc(href)}" target="_blank" rel="noopener noreferrer">${esc(titleOf(p))}</a>` : esc(titleOf(p));
+    const imgHtml = imgs.length
+      ? `<div class="pl-imgbox"><img class="pl-img" data-i="0" alt="" referrerpolicy="no-referrer" src="${esc(xImageVariant(imgs[0], "medium"))}">${imgs.length > 1
+        ? `<div class="pl-thumbs">${imgs.map((u, i) => `<button type="button" class="pl-thumb${i === 0 ? " on" : ""}" data-i="${i}" aria-label="画像${i + 1}"><img alt="" referrerpolicy="no-referrer" src="${esc(xImageVariant(u, "small"))}"></button>`).join("")}</div>` : ""}</div>`
+      : "";
+    el.innerHTML = `<div class="pl-title">${scoreBadgeHtml(p)}${titleHtml}</div>${kindLineHtml(p)}${imgHtml}
       <div class="pl-body">${esc(bodyOf(p))}</div><div class="pl-meta">${meta}</div>`;
+    $("listenView").classList.toggle("has-img", imgs.length > 0);
     $("plReject").disabled = false;
+    plPrefetchNext();
   } else if (seg.type === "digest") {
     pos = "今日の要点";
+    LP.imgs = []; $("listenView").classList.remove("has-img");
     el.innerHTML = `<div class="pl-title">📌 今日の要点</div>` + seg.topics.map((t) => `<div class="topic"><b>${esc(t.headline)}</b><p>${esc(t.summary)}</p></div>`).join("");
     $("plReject").disabled = true;
   } else {
     pos = "保留の見出し";
+    LP.imgs = []; $("listenView").classList.remove("has-img");
     el.innerHTML = `<div class="pl-title">🗂 保留の上位</div><div class="pl-list">${seg.urls.map((u) => { const p = postByUrl(u) || {}; return `<div>${scoreBadgeHtml(p)}${esc(titleOf(p))}</div>`; }).join("")}</div>`;
     $("plReject").disabled = true;
   }
