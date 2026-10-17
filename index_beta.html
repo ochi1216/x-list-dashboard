@@ -308,8 +308,10 @@
   .fl-prog { height: 4px; background: var(--panel2); margin: 0 12px; border-radius: 2px; overflow: hidden; }
   .fl-prog i { display: block; height: 100%; width: 0; background: var(--accent); }
   #flPaused { text-align: center; color: var(--accent); font-weight: 700; padding: 6px; }
-  .fl-actions { padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); display: flex; gap: 8px; }
-  .fl-actions .btn { flex: 1; min-width: 0; min-height: 64px; font-size: 18px; padding-left: 4px; padding-right: 4px; }
+  .fl-actions { padding: 10px 12px calc(14px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 8px; }
+  .fl-actions .fl-row { display: flex; gap: 8px; }
+  .fl-actions .btn { flex: 1; min-width: 0; min-height: 56px; font-size: 18px; padding-left: 4px; padding-right: 4px; }
+  .fl-actions .btn.skip { width: 100%; min-height: 76px; font-size: 22px; background: #2f6f5e; border-color: #2f6f5e; color: #fff; }
   .fl-actions .btn[disabled] { opacity: 0.35; }
   .fl-actions .btn.wide { flex: 1.4; }
   /* 「‹ 今日」は既存の1行(更新ダイジェストの題名行)の中に置く。行の高さは右端の「▲ 閉じる」ピルと同じなので、固定ヘッダの高さは増えない */
@@ -591,9 +593,12 @@
   <div class="fl-prog"><i id="flProg"></i></div>
   <div id="flPaused" hidden>⏸ 一時停止中(カードをタップで再開)</div>
   <div class="fl-actions">
-    <button type="button" class="btn" id="flPrev" disabled>⏮ 前へ</button>
-    <button type="button" class="btn" id="flPause">⏸ 止める</button>
-    <button type="button" class="btn primary wide" id="flListen">🎧 これ聴く</button>
+    <button type="button" class="btn skip" id="flSkip">⏭ スキップ(次へ)</button>
+    <div class="fl-row">
+      <button type="button" class="btn" id="flPrev" disabled>⏮ 前へ</button>
+      <button type="button" class="btn" id="flPause">⏸ 止める</button>
+      <button type="button" class="btn primary wide" id="flListen">🎧 これ聴く</button>
+    </div>
   </div>
   <div class="ov-full" id="flEnd" hidden>
     <p id="flEndMsg">🌊 流し終わりました。</p>
@@ -3848,6 +3853,7 @@ function flowRender() {
 // 前へ(先頭では押せない)・止める/再開(状態に合わせて表示を替える)
 function updateFlButtons() {
   $("flPrev").disabled = !(FL.idx > 0 && FL.idx < FL.queue.length);
+  $("flSkip").disabled = !(FL.idx >= 0 && FL.idx < FL.queue.length);
   $("flPause").textContent = FL.paused ? "▶ 再開" : "⏸ 止める";
 }
 function flowNext() {
@@ -3877,6 +3883,13 @@ function flowTick() {
 }
 function flowToggle() { if (!flowCur()) return; FL.paused = !FL.paused; $("flPaused").hidden = !FL.paused; updateFlButtons(); }
 // ひとつ前のカードへ戻る。戻ったカードは既読のまま(「これ聴く」で未読に戻して聴く待ちへ)。時間は0からやり直す。
+// スキップ: 待たずに次のカードへ。表示したカードは既読にする(既読なら何もしない)。最後なら終了画面へ。一時停止中も押せる。
+function flowSkip() {
+  const p = flowCur();
+  if (!p) return;
+  if (!p.is_read) { FL.marked = true; markReadQuiet(p.post_url, "flow"); }
+  flowNext();
+}
 function flowPrev() {
   if (!(FL.idx > 0) || FL.idx >= FL.queue.length) return;
   FL.idx--;
@@ -3898,6 +3911,7 @@ function flowExit() {
 $("flCard").addEventListener("click", flowToggle);
 $("flPause").addEventListener("click", flowToggle);
 $("flPrev").addEventListener("click", flowPrev);
+$("flSkip").addEventListener("click", flowSkip);
 $("flListen").addEventListener("click", flowListenThis);
 $("flExit").addEventListener("click", flowExit);
 $("flBack").addEventListener("click", flowExit);

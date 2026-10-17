@@ -601,6 +601,42 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     await s.ctx.close();
   } catch (e) { check("流す(前へ・止める)のテストが完走", false, e.stack); }
 
+  // ================================================================ 5d. 流す: スキップ
+  console.log("\n--- 5d. 流す: スキップ ---");
+  try {
+    const sp = [
+      mk(1, { listen_tier: "skim", tier_assigned_at: TODAY_T, score: 5 }),
+      mk(2, { listen_tier: "skim", tier_assigned_at: TODAY_T, score: 4 }),
+      mk(3, { listen_tier: "skim", tier_assigned_at: TODAY_T, score: 3 }),
+    ];
+    const s = await open(browser, base, { posts: sp, storage: { xdash_flow_sec: "20" } });
+    const p = s.page;
+    await p.click("#btnFlow");
+    check("スキップ: ボタンがある(全幅・76px以上)・下段の3つより上", await p.evaluate(() => { const k = document.querySelector("#flSkip").getBoundingClientRect(), pr = document.querySelector("#flPrev").getBoundingClientRect(); return k.height >= 75 && k.width > innerWidth * 0.85 && k.bottom <= pr.top + 1; }));
+    await p.click("#flSkip"); await sleep(250);
+    check("スキップ: 待たずに次のカードへ・1枚目は既読(via=flow)", /2 \/ 3/.test(await txt(p, "#flPos")) && (await txt(p, "#flCard")).includes(titleOfId(2)) && s.rec.reads.length === 1 && s.rec.reads[0].url.endsWith("/1") && s.rec.reads[0].via === "flow", JSON.stringify(s.rec.reads));
+    await p.click("#flPause"); await sleep(120);
+    await p.click("#flSkip"); await sleep(250);
+    check("一時停止中でもスキップできる(止めたまま次のカード)", /3 \/ 3/.test(await txt(p, "#flPos")) && (await vis(p, "#flPaused")) && s.rec.reads.length === 2);
+    await p.click("#flPrev"); await sleep(150);
+    await p.click("#flSkip"); await sleep(250);
+    check("前へで戻ってのスキップは既読を二重に記録しない", s.rec.reads.length === 2 && /3 \/ 3/.test(await txt(p, "#flPos")), JSON.stringify(s.rec.reads));
+    await p.click("#flSkip"); await sleep(250);
+    check("最後のカードでスキップ: 3枚目も既読・終了画面へ", s.rec.reads.length === 3 && (await vis(p, "#flEnd")) && (await txt(p, "#flEndMsg")).includes("流し終わりました"));
+    check("終了後はスキップ・前へが押せない", (await p.$eval("#flSkip", (e) => e.disabled)) && (await p.$eval("#flPrev", (e) => e.disabled)));
+    await s.ctx.close();
+    // 連打しても壊れない・小さい画面(高さ667)で全ボタンが画面内
+    const s2 = await open(browser, base, { posts: [1, 2, 3, 4, 5, 6].map((i) => mk(i, { listen_tier: "skim", tier_assigned_at: TODAY_T, score: 3 })), storage: { xdash_flow_sec: "20" }, height: 667 });
+    const p2 = s2.page;
+    await p2.click("#btnFlow");
+    const fit = await p2.evaluate(() => ["#flSkip", "#flPrev", "#flPause", "#flListen"].map((id) => { const r = document.querySelector(id).getBoundingClientRect(); return { id, h: r.height, ok: r.bottom <= innerHeight + 1 && r.height >= 52 }; }));
+    check("高さ667px: スキップ・前へ・止める・これ聴くが画面内で52px以上", fit.every((x) => x.ok), JSON.stringify(fit));
+    for (let i = 0; i < 12; i++) await p2.evaluate(() => document.querySelector("#flSkip").click());
+    await sleep(300);
+    check("連打(12回): 6枚すべて既読・終了画面・JSエラーなし・読み上げなし", s2.rec.reads.length === 6 && (await vis(p2, "#flEnd")) && s2.rec.errors.length === 0 && (await spokenOf(p2)).length === 0, `${s2.rec.reads.length} ${JSON.stringify(s2.rec.errors)}`);
+    await s2.ctx.close();
+  } catch (e) { check("流す(スキップ)のテストが完走", false, e.stack); }
+
   // ================================================================ 5c. 保留の一括既読
   console.log("\n--- 5c. 保留の一括既読 ---");
   try {
