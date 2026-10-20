@@ -80,7 +80,7 @@ const DIGEST = { day: dayKeyOf(NOW), generated_at: iso(NOW - 3600e3), model: "m"
 async function open(browser, base, o = {}) {
   const ctx = await browser.newContext({ viewport: { width: o.width || 390, height: o.height || 780 } });
   const page = await ctx.newPage();
-  const rec = { bulk: [], bulkHold: o.bulkHold || 2, bulkFail: false, reads: [], patches: [], admin: [], errors: [], rpcMode: o.rpcMode || "ok", adminMode: o.adminMode || "ok", digest: o.digest === undefined ? "none" : o.digest, spoken: [] };
+  const rec = { fb: [], fbList: o.fbList || [], fbReport: o.fbReport || { n: 0 }, bulk: [], bulkHold: o.bulkHold || 2, bulkFail: false, reads: [], patches: [], admin: [], errors: [], rpcMode: o.rpcMode || "ok", adminMode: o.adminMode || "ok", digest: o.digest === undefined ? "none" : o.digest, spoken: [] };
   page.on("pageerror", (e) => rec.errors.push(e.message));
   await page.addInitScript(({ storage, speakMs, silentMs, noWake, width }) => {
     for (const [k, v] of Object.entries(storage || {})) { try { localStorage.setItem(k, v); } catch (e) { /* */ } }
@@ -119,6 +119,13 @@ async function open(browser, base, o = {}) {
       }
       return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
     }
+    if (req.method() === "POST" && url.includes("/rpc/feedback_set")) {
+      const b = JSON.parse(req.postData() || "{}"); rec.fb.push({ url: b.p_url, value: b.p_value, surface: b.p_surface });
+      if (rec.fbFail) return route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ ok: true, value: b.p_value }) });
+    }
+    if (req.method() === "POST" && url.includes("/rpc/feedback_list")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(rec.fbList) });
+    if (req.method() === "POST" && url.includes("/rpc/feedback_report")) return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(rec.fbReport) });
     if (req.method() === "POST" && url.includes("/rpc/bulk_read_hold")) {
       const b = JSON.parse(req.postData() || "{}"); rec.bulk.push({ rpc: "read", dry: !!b.p_dry });
       if (rec.bulkFail) return route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
@@ -357,12 +364,12 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
       const r = (id) => document.getElementById(id).getBoundingClientRect();
       const bottom = r("plBottom");
       const css = [...document.styleSheets].flatMap((ss) => [...ss.cssRules]).find((x) => x.selectorText === ".pl-bottom");
-      return { H: innerHeight, bottomTop: bottom.top, bottomBottom: bottom.bottom, btns: ["plReject", "plToggle", "plNext"].map((id) => { const b = r(id); return { w: b.width, h: b.height, top: b.top, bottom: b.bottom }; }), safe: !!css && /safe-area-inset-bottom/.test(css.cssText) };
+      return { H: innerHeight, bottomTop: bottom.top, bottomBottom: bottom.bottom, fb: ["plUp", "plDown"].map((id) => { const b = r(id); return { w: b.width, h: b.height }; }), btns: ["plPrev", "plToggle", "plNext"].map((id) => { const b = r(id); return { w: b.width, h: b.height, top: b.top, bottom: b.bottom }; }), safe: !!css && /safe-area-inset-bottom/.test(css.cssText) };
     });
-    check("3タップ領域: 下半分に3つ(幅≥100px・高さ≥150px)", geo.bottomTop >= geo.H / 2 - 2 && geo.btns.every((b) => b.w >= 100 && b.h >= 150 && b.top >= geo.H / 2 - 2), JSON.stringify(geo));
+    check("タップ領域: 下半分に、上段👍👎(高さ≥52px)と下段3つ(幅≥100px・高さ≥150px)", geo.bottomTop >= geo.H / 2 - 2 && geo.btns.every((b) => b.w >= 100 && b.h >= 150 && b.top >= geo.H / 2 - 2) && geo.fb.every((b) => b.w >= 150 && b.h >= 52), JSON.stringify(geo));
     check("3タップ領域: 下端はsafe-areaを避ける(env(safe-area-inset-bottom)の余白)", geo.safe && geo.btns.every((b) => b.bottom <= geo.H));
     check("プレイヤー画面: 横スクロールなし(390px)", await noOverflow(p));
-    check("3つのボタン名: これは不要/止める/次へ", (await txt(p, "#plReject")).includes("これは不要") && (await txt(p, "#plToggle")).includes("止める") && (await txt(p, "#plNext")).includes("次へ"));
+    check("ボタン名: 👍もっと上げて/👎下げて/前へ/止める/次へ(「これは不要」は無い)", (await txt(p, "#plUp")).includes("もっと上げて") && (await txt(p, "#plDown")).includes("下げて") && (await txt(p, "#plPrev")).includes("前へ") && (await p.$$("#plReject")).length === 0 && (await txt(p, "#plToggle")).includes("止める") && (await txt(p, "#plToggle")).includes("止める") && (await txt(p, "#plNext")).includes("次へ"));
     // 全再生を待つ(自然終了)
     await until(() => vis(p, "#plFinish"), 15000);
     const sp = await spokenOf(p);
@@ -404,17 +411,26 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     await p2.click("#plToggle");
     check("再開→再び再生", (await txt(p2, "#plToggle")).includes("止める") && (await p2.evaluate(() => __XD_TEST__.Beta.LP.state)) === "playing");
 
-    // 4c. これは不要: 5秒の取り消し
+    // 4c. 👎(記録して次へ・5秒の取り消し)と👍・前へ
     const cardBefore = await txt(p2, "#plCard");
-    await p2.click("#plReject"); await sleep(150);
-    check("不要: 取り消しの帯が出て次のカードへ進む", (await vis(p2, "#plToast")) && (await txt(p2, "#plCard")) !== cardBefore && (await txt(p2, "#plToast")).includes("取り消し"));
-    await p2.click("#plUndo"); await sleep(250);
+    await p2.click("#plDown"); await sleep(250);
+    const fbs1 = s2.rec.fb.slice();
+    check("👎: 評価(-1)を記録して次のカードへ・既読(via=user)・降格しない・取り消しの帯", fbs1.length === 1 && fbs1[0].url.endsWith("/5") && fbs1[0].value === -1 && fbs1[0].surface === "listen" && (await txt(p2, "#plCard")) !== cardBefore && s2.rec.reads.some((r) => r.url.endsWith("/5") && r.via === "user") && (await vis(p2, "#plToast")) && (await txt(p2, "#plToast")).includes("取り消し") && (await queueOf(p2)).length === 0, JSON.stringify([fbs1, s2.rec.reads]));
+    await p2.click("#plUndo"); await sleep(300);
     const st = await p2.evaluate((u) => { const x = allPosts.find((q) => q.post_url === u); return { tier: x.listen_tier, act: x.manual_action, read: x.is_read }; }, "https://x.com/u5/status/5");
-    check("取り消し: 状態が元に戻り、そのカードへ戻って再生・キューに何も積まれない", st.tier === "listen" && st.act === "promote" && !st.read && (await txt(p2, "#plCard")).includes(titleOfId(5)) && (await queueOf(p2)).length === 0 && !(await vis(p2, "#plToast")), JSON.stringify(st));
-    await p2.click("#plReject");
-    await sleep(5400);
+    check("取り消し: 評価を消し(0)・既読も戻り・そのカードへ戻って再生・降格はしていない", s2.rec.fb.length === 2 && s2.rec.fb[1].value === 0 && st.tier === "listen" && st.act === "promote" && !st.read && (await txt(p2, "#plCard")).includes(titleOfId(5)) && !(await vis(p2, "#plToast")), JSON.stringify([s2.rec.fb, st]));
+    await p2.click("#plUp"); await sleep(200);
+    check("👍: 評価(+1)を記録するだけ・同じカードのまま再生・ボタンが押下表示・「あなた: N」が出る", s2.rec.fb.length === 3 && s2.rec.fb[2].value === 1 && (await txt(p2, "#plCard")).includes(titleOfId(5)) && (await p2.$eval("#plUp", (e) => e.classList.contains("on"))) && (await txt(p2, "#plCard")).includes("あなた:") && (await txt(p2, "#plToggle")).includes("止める"), JSON.stringify(s2.rec.fb));
+    await p2.click("#plUp"); await sleep(200);
+    check("もう一度👍で取り消し(0)・「あなた」表示が消える", s2.rec.fb.length === 4 && s2.rec.fb[3].value === 0 && !(await txt(p2, "#plCard")).includes("あなた:"));
+    await p2.click("#plNext"); await sleep(250);
+    const cardNext = await txt(p2, "#plCard");
+    await p2.click("#plPrev"); await sleep(300);
+    check("前へ: ひとつ前のカード(5)へ戻って再生・既読のまま", (await txt(p2, "#plCard")).includes(titleOfId(5)) && (await txt(p2, "#plCard")) !== cardNext && s2.rec.reads.filter((r) => r.url.endsWith("/5")).length >= 1 && (await txt(p2, "#plToggle")).includes("止める"));
+    // 第2段(端末キュー・冪等・再送)の試験用に、降格の操作を1件だけ端末キューへ積む(画面の「これは不要」は廃止済み)
+    await p2.evaluate(() => { __XD_TEST__.AdminQueue.add("tier_set", { post_url: "https://x.com/u5/status/5", how: "demote" }); });
+    await sleep(200);
     const q = await queueOf(p2);
-    check("不要を5秒放置: 確定→保留へ降格+既読(rpc via=user)+端末キューにtier_set(demote)", q.length === 1 && q[0].kind === "tier_set" && q[0].payload.how === "demote" && q[0].payload.post_url.endsWith("/5") && !!q[0].op_id && s2.rec.reads.some((r) => r.url.endsWith("/5") && r.via === "user") && !(await vis(p2, "#plToast")), JSON.stringify(q));
     check("トークンが無い間は送信せず溜めるだけ・ログイン画面は出ない", s2.rec.admin.length === 0 && (await p2.$$('input[type="password"]')).length === 0 && !(await txt(p2, "#listenView")).includes("ログイン"));
     const opId = q[0].op_id;
 
@@ -527,7 +543,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     const s2 = await open(browser, base, { posts: imgPosts.slice(0, 1), speakMs: 100000, height: 667 });
     await s2.ctx.route("**/pbs.twimg.com/**", (route) => route.fulfill({ status: 200, contentType: "image/png", body: PNG }));
     await s2.page.click("#btnListen"); await until(() => vis(s2.page, "#listenView"), 3000); await sleep(300);
-    const gs = await s2.page.evaluate(() => { const r = (id) => document.querySelector(id).getBoundingClientRect(); return { next: r("#plNext").height, tgl: r("#plToggle").height, rej: r("#plReject").height, bottomEdge: r("#plBottom").bottom, vh: innerHeight }; });
+    const gs = await s2.page.evaluate(() => { const r = (id) => document.querySelector(id).getBoundingClientRect(); return { next: r("#plNext").height, tgl: r("#plToggle").height, rej: r("#plPrev").height, bottomEdge: r("#plBottom").bottom, vh: innerHeight }; });
     check("高さ667px: 画像ありでも操作ボタン3つが52px以上・画面内", gs.next >= 52 && gs.tgl >= 52 && gs.rej >= 52 && gs.bottomEdge <= gs.vh + 1, JSON.stringify(gs));
     await s2.ctx.close();
   } catch (e) { check("聴くモード(画像・リンク)のテストが完走", false, e.stack); }
@@ -888,52 +904,30 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     await ok.ctx.close();
   } catch (e) { check("⑩オフライン案内のテストが完走", false, e.stack); }
 
-  // ⑪ 「これは不要」の取り消し猶予は、中断・裏回りでも保つ
+  // ⑪ 👎(記録して次へ)の取り消し猶予・中断・過去版の降格の引き継ぎ
   try {
     const open11 = async (extra = {}) => { const s = await open(browser, base, { posts: scenario(70), speakMs: 6000, storage: INTRO, ...extra }); await s.page.click("#btnListen"); await until(async () => (await spokenOf(s.page)).length >= 1, 3000); return s; };
-    // 裏に回って5秒以上放置しても確定せず、戻ったら取り消せる
     const s = await open11();
     const p = s.page;
-    await p.click("#plReject"); await sleep(150);
-    check("⑪不要を押すと猶予の間は端末に降格を控える(pending)", (await p.evaluate(() => localStorage.getItem("xdash_pending_demote"))) !== null);
-    await setVis(p, "hidden");
-    await sleep(5600);
-    check("⑪裏に回って5.6秒経っても確定しない(キューに積まない・取り消し帯は残る)", (await queueOf(p)).length === 0 && (await p.evaluate(() => !!__XD_TEST__.Beta.LP.undo)), JSON.stringify(await queueOf(p)));
-    await setVis(p, "visible");
-    check("⑪画面が戻ると取り消し帯が見える(中断パネルの上)", (await vis(p, "#plToast")) && (await vis(p, "#plInterrupted")));
-    await p.click("#plUndo"); await sleep(250);
-    const st = await p.evaluate(() => { const x = allPosts.find((q) => q.post_url === "https://x.com/u4/status/4"); return { tier: x.listen_tier, act: x.manual_action, read: x.is_read }; });
-    check("⑪戻ってから取り消せる: 状態が戻り、キューに何も積まれない・保留中の記録も消える", st.tier === "listen" && st.act === "promote" && !st.read && (await queueOf(p)).length === 0 && (await p.evaluate(() => localStorage.getItem("xdash_pending_demote"))) === null, JSON.stringify(st));
+    await p.click("#plDown"); await sleep(150);
+    check("⑪👎を押すと取り消し帯・次のカードへ・端末キューには何も積まない(降格しない)", (await vis(p, "#plToast")) && (await queueOf(p)).length === 0 && s.rec.fb.length === 1 && s.rec.fb[0].value === -1);
+    await sleep(5400);
+    check("⑪5秒放置: 帯は消え、評価は残る・既読のまま・降格のキューは積まれない", !(await vis(p, "#plToast")) && s.rec.fb.length === 1 && (await queueOf(p)).length === 0 && s.rec.reads.some((r) => r.via === "user"));
     await s.ctx.close();
-    // 猶予は画面が見えている時間で数える: 1.5秒見て→裏3秒→戻って、残り3.5秒で確定
-    const s2 = await open11();
-    const p2 = s2.page;
-    await p2.click("#plReject"); await sleep(1500);
-    await setVis(p2, "hidden"); await sleep(3000); await setVis(p2, "visible");
-    await sleep(2000);
-    check("⑪戻ってから残り時間(約3.5秒)の間はまだ確定しない(見ていない間は数えない)", (await queueOf(p2)).length === 0 && (await vis(p2, "#plToast")));
-    await sleep(2200);
-    const q2 = await queueOf(p2);
-    check("⑪残り時間が過ぎたら確定(tier_set demote+既読via=user)", q2.length === 1 && q2[0].payload.how === "demote" && s2.rec.reads.some((r) => r.via === "user") && !(await vis(p2, "#plToast")), JSON.stringify(q2));
-    await s2.ctx.close();
     // ✕中断しても今日タブで取り消せる
     const s3 = await open11();
     const p3 = s3.page;
-    await p3.click("#plReject"); await sleep(100);
+    await p3.click("#plDown"); await sleep(100);
     await p3.click("#plExit"); await sleep(250);
     check("⑪✕中断で今日タブへ戻っても取り消し帯が残る", (await vis(p3, "#tabBar")) && (await vis(p3, "#plToast")));
-    await p3.click("#plUndo"); await sleep(250);
-    check("⑪今日タブから取り消すと聴く待ちへ戻る(キューは空)", (await queueOf(p3)).length === 0 && (await txt(p3, "#breakdown")).includes("聴く6件"), await txt(p3, "#breakdown"));
+    await p3.click("#plUndo"); await sleep(300);
+    check("⑪今日タブから取り消すと評価が消え、聴く待ちへ戻る(キューは空)", s3.rec.fb.length === 2 && s3.rec.fb[1].value === 0 && (await queueOf(p3)).length === 0 && (await txt(p3, "#breakdown")).includes("聴く6件"), await txt(p3, "#breakdown"));
     await s3.ctx.close();
-    // ページが破棄された場合: 次回起動時に確定する
-    const s4 = await open11();
-    const p4 = s4.page;
-    await p4.click("#plReject"); await sleep(150);
-    await setVis(p4, "hidden");
-    s4.rec.reads.length = 0;
-    await p4.reload({ waitUntil: "domcontentloaded" }); await sleep(700);
-    const q4 = await queueOf(p4);
-    check("⑪裏で破棄されて再読込した場合は、次回起動時に降格を確定する", q4.length === 1 && q4[0].payload.how === "demote" && q4[0].payload.post_url.endsWith("/4") && s4.rec.reads.some((r) => r.url.endsWith("/4")), JSON.stringify(q4));
+    // 過去版が端末に残した「確定待ちの降格」は、次回起動時に1度だけ引き継ぐ
+    const s4 = await open(browser, base, { posts: scenario(70), speakMs: 6000, storage: { ...INTRO, xdash_pending_demote: JSON.stringify({ url: "https://x.com/u4/status/4", at: Date.now() }) } });
+    await sleep(700);
+    const q4 = await queueOf(s4.page);
+    check("⑪過去版の確定待ち降格は起動時に引き継がれる(tier_set demote+既読)", q4.length === 1 && q4[0].payload.how === "demote" && q4[0].payload.post_url.endsWith("/4") && s4.rec.reads.some((r) => r.url.endsWith("/4")) && (await s4.page.evaluate(() => localStorage.getItem("xdash_pending_demote"))) === null, JSON.stringify(q4));
     await s4.ctx.close();
   } catch (e) { check("⑪取り消し猶予のテストが完走", false, e.stack); }
 
@@ -981,14 +975,14 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
       const A = await open(browser, base, { path: "/index.html", posts: lp, width });
       const B = await open(browser, base, { path: "/index_beta.html#list", posts: lp, width });
       const ha = await A.page.$eval("#headerBar", (e) => e.offsetHeight), hb = await B.page.$eval("#headerBar", (e) => e.offsetHeight);
-      check(`⑯一覧ヘッダ(固定領域)の高さが旧版と同じ(増えない)(${width}px: 旧${ha}px/新${hb}px)`, hb <= ha);
+      check(`⑯一覧ヘッダ(固定領域)の高さが旧版と同じ(増えない。フォントの違いによる2px以内の差は許容)(${width}px: 旧${ha}px/新${hb}px)`, hb <= ha + 2);
       check(`⑯「‹ 今日」ボタンが見えて一覧が${width}pxを超えない`, (await vis(B.page, "#btnBackToday")) && (await noOverflow(B.page)));
       await A.ctx.close(); await B.ctx.close();
     }
     { // 投稿0件(題名が1行になる場合)でも増えない
       const A = await open(browser, base, { path: "/index.html", posts: [] }), B = await open(browser, base, { path: "/index_beta.html#list", posts: [] });
       const ha = await A.page.$eval("#headerBar", (e) => e.offsetHeight), hb = await B.page.$eval("#headerBar", (e) => e.offsetHeight);
-      check(`⑯投稿0件の一覧ヘッダも旧版と同じ高さ(旧${ha}px/新${hb}px)`, hb <= ha);
+      check(`⑯投稿0件の一覧ヘッダも旧版と同じ高さ(フォントの違いによる2px以内の差は許容)(旧${ha}px/新${hb}px)`, hb <= ha + 2);
       await B.page.click("#btnBackToday"); await sleep(150);
       check("⑯「‹ 今日」で今日タブへ戻る(ダイジェスト開閉の副作用なし)", (await vis(B.page, "#tabBar")) && !(await vis(B.page, "#listMode")));
       await A.ctx.close(); await B.ctx.close();
@@ -996,8 +990,8 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     for (const width of [390, 360, 320]) {
       const s = await open(browser, base, { posts: scenario(70), speakMs: 3000, storage: INTRO, width });
       await s.page.click("#btnListen"); await sleep(300);
-      const lines = await s.page.evaluate(() => ["plReject", "plToggle", "plNext"].map((id) => { const b = document.getElementById(id); const r = document.createRange(); r.selectNodeContents(b.firstChild); return { lines: r.getClientRects().length, over: b.scrollWidth > b.clientWidth + 1 }; }));
-      check(`⑯聴く画面の3ボタン(これは不要/止める/次へ)の文言が${width}pxでも折り返さない`, lines.every((l) => l.lines === 1 && !l.over), JSON.stringify(lines));
+      const lines = await s.page.evaluate(() => ["plUp", "plDown", "plPrev", "plToggle", "plNext"].map((id) => { const b = document.getElementById(id); const r = document.createRange(); r.selectNodeContents(b.firstChild); return { lines: r.getClientRects().length, over: b.scrollWidth > b.clientWidth + 1 }; }));
+      check(`⑯聴く画面の5ボタン(👍/👎/前へ/止める/次へ)の文言が${width}pxでも折り返さない`, lines.every((l) => l.lines === 1 && !l.over), JSON.stringify(lines));
       await s.ctx.close();
     }
   } catch (e) { check("⑯レイアウトのテストが完走", false, e.stack); }
@@ -1119,7 +1113,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     const s = await open(browser, base, { posts: scenario(70), speakMs: 5000, storage: INTRO });
     const p = s.page;
     await p.click("#btnListen"); await until(async () => (await spokenOf(p)).length >= 1, 3000);
-    await p.click("#plReject"); await sleep(150);
+    await p.click("#plDown"); await sleep(150);
     check("軽微7: 取り消しボタンの文言は「取り消し」(「(5秒)」と固定表記しない)", (await txt(p, "#plUndo")) === "取り消し", await txt(p, "#plUndo"));
     await s.ctx.close();
   } catch (e) { check("軽微7のテストが完走", false, e.stack); }

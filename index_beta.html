@@ -278,7 +278,19 @@
   #imgViewer[hidden] { display: none; }
   #imgViewer img { max-width: 100%; max-height: 100%; object-fit: contain; }
   #imgViewer button { position: absolute; top: calc(10px + env(safe-area-inset-top)); right: 12px; min-width: 48px; min-height: 48px; border-radius: 24px; border: 0; background: rgba(255,255,255,0.18); color: #fff; font-size: 22px; }
-  .pl-bottom { flex: 0 0 50%; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr); gap: 8px; padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
+  .pl-bottom { flex: 0 0 50%; display: flex; flex-direction: column; gap: 8px; padding: 8px 10px calc(10px + env(safe-area-inset-bottom)); }
+  .pl-bottom .fbrow { flex: 0 0 auto; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+  .pl-bottom .grid3 { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr) minmax(0, 1fr); gap: 8px; }
+  .fbbtn { min-height: 56px; border: 0; border-radius: 16px; font-size: clamp(14px, 4.4vw, 18px); font-weight: 800; color: #fff; background: #3a3a66; white-space: nowrap; padding: 0 4px; }
+  .fbbtn.up { background: #2f6f5e; } .fbbtn.down { background: #6a3a4a; }
+  .fbbtn.on { outline: 3px solid #fff; outline-offset: -3px; }
+  .fbbtn[disabled] { opacity: 0.35; }
+  .chip-me { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; background: #2a3a5a; border: 1px solid #4a6a9a; color: #cfe3ff; font-size: 11px; font-weight: 700; vertical-align: 2px; white-space: nowrap; }
+  .holditem .fbs { display: flex; gap: 6px; }
+  .holditem .fbs button { width: 44px; height: 44px; border-radius: 22px; border: 1px solid var(--line); background: var(--panel); color: #fff; font-size: 18px; }
+  .holditem .fbs button.on { background: #2f6f5e; border-color: #fff; } .holditem .fbs button.down.on { background: #6a3a4a; }
+  .fl-fbrow { display: flex; gap: 8px; } .fl-fbrow .btn { flex: 1; min-height: 44px; } .fl-fbrow .btn.up { background: #2f6f5e; border-color: #2f6f5e; color: #fff; } .fl-fbrow .btn.down { background: #6a3a4a; border-color: #6a3a4a; color: #fff; } .fl-fbrow .btn.on { outline: 3px solid #fff; outline-offset: -3px; }
+  .fbtbl { width: 100%; border-collapse: collapse; font-size: 13px; } .fbtbl th, .fbtbl td { border-bottom: 1px solid var(--line); padding: 5px 4px; text-align: right; } .fbtbl th:first-child, .fbtbl td:first-child { text-align: left; }
   .tap { border: 0; border-radius: 18px; font-size: clamp(14px, 4.6vw, 20px); font-weight: 800; color: #fff; line-height: 1.3; white-space: nowrap; min-width: 0; padding: 0 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
   .tap small { font-size: 12px; font-weight: 500; opacity: 0.8; }
   .tap:active { filter: brightness(1.25); }
@@ -560,9 +572,15 @@
     <div class="pl-card" id="plCard"></div>
   </div>
   <div class="pl-bottom" id="plBottom">
-    <button type="button" class="tap reject" id="plReject">これは不要<small>保留へ</small></button>
-    <button type="button" class="tap toggle" id="plToggle">⏸ 止める</button>
-    <button type="button" class="tap next" id="plNext">次へ ▶<small>既読にする</small></button>
+    <div class="fbrow">
+      <button type="button" class="fbbtn up" id="plUp">👍 もっと上げて</button>
+      <button type="button" class="fbbtn down" id="plDown">👎 下げて</button>
+    </div>
+    <div class="grid3">
+      <button type="button" class="tap" id="plPrev">⏮ 前へ</button>
+      <button type="button" class="tap toggle" id="plToggle">⏸ 止める</button>
+      <button type="button" class="tap next" id="plNext">次へ ▶<small>既読にする</small></button>
+    </div>
   </div>
   <div class="ov-full" id="plInterrupted" hidden>
     <p class="intr-title" id="plIntrTitle">⏸ 中断しました。</p>
@@ -593,6 +611,7 @@
   <div class="fl-prog"><i id="flProg"></i></div>
   <div id="flPaused" hidden>⏸ 一時停止中(カードをタップで再開)</div>
   <div class="fl-actions">
+    <div class="fl-fbrow"><button type="button" class="btn up" id="flUp">👍 もっと上げて</button><button type="button" class="btn down" id="flDown">👎 下げて</button></div>
     <button type="button" class="btn skip" id="flSkip">⏭ スキップ(次へ)</button>
     <div class="fl-row">
       <button type="button" class="btn" id="flPrev" disabled>⏮ 前へ</button>
@@ -2352,9 +2371,18 @@ function scoreNum(p) {
   const n = Math.round(Number(p.score));
   return Number.isFinite(n) ? Math.min(5, Math.max(1, n)) : null;
 }
+// 👍👎フィードバックの写し(post_url -> +1/-1)。サーバーの post_feedback と同期する(第1段階は記録と表示のみ)
+const FBMAP = new Map();
+function fbChipHtml(p) {
+  const v = FBMAP.get(p && p.post_url);
+  if (!v) return "";
+  const n = scoreNum(p);
+  const label = n === null ? (v > 0 ? "👍" : "👎") : String(Math.max(1, Math.min(5, n + v)));
+  return `<span class="chip-me" title="あなたの評価">あなた: ${label}</span>`;
+}
 function scoreBadgeHtml(p) {
   const n = scoreNum(p);
-  return n === null ? `<span class="sbadge s0" title="未採点">–</span>` : `<span class="sbadge s${n}" title="点数${n}">${n}</span>`;
+  return (n === null ? `<span class="sbadge s0" title="未採点">–</span>` : `<span class="sbadge s${n}" title="点数${n}">${n}</span>`) + fbChipHtml(p);
 }
 function kindLineHtml(p) {
   const kind = KIND_LABELS[p.score_kind] || "";
@@ -2735,7 +2763,6 @@ const K = {
 const CPS = 6.5;                       // 読み上げ文字/秒(速度1.0)
 const LISTEN_THRESHOLD = 4;            // 「上限で流すに回った」とみなす点数
 const EXTRA_SEC = 600;                 // 「+10分」
-const UNDO_MS = 5000;                  // 「これは不要」の取り消し猶予
 const FLOW_MARK_MS = 2000;             // 流す: 2秒以上表示で既読
 const FETCH_LATE_HOURS = 18;           // 最終取得からこれ以上で「取得遅れ」
 const SPEEDS = [0.8, 1.0, 1.2, 1.5, 1.8, 2.0];
@@ -3162,6 +3189,7 @@ function holdItemHtml(p) {
   const demoted = p.manual_action === "demote";
   return `<div class="holditem${p.is_read ? " hi-read" : ""}" data-url="${esc(p.post_url)}">
     <div class="hi-body"><div class="hi-title">${scoreBadgeHtml(p)}${esc(titleOf(p))}${demoted ? ` <span class="chip-prov">手動降格</span>` : ""}</div>${kindLineHtml(p)}</div>
+    <div class="fbs"><button type="button" class="up${FBMAP.get(p.post_url) === 1 ? " on" : ""}" data-act="up" aria-label="上げて">👍</button><button type="button" class="down${FBMAP.get(p.post_url) === -1 ? " on" : ""}" data-act="down" aria-label="下げて">👎</button></div>
     <button type="button" class="btn small" data-act="promote">聴くへ戻す</button>
   </div>`;
 }
@@ -3235,6 +3263,12 @@ $("bkUndo").addEventListener("click", undoHoldReadAll);
 $("btnHoldToggle").addEventListener("click", () => { holdOpen = !holdOpen; lsSet(K.holdOff, holdOpen ? "1" : "0"); refreshToday(); });
 $("holdList").addEventListener("click", (e) => {
   if (e.target.closest("#btnHoldReadAll")) { holdReadAll(); return; }
+  const fb = e.target.closest("button[data-act=up], button[data-act=down]");
+  if (fb) {
+    const fp = allPosts.find((x) => x.post_url === fb.closest(".holditem").dataset.url);
+    if (fp) { setFeedback(fp, fb.dataset.act === "up" ? 1 : -1, "hold"); refreshToday(); }
+    return;
+  }
   const btn = e.target.closest("button[data-act=promote]");
   if (!btn) return;
   const url = btn.closest(".holditem").dataset.url;
@@ -3258,7 +3292,7 @@ function updateBands(T, sess, rs) {
   // 未送信は AdminQueue.onChange が設定
 }
 
-window.onPostsLoaded = function () { refreshToday(); loadDigestDaily(); };
+window.onPostsLoaded = function () { refreshToday(); loadDigestDaily(); loadFeedback(); };
 window.onPostsLoading = function () { if (todayCache) refreshToday(); };
 window.onDigestRendered = function () { if (todayCache) refreshToday(); };
 
@@ -3501,22 +3535,20 @@ function renderPlayerSeg() {
     el.innerHTML = `<div class="pl-title">${scoreBadgeHtml(p)}${titleHtml}</div>${kindLineHtml(p)}${imgHtml}
       <div class="pl-body">${esc(bodyOf(p))}</div><div class="pl-meta">${meta}</div>`;
     $("listenView").classList.toggle("has-img", imgs.length > 0);
-    $("plReject").disabled = false;
     plPrefetchNext();
   } else if (seg.type === "digest") {
     pos = "今日の要点";
     LP.imgs = []; $("listenView").classList.remove("has-img");
     el.innerHTML = `<div class="pl-title">📌 今日の要点</div>` + seg.topics.map((t) => `<div class="topic"><b>${esc(t.headline)}</b><p>${esc(t.summary)}</p></div>`).join("");
-    $("plReject").disabled = true;
   } else {
     pos = "保留の見出し";
     LP.imgs = []; $("listenView").classList.remove("has-img");
     el.innerHTML = `<div class="pl-title">🗂 保留の上位</div><div class="pl-list">${seg.urls.map((u) => { const p = postByUrl(u) || {}; return `<div>${scoreBadgeHtml(p)}${esc(titleOf(p))}</div>`; }).join("")}</div>`;
-    $("plReject").disabled = true;
   }
   const rem = remainingSec(LP.items.findIndex((it) => it.seg === LP.curSeg));
   $("plPos").textContent = `${pos} ・ 残り約${minutesLabel(rem)}分`;
   el.scrollTop = 0;
+  updateFbButtons();
 }
 
 function saveSession() {
@@ -3578,14 +3610,13 @@ function startSequence(seq, opts) {
   try { if (typeof isPlaying !== "undefined" && isPlaying) { isPlaying = false; window.speechSynthesis.cancel(); updatePlayButton(); } if (autoMoveDirection !== 0) stopAutoMove(); } catch (e) { /* ignore */ }
   killPlayer();
   if (!seq.items.length) return false;
-  commitPendingDemote(); // 前の「これは不要」の猶予が残っていれば確定してから新しい再生へ
+  hideFbToast();
   setTodayNote("");
   LP.active = true; LP.state = "playing"; LP.items = seq.items; LP.segs = seq.segs; LP.cum = seq.cum;
   LP.curSeg = 0; LP.curItem = null; LP.extra = !!opts.extra;
   LP.player = makePlayer();
   setView("listen");
   showFinishPanel(false); showInterruptPanel(false);
-  hideToast();
   updateToggle(); updateSpeedBtn();
   renderPlayerSeg();
   syncWake();
@@ -3716,54 +3747,6 @@ function toggleCurrent() {
   updateToggle();
 }
 
-// これは不要 = 保留へ降格 + 既読(5秒の取り消し付き)
-function rejectCurrent() {
-  if (!LP.active || LP.state === "interrupted" || LP.state === "finished") return;
-  const p = curCardPost();
-  if (!p) return;
-  commitPendingDemote(); // 直前の保留中の降格は確定
-  const prev = { listen_tier: p.listen_tier, manual_action: p.manual_action, manual_at: p.manual_at, is_read: p.is_read, tier_reason: p.tier_reason };
-  p.listen_tier = "hold"; p.manual_action = "demote"; p.manual_at = new Date().toISOString(); p.is_read = true;
-  listDirty = true;
-  const segIdx = LP.curSeg;
-  const u = { url: p.post_url, prev, segIdx, timer: null, remain: null, until: Date.now() + UNDO_MS };
-  u.timer = setTimeout(commitPendingDemote, UNDO_MS);
-  LP.undo = u;
-  lsSet(K.pendingDemote, JSON.stringify({ url: p.post_url, at: Date.now() })); // ページが破棄されても次回起動時に確定する
-  showToast(p);
-  jumpToSeg(LP.curSeg + 1);
-}
-
-function showToast(p) {
-  $("plToastMsg").textContent = `「${titleOf(p).slice(0, 24)}」を保留へ降格しました`;
-  $("plUndo").textContent = "取り消し";
-  $("plToast").hidden = false;
-}
-function hideToast() { $("plToast").hidden = true; }
-
-function commitPendingDemote() {
-  const u = LP.undo;
-  if (!u) return;
-  LP.undo = null;
-  clearTimeout(u.timer);
-  lsDel(K.pendingDemote);
-  hideToast();
-  AdminQueue.add("tier_set", { post_url: u.url, how: "demote" });
-  ReadQueue.mark(u.url, "user").catch(() => {}); // 失敗しても既読再送キューに残る
-}
-// 画面が裏に回っている間は取り消しの猶予を進めない(確定を保留し、復帰時に「残り時間」で確定する)
-function pauseDemoteClock() {
-  const u = LP.undo;
-  if (!u || u.remain != null) return;
-  clearTimeout(u.timer); u.timer = null;
-  u.remain = Math.max(0, u.until - Date.now());
-}
-function resumeDemoteClock() {
-  const u = LP.undo;
-  if (!u || u.remain == null) return;
-  u.until = Date.now() + u.remain; u.remain = null;
-  u.timer = setTimeout(commitPendingDemote, Math.max(0, u.until - Date.now()));
-}
 // 前のページ(裏で破棄された等)で猶予中だった降格は、起動時に確定する
 function flushPendingDemoteFromLastPage() {
   let o = null;
@@ -3774,25 +3757,123 @@ function flushPendingDemoteFromLastPage() {
   ReadQueue.mark(o.url, "user").catch(() => {});
 }
 
-function undoDemote() {
-  const u = LP.undo;
-  if (!u) return;
-  LP.undo = null;
-  clearTimeout(u.timer);
-  lsDel(K.pendingDemote);
-  hideToast();
-  const p = postByUrl(u.url);
-  if (p) Object.assign(p, u.prev);
-  listDirty = true;
-  // その場でそのカードへ戻って続きを聴く
-  if (LP.active && LP.state !== "finished" && LP.state !== "interrupted" && LP.player && LP.segs[u.segIdx]) jumpToSeg(u.segIdx);
-  else if (document.body.dataset.view === "tabs") refreshToday(); // 中断中・今日タブで取り消した場合は聴く待ちへ戻るだけ(次回▶で聴ける)
+// ---- 👍👎フィードバック(第1段階: 記録して測る。採点・区分は変えない)
+// 端末キュー(既読の再送と同型): サーバー(feedback_set)へ送れなければ localStorage に積み、online・画面復帰・60秒ごとに再送する。同じ投稿は上書き。
+const LS_KEY_FB_QUEUE = "xdash_feedback_queue";
+const FeedbackQueue = (() => {
+  let busy = false;
+  const load = () => { try { const a = JSON.parse(localStorage.getItem(LS_KEY_FB_QUEUE) || "[]"); return Array.isArray(a) ? a.filter((x) => x && typeof x.url === "string" && x.url) : []; } catch (e) { return []; } };
+  const save = (a) => { try { localStorage.setItem(LS_KEY_FB_QUEUE, JSON.stringify(a)); } catch (e) { /* ignore */ } };
+  function add(url, value, surface) {
+    const a = load().filter((x) => x.url !== url);
+    a.push({ url, value, surface, at: Date.now() });
+    save(a);
+    flush();
+  }
+  async function flush() {
+    if (busy) return;
+    busy = true;
+    try {
+      for (const it of load()) {
+        const r = await rpcJson("feedback_set", { p_url: it.url, p_value: it.value, p_surface: it.surface });
+        if (r === null) break; // 通信失敗: 残して、あとで再送
+        const cur = load();
+        const same = cur.find((x) => x.url === it.url);
+        if (same && same.at === it.at) save(cur.filter((x) => x.url !== it.url)); // 送信中に上書きされていなければ削除
+      }
+    } finally { busy = false; }
+  }
+  const pending = () => load();
+  window.addEventListener("online", flush);
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") flush(); });
+  setInterval(flush, 60000);
+  return { add, flush, pending };
+})();
+function setFeedbackValue(url, v, surface) {
+  if (v === 0) FBMAP.delete(url); else FBMAP.set(url, v);
+  FeedbackQueue.add(url, v, surface || "unknown");
+}
+// 押した評価を反映(同じボタンをもう一度押すと取り消し)。戻り値は新しい値(+1/-1/0)
+function setFeedback(p, v, surface) {
+  const cur = FBMAP.get(p.post_url) || 0;
+  const nv = cur === v ? 0 : v;
+  setFeedbackValue(p.post_url, nv, surface);
+  return nv;
+}
+async function loadFeedback() {
+  const list = await rpcJson("feedback_list", { p_days: 30 });
+  if (!Array.isArray(list)) return;
+  FBMAP.clear();
+  for (const x of list) if (x && typeof x.url === "string" && (x.v === 1 || x.v === -1)) FBMAP.set(x.url, x.v);
+  for (const q of FeedbackQueue.pending()) { if (q.value === 0) FBMAP.delete(q.url); else FBMAP.set(q.url, q.value); } // 未送信の分を優先
+  if (typeof todayCache !== "undefined" && todayCache) refreshToday();
+}
+
+// ---- 聴くモード: 👍=記録のみ / 👎=記録して次へ(5秒の取り消し付き)
+const FBU = { url: null, segIdx: -1, wasRead: false, timer: null };
+function prevCardSegIdx() {
+  for (let i = LP.curSeg - 1; i >= 0; i--) if (LP.segs[i] && LP.segs[i].type === "card") return i;
+  return -1;
+}
+function updateFbButtons() {
+  const p = curCardPost();
+  const v = p ? (FBMAP.get(p.post_url) || 0) : 0;
+  $("plUp").disabled = !p; $("plDown").disabled = !p;
+  $("plUp").classList.toggle("on", v === 1); $("plDown").classList.toggle("on", v === -1);
+  $("plPrev").disabled = prevCardSegIdx() < 0;
+}
+function rerenderKeepScroll() {
+  const el = $("plCard"), top = el.scrollTop;
+  renderPlayerSeg();
+  el.scrollTop = top;
+}
+function hideFbToast() { clearTimeout(FBU.timer); FBU.url = null; $("plToast").hidden = true; }
+function showFbToast(p, segIdx, wasRead) {
+  clearTimeout(FBU.timer);
+  FBU.url = p.post_url; FBU.segIdx = segIdx; FBU.wasRead = wasRead;
+  $("plToastMsg").textContent = `「${titleOf(p).slice(0, 24)}」を 👎 で記録して次へ進みました`;
+  $("plUndo").textContent = "取り消し";
+  $("plToast").hidden = false;
+  FBU.timer = setTimeout(hideFbToast, 5000);
+}
+function listenFeedback(v) {
+  if (!LP.active || LP.state === "interrupted" || LP.state === "finished") return;
+  const p = curCardPost();
+  if (!p) return;
+  const segIdx = LP.curSeg, wasRead = !!p.is_read;
+  const nv = setFeedback(p, v, "listen");
+  if (v === -1 && nv === -1) { skipCurrent(); showFbToast(p, segIdx, wasRead); } // 下げて=記録して次へ(次へ=既読にして進む)
+  else rerenderKeepScroll();
+}
+function undoFeedbackDown() {
+  const url = FBU.url, segIdx = FBU.segIdx, wasRead = FBU.wasRead;
+  if (!url) return;
+  hideFbToast();
+  setFeedbackValue(url, 0, "listen");
+  const p = postByUrl(url);
+  if (p && !wasRead) { // 次へ(既読化)も取り消す
+    ReadQueue.remove(url);
+    p.is_read = false; listDirty = true;
+    patchIsRead([url], false).catch((e) => { console.error("unread failed", e); UnreadQueue.add(url); });
+  }
+  if (LP.active && LP.player && LP.state !== "finished" && LP.state !== "interrupted" && LP.segs[segIdx]) jumpToSeg(segIdx);
+  else if (document.body.dataset.view === "tabs") refreshToday();
+}
+// ひとつ前の記事へ戻る(今日の要点・保留の見出しには戻らない。戻った記事は既読のまま)
+function prevCurrent() {
+  if (!LP.active || LP.state === "interrupted" || LP.state === "finished" || !LP.player) return;
+  const i = prevCardSegIdx();
+  if (i < 0) return;
+  hideFbToast();
+  jumpToSeg(i);
 }
 
 $("plNext").addEventListener("click", skipCurrent);
 $("plToggle").addEventListener("click", toggleCurrent);
-$("plReject").addEventListener("click", rejectCurrent);
-$("plUndo").addEventListener("click", undoDemote);
+$("plUp").addEventListener("click", () => listenFeedback(1));
+$("plDown").addEventListener("click", () => listenFeedback(-1));
+$("plPrev").addEventListener("click", prevCurrent);
+$("plUndo").addEventListener("click", undoFeedbackDown);
 $("plExit").addEventListener("click", () => { if (LP.active && (LP.state === "playing" || LP.state === "paused")) saveSession(); leaveListen(); });
 $("plBackA").addEventListener("click", leaveListen);
 $("plBackB").addEventListener("click", leaveListen);
@@ -3811,14 +3892,12 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") {
     if (document.body.dataset.view === "listen") interrupt("hidden");
     if (document.body.dataset.view === "flow" && !FL.paused) { FL.paused = true; $("flPaused").hidden = false; } // 流すは裏では止める(既読にしない)
-    pauseDemoteClock(); // 「これは不要」は確定せず、猶予を止めておく
   } else if (document.visibilityState === "visible") {
-    resumeDemoteClock();
     if (wantWake()) acquireWake(); // 画面が戻ったら点灯の取得し直し(裏に回ると解放される)
     updateStopped();
   }
 });
-window.addEventListener("pagehide", () => { pauseDemoteClock(); if (document.body.dataset.view === "listen") interrupt("pagehide"); });
+window.addEventListener("pagehide", () => { if (document.body.dataset.view === "listen") interrupt("pagehide"); });
 
 // ================================================================ 流すモード
 const FL = { queue: [], idx: -1, elapsed: 0, marked: false, paused: false, timer: null, last: 0 };
@@ -3846,7 +3925,7 @@ function flowRender() {
   $("flCard").innerHTML = `<div class="fl-title">${scoreBadgeHtml(p)}${esc(titleOf(p))}</div>${kindLineHtml(p)}<div class="fl-body">${esc(bodyOf(p).slice(0, 200))}</div>${img}
     <div class="pl-meta">${esc(p.author_name || p.author_handle || "")}</div>`;
   $("flPos").textContent = `${FL.idx + 1} / ${FL.queue.length}`;
-  $("flProg").style.width = "0%";
+  $("flProg").style.width = `${Math.min(100, (FL.elapsed / (flowSec() * 1000)) * 100)}%`;
   $("flPaused").hidden = !FL.paused;
   updateFlButtons();
 }
@@ -3854,6 +3933,9 @@ function flowRender() {
 function updateFlButtons() {
   $("flPrev").disabled = !(FL.idx > 0 && FL.idx < FL.queue.length);
   $("flSkip").disabled = !(FL.idx >= 0 && FL.idx < FL.queue.length);
+  const cp = flowCur(), fv = cp ? (FBMAP.get(cp.post_url) || 0) : 0;
+  $("flUp").disabled = !cp; $("flDown").disabled = !cp;
+  $("flUp").classList.toggle("on", fv === 1); $("flDown").classList.toggle("on", fv === -1);
   $("flPause").textContent = FL.paused ? "▶ 再開" : "⏸ 止める";
 }
 function flowNext() {
@@ -3890,6 +3972,14 @@ function flowSkip() {
   if (!p.is_read) { FL.marked = true; markReadQuiet(p.post_url, "flow"); }
   flowNext();
 }
+// 👍=記録のみ / 👎=記録して次へ(スキップと同じ動き)
+function flowFeedback(v) {
+  const p = flowCur();
+  if (!p) return;
+  const nv = setFeedback(p, v, "flow");
+  if (v === -1 && nv === -1) flowSkip();
+  else flowRender();
+}
 function flowPrev() {
   if (!(FL.idx > 0) || FL.idx >= FL.queue.length) return;
   FL.idx--;
@@ -3912,6 +4002,8 @@ $("flCard").addEventListener("click", flowToggle);
 $("flPause").addEventListener("click", flowToggle);
 $("flPrev").addEventListener("click", flowPrev);
 $("flSkip").addEventListener("click", flowSkip);
+$("flUp").addEventListener("click", () => flowFeedback(1));
+$("flDown").addEventListener("click", () => flowFeedback(-1));
 $("flListen").addEventListener("click", flowListenThis);
 $("flExit").addEventListener("click", flowExit);
 $("flBack").addEventListener("click", flowExit);
@@ -4144,6 +4236,7 @@ function buildSkeleton() {
     <div class="card" id="wk-report"></div>
     <div class="card" id="wk-authors"></div>
     <div class="card" id="wk-flow"></div>
+    <div class="card" id="wk-fb"></div>
     <div class="card" id="wk-label"></div>`;
   $("tab-cost").innerHTML = `
     <div class="today-head"><h1>💴 費用</h1><button type="button" class="btn small" id="btnCostReload" title="再読込">↻</button></div>
@@ -4624,6 +4717,41 @@ async function loadFlow() {
   } finally { flowBusy = false; }
 }
 
+// ================================================================ 週次: 👍👎フィードバック(AIとのずれ)
+let fbRepBusy = false;
+// 公開キー(anon)でRPCを呼ぶ(第1段の rpcJson と同じ。第2段は別スコープのため、ここにも置く)
+async function rpcPublic(name, args) {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${name}`, { method: "POST", headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, "Content-Type": "application/json" }, body: JSON.stringify(args || {}) });
+    if (!res.ok) return null;
+    const t = await res.text();
+    return t ? JSON.parse(t) : {};
+  } catch (err) { return null; }
+}
+async function loadFbReport() {
+  const el = $("wk-fb");
+  if (fbRepBusy) return;
+  fbRepBusy = true;
+  try {
+    const r = await rpcPublic("feedback_report", { p_days: 28 });
+    if (!r || typeof r.n !== "number") { el.innerHTML = `<h2>👍👎 AIとのずれ</h2><div class="muted">まだ読み込めません。</div>`; return; }
+    if (r.n === 0) { el.innerHTML = `<h2>👍👎 AIとのずれ</h2><div class="muted">まだ評価がありません。聴く・流す・保留の一覧で👍👎を押すと、ここに集計されます。</div>`; return; }
+    const prov = r.n < 30 ? `<span class="badge warn">暫定(30件未満は参考値)</span>` : "";
+    const by = Array.isArray(r.by_ai) ? r.by_ai : [];
+    const low = by.filter((x) => x.score !== null && x.score <= 3).reduce((a, x) => ({ n: a.n + x.n, up: a.up + x.up }), { n: 0, up: 0 });
+    const hi = by.filter((x) => x.score !== null && x.score >= 4).reduce((a, x) => ({ n: a.n + x.n, down: a.down + x.down }), { n: 0, down: 0 });
+    const notes = [];
+    if (low.n >= 5 && low.up / low.n >= 0.5) notes.push(`AIが3点以下とした記事に👍が${low.up}件(${Math.round((100 * low.up) / low.n)}%)。AIが厳しめの可能性があります。`);
+    if (hi.n >= 5 && hi.down / hi.n >= 0.3) notes.push(`AIが4点以上とした記事に👎が${hi.down}件(${Math.round((100 * hi.down) / hi.n)}%)。AIが甘めの可能性があります。`);
+    const authors = Array.isArray(r.authors) ? r.authors : [];
+    el.innerHTML = `<div class="head2"><h2>👍👎 AIとのずれ <span class="sub">直近${esc(String(r.days))}日</span></h2>${prov}</div>
+      <div style="margin:6px 0"><b>${r.n}件</b>(👍 ${r.up} / 👎 ${r.down})</div>
+      <table class="fbtbl"><tr><th>AIの点数</th><th>件</th><th>👍</th><th>👎</th></tr>${by.map((x) => `<tr><td>${x.score === null ? "未採点" : esc(String(x.score))}</td><td>${x.n}</td><td>${x.up}</td><td>${x.down}</td></tr>`).join("")}</table>
+      ${notes.length ? `<div style="margin-top:8px">${notes.map((t) => `<div>・${esc(t)}</div>`).join("")}</div>` : ""}
+      ${authors.length ? `<div class="sub" style="margin-top:8px">投稿者別(3件以上): ${authors.map((a) => `${esc(a.handle)} 👍${a.up}/👎${a.down}`).join(" ・ ")}</div>` : ""}`;
+  } finally { fbRepBusy = false; }
+}
+
 // ================================================================ 週次: 答え合わせ
 const CLS = [["announce", "告知"], ["ref_only", "参照のみ"], ["opinion", "意見・感想"], ["other", "その他"]];
 const SCORE_HINT = { 1: "不要", 2: "弱い", 3: "ふつう", 4: "良い", 5: "最高" };
@@ -4829,7 +4957,7 @@ async function loadSettings() {
   else renderAll();
 }
 async function loadWeekly() {
-  const jobs = [loadFlow()];
+  const jobs = [loadFlow(), loadFbReport()];
   if (loggedIn()) { jobs.push(loadReport(), loadAuthors()); if (LB.phase === "idle" || LB.phase === "done" || !LB.items.length) jobs.push(lbLoad(LB.listNo)); else lbRender(); }
   else { $("wk-report").innerHTML = `<h2>📝 週次レポート</h2>${needLoginHtml("週次レポート")}`; $("wk-authors").innerHTML = `<h2>👥 投稿者通信簿</h2>${needLoginHtml("投稿者通信簿")}`; lbRender(); }
   await Promise.all(jobs);

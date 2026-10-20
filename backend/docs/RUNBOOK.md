@@ -44,6 +44,10 @@ xd_pipeline_secret_cron(cron→各関数)、xd_pipeline_secret_win(Windows→sum
 - `20261009_007_bulk_hold.sql` を適用(`bulk_read_hold` / `bulk_unread_hold`)。戻し: `drop function public.bulk_read_hold(boolean); drop function public.bulk_unread_hold(timestamptz);`(画面は通信失敗の表示になるだけで他に影響しない)。
 - 適用後の確認: `select public.bulk_read_hold(true);`(件数だけ。何も変更しない)。
 
+### 追加: 👍👎フィードバック(v1.4.0・加算のみ・冪等)
+- `20261020_008_feedback.sql` を適用(`post_feedback` 表と `feedback_set` / `feedback_list` / `feedback_report`)。戻し: `drop function public.feedback_set(text,int,text); drop function public.feedback_list(int); drop function public.feedback_report(int); drop table public.post_feedback;`(画面は通信失敗の表示になるだけ)。
+- 適用後の確認: `select public.feedback_report(28);`(集計だけ。何も変更しない)。
+
 ### 本番適用前チェック(006の直後・必須)
 anon / authenticated が書ける範囲を確認する。x_posts は `is_read` と `is_starred` の更新だけ、fetch_runs と digest_summaries は SELECT のみ。
 ```sql

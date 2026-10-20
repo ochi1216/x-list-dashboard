@@ -351,6 +351,45 @@ begin
     and has_function_privilege('anon', 'public.bulk_unread_hold(timestamptz)', 'execute'));
 end $$;
 
+-- ============ 008: 👍👎フィードバック ============
+do $$
+declare r1 jsonb; r2 jsonb; r3 jsonb; r4 jsonb; r5 jsonb; v_n int; v_row record; l jsonb; rep jsonb; direct_ok boolean := false; bad1 boolean := false; bad2 boolean := false; n_after_del int; v_s3 text;
+begin
+  truncate public.x_posts; truncate public.post_feedback;
+  insert into public.x_posts(post_url, author_handle, score, scored_model, profile_version) values
+    ('fb1', '@a', 4, 'm1', 3), ('fb2', '@a', 3, 'm1', 3), ('fb3', '@a', 2, 'm1', 3), ('fb4', '@b', 5, 'm1', 3);
+  set local role anon;
+  r1 := public.feedback_set('fb1', -1, 'listen');
+  r2 := public.feedback_set('fb1', 1, 'flow');
+  r3 := public.feedback_set('nope', 1, 'listen');
+  perform public.feedback_set('fb2', 1, 'hold'); perform public.feedback_set('fb3', 1, 'weird');
+  begin perform public.feedback_set('fb1', 2, 'listen'); exception when others then bad1 := true; end;
+  begin perform public.feedback_set(null, 1, 'listen'); exception when others then bad2 := true; end;
+  begin select count(*) into v_n from public.post_feedback; direct_ok := true; exception when insufficient_privilege then direct_ok := false; end;
+  l := public.feedback_list(30);
+  rep := public.feedback_report(28);
+  reset role;
+  select surface into v_s3 from public.post_feedback where post_url = 'fb3';
+  set local role anon;
+  r4 := public.feedback_set('fb3', 0, 'hold');
+  reset role;
+  perform pg_temp.chk('008 anon: 評価を保存でき、同じ投稿は上書き(-1→+1)', (r1 ->> 'ok')::boolean and (r2 ->> 'value')::int = 1 and (select count(*) from public.post_feedback where post_url = 'fb1') = 1 and (select value from public.post_feedback where post_url = 'fb1') = 1);
+  select * into v_row from public.post_feedback where post_url = 'fb1';
+  perform pg_temp.chk('008 押した時点のAI点数・モデル・プロファイル版・場所を併記', v_row.ai_score = 4 and v_row.scored_model = 'm1' and v_row.profile_version = 3 and v_row.surface = 'flow');
+  perform pg_temp.chk('008 存在しない投稿は保存しない(not_found)', (r3 ->> 'ok')::boolean = false and r3 ->> 'error' = 'not_found' and not exists (select 1 from public.post_feedback where post_url = 'nope'));
+  perform pg_temp.chk('008 不正な場所名は unknown に丸める', v_s3 = 'unknown', v_s3);
+  perform pg_temp.chk('008 不正な値(2)・URLなしは拒否', bad1 and bad2);
+  perform pg_temp.chk('008 anon は表を直接読めない', not direct_ok);
+  perform pg_temp.chk('008 feedback_list: 保存した3件が返る', jsonb_array_length(l) = 3, l::text);
+  perform pg_temp.chk('008 feedback_report: 件数と点数別', (rep ->> 'n')::int = 3 and (rep ->> 'up')::int = 3 and jsonb_array_length(rep -> 'by_ai') = 3, rep::text);
+  perform pg_temp.chk('008 feedback_report: 投稿者別は3件以上だけ(@aの3件)', jsonb_array_length(rep -> 'authors') = 1 and rep -> 'authors' -> 0 ->> 'handle' = '@a', (rep -> 'authors')::text);
+  perform pg_temp.chk('008 値0は削除(取り消し)', (r4 ->> 'value')::int = 0 and not exists (select 1 from public.post_feedback where post_url = 'fb3'));
+  perform pg_temp.chk('008 anon に EXECUTE がある', has_function_privilege('anon', 'public.feedback_set(text,int,text)', 'execute') and has_function_privilege('anon', 'public.feedback_list(int)', 'execute') and has_function_privilege('anon', 'public.feedback_report(int)', 'execute'));
+  delete from public.x_posts where post_url = 'fb1';
+  select count(*) into n_after_del from public.post_feedback where post_url = 'fb1';
+  perform pg_temp.chk('008 x_postsの削除(整理)の影響を受けない', n_after_del = 1);
+end $$;
+
 -- ============ 結果 ============
 \o
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, case when ok then null else detail end as detail from _res order by n;
