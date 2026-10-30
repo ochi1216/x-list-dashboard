@@ -286,9 +286,6 @@
   .fbbtn.on { outline: 3px solid #fff; outline-offset: -3px; }
   .fbbtn[disabled] { opacity: 0.35; }
   .chip-me { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 9px; background: #2a3a5a; border: 1px solid #4a6a9a; color: #cfe3ff; font-size: 11px; font-weight: 700; vertical-align: 2px; white-space: nowrap; }
-  .holditem .fbs { display: flex; gap: 6px; }
-  .holditem .fbs button { width: 44px; height: 44px; border-radius: 22px; border: 1px solid var(--line); background: var(--panel); color: #fff; font-size: 18px; }
-  .holditem .fbs button.on { background: #2f6f5e; border-color: #fff; } .holditem .fbs button.down.on { background: #6a3a4a; }
   .fl-fbrow { display: flex; gap: 8px; } .fl-fbrow .btn { flex: 1; min-height: 44px; } .fl-fbrow .btn.up { background: #2f6f5e; border-color: #2f6f5e; color: #fff; } .fl-fbrow .btn.down { background: #6a3a4a; border-color: #6a3a4a; color: #fff; } .fl-fbrow .btn.on { outline: 3px solid #fff; outline-offset: -3px; }
   .fbtbl { width: 100%; border-collapse: collapse; font-size: 13px; } .fbtbl th, .fbtbl td { border-bottom: 1px solid var(--line); padding: 5px 4px; text-align: right; } .fbtbl th:first-child, .fbtbl td:first-child { text-align: left; }
   .tap { border: 0; border-radius: 18px; font-size: clamp(14px, 4.6vw, 20px); font-weight: 800; color: #fff; line-height: 1.3; white-space: nowrap; min-width: 0; padding: 0 4px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer; touch-action: manipulation; -webkit-user-select: none; user-select: none; }
@@ -3189,7 +3186,6 @@ function holdItemHtml(p) {
   const demoted = p.manual_action === "demote";
   return `<div class="holditem${p.is_read ? " hi-read" : ""}" data-url="${esc(p.post_url)}">
     <div class="hi-body"><div class="hi-title">${scoreBadgeHtml(p)}${esc(titleOf(p))}${demoted ? ` <span class="chip-prov">手動降格</span>` : ""}</div>${kindLineHtml(p)}</div>
-    <div class="fbs"><button type="button" class="up${FBMAP.get(p.post_url) === 1 ? " on" : ""}" data-act="up" aria-label="上げて">👍</button><button type="button" class="down${FBMAP.get(p.post_url) === -1 ? " on" : ""}" data-act="down" aria-label="下げて">👎</button></div>
     <button type="button" class="btn small" data-act="promote">聴くへ戻す</button>
   </div>`;
 }
@@ -3263,12 +3259,6 @@ $("bkUndo").addEventListener("click", undoHoldReadAll);
 $("btnHoldToggle").addEventListener("click", () => { holdOpen = !holdOpen; lsSet(K.holdOff, holdOpen ? "1" : "0"); refreshToday(); });
 $("holdList").addEventListener("click", (e) => {
   if (e.target.closest("#btnHoldReadAll")) { holdReadAll(); return; }
-  const fb = e.target.closest("button[data-act=up], button[data-act=down]");
-  if (fb) {
-    const fp = allPosts.find((x) => x.post_url === fb.closest(".holditem").dataset.url);
-    if (fp) { setFeedback(fp, fb.dataset.act === "up" ? 1 : -1, "hold"); refreshToday(); }
-    return;
-  }
   const btn = e.target.closest("button[data-act=promote]");
   if (!btn) return;
   const url = btn.closest(".holditem").dataset.url;

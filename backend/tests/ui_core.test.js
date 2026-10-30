@@ -667,6 +667,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     p.on("dialog", async (d) => { dialogs.push(d.message()); await d.dismiss(); });
     await p.click("#btnHoldToggle");
     check("保留一覧: 一括既読ボタンがある", await vis(p, "#btnHoldReadAll"));
+    check("保留一覧: 行に👍👎ボタンは無い(「聴くへ戻す」だけ)", (await p.$$("#holdList .holditem .fbs")).length === 0 && (await p.$$("#holdList .holditem button[data-act=promote]")).length >= 1);
     await p.click("#btnHoldReadAll"); await sleep(300);
     check("確認でキャンセル: 件数(サーバー全体=5件)を表示し、実行しない", dialogs.length === 1 && dialogs[0].includes("保留5件") && s.rec.bulk.length === 1 && s.rec.bulk[0].dry === true, JSON.stringify([dialogs, s.rec.bulk]));
     p.removeAllListeners("dialog");
