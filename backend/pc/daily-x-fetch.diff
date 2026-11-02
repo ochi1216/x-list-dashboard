@@ -1,0 +1,32 @@
+23a24,41
+> # 2026-11-02: 取得の失敗を数秒でntfyへ通知する(2026-11-01/02の約30時間の無通知停止を受けて追加)。
+> # 通知先(ntfyのトピック)はPCに置かず、サーバー(Supabase)の関数 fetch_report が既存の通知経路で送る。
+> # 失敗の種類: auth_expired / extension_not_connected / run_failed。同じ種類は360分に1回へ束ねられる。
+> # 通知の失敗で取得そのものは止めない(ログに残すだけ)。
+> $SupabaseUrl = "https://bpdkdwtevqsqgsxlahmd.supabase.co"
+> $NotifyAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwZGtkd3RldnFzcWdzeGxhaG1kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI1NjAzOTcsImV4cCI6MjA5ODEzNjM5N30.zfxxhgVCmZAGrk2LiSnPpEHg72mjdJne3c6YOXBeCTs"
+> function Send-FetchReport([string]$Kind, [string]$Detail) {
+>     try {
+>         $body = @{ p_kind = $Kind; p_detail = $Detail } | ConvertTo-Json -Compress
+>         $null = Invoke-RestMethod -Method Post -Uri "$SupabaseUrl/rest/v1/rpc/fetch_report" `
+>             -Headers @{ "apikey" = $NotifyAnonKey; "Authorization" = "Bearer $NotifyAnonKey" } `
+>             -ContentType "application/json" -Body $body -TimeoutSec 20
+>         "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] ntfy notified via fetch_report: $Kind" | Out-File -FilePath $LogFile -Append -Encoding utf8
+>     } catch {
+>         "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] ntfy notify FAILED ($Kind): $($_.Exception.Message)" | Out-File -FilePath $LogFile -Append -Encoding utf8
+>     }
+> }
+> 
+63a82
+> $claudeExit = $LASTEXITCODE
+76a96,105
+>     Send-FetchReport "auth_expired" ""
+> }
+> elseif ($outputText -match "no browser is connected" -or $outputText -match "extension is not connected" -or $outputText -match "Browser extension is not connected") {
+>     # 2026-11-02: Chrome拡張(claude-in-chrome)が接続されておらず、リストを読めずに終了した場合
+>     "[$timestamp] !!!! EXTENSION NOT CONNECTED: claude-in-chrome extension is not connected -- open Chrome and check '/chrome' in 'claude --chrome'. This run read no posts. !!!!" | Out-File -FilePath $LogFile -Append -Encoding utf8
+>     Send-FetchReport "extension_not_connected" ""
+> }
+> elseif ($claudeExit -ne 0) {
+>     "[$timestamp] !!!! RUN FAILED: claude exited with code $claudeExit !!!!" | Out-File -FilePath $LogFile -Append -Encoding utf8
+>     Send-FetchReport "run_failed" "exit code $claudeExit"

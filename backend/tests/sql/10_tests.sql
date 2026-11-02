@@ -390,6 +390,30 @@ begin
   perform pg_temp.chk('008 x_postsの削除(整理)の影響を受けない', n_after_del = 1);
 end $$;
 
+-- ============ 009: PCの取得の失敗通知 ============
+do $$
+declare r1 jsonb; r2 jsonb; r3 jsonb; r4 jsonb; r5 jsonb; n_ev int; n_sent int; msgs text; r6 jsonb;
+begin
+  truncate public.ops_events; truncate net._log;
+  perform public.set_secret('xd_ntfy_topic', 't_fetch');
+  set local role anon;
+  r1 := public.fetch_report('auth_expired', 'http 401 <script>');
+  r2 := public.fetch_report('auth_expired', 'again');
+  r3 := public.fetch_report('extension_not_connected', null);
+  r4 := public.fetch_report('run_failed', repeat('x', 500));
+  r5 := public.fetch_report('hack', 'x');
+  reset role;
+  select count(*) into n_ev from public.ops_events where kind like 'fetch\_%' escape '\';
+  select count(*), string_agg(body ->> 'message', ' | ') into n_sent, msgs from net._log where url = 'https://ntfy.sh';
+  perform pg_temp.chk('009 anon: 3種の失敗を受け付ける(認証切れ・拡張未接続・実行失敗)', (r1 ->> 'ok')::boolean and (r3 ->> 'ok')::boolean and (r4 ->> 'ok')::boolean, r1::text || r3::text || r4::text);
+  perform pg_temp.chk('009 許可しない種類は拒否(invalid_kind)・記録しない', (r5 ->> 'ok')::boolean = false and r5 ->> 'error' = 'invalid_kind');
+  perform pg_temp.chk('009 同じ種類は360分に1回へ束ねる(2回目は記録しない)', (r1 ->> 'recorded')::boolean and not (r2 ->> 'recorded')::boolean and n_ev = 3, n_ev::text);
+  perform pg_temp.chk('009 ntfyへ3件送られる・日本語・kind名のままではない', n_sent = 3 and msgs ~ 'Claudeのログインが切れました' and msgs ~ '拡張が接続されていません' and msgs ~ '取得が失敗しました' and msgs !~ 'fetch_', msgs);
+  perform pg_temp.chk('009 詳細は無害化される(記号を除く・80字まで)', (select data ->> 'detail' from public.ops_events where kind = 'fetch_auth_expired' limit 1) !~ '[<>]' and (select length(data ->> 'detail') from public.ops_events where kind = 'fetch_run_failed') <= 80);
+  perform pg_temp.chk('009 anon に fetch_report の EXECUTE がある・notify_ops は無い', has_function_privilege('anon', 'public.fetch_report(text,text)', 'execute') and not has_function_privilege('anon', 'public.notify_ops()', 'execute'));
+  delete from vault.secrets where name = 'xd_ntfy_topic';
+end $$;
+
 -- ============ 結果 ============
 \o
 select n, case when ok then 'PASS' else 'FAIL' end as result, name, case when ok then null else detail end as detail from _res order by n;

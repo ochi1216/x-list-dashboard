@@ -48,6 +48,12 @@ xd_pipeline_secret_cron(cron→各関数)、xd_pipeline_secret_win(Windows→sum
 - `20261020_008_feedback.sql` を適用(`post_feedback` 表と `feedback_set` / `feedback_list` / `feedback_report`)。戻し: `drop function public.feedback_set(text,int,text); drop function public.feedback_list(int); drop function public.feedback_report(int); drop table public.post_feedback;`(画面は通信失敗の表示になるだけ)。
 - 適用後の確認: `select public.feedback_report(28);`(集計だけ。何も変更しない)。
 
+### 追加: PC取得の失敗通知(v1.5.0・置換のみ・冪等)
+- `20261102_009_fetch_report.sql` を適用(`fetch_report` 追加、`notify_ops` と `x_hourly` の置換)。**006を再適用すると notify_ops / x_hourly が古い版に戻る**ので、006を再適用したら009も再適用する(tests/sql/run.sh は両方を再適用する)。
+- 戻し: `drop function public.fetch_report(text,text);` と、006の `notify_ops` / `x_hourly` を再適用。
+- 適用後の確認: `select public.fetch_report('invalid_probe','x');` が `{"ok":false,"error":"invalid_kind"}`(通知は飛ばない)。本物の種類で呼ぶと、実際にntfyが鳴る。
+- PC側: `backend/pc/daily-x-fetch.ps1` で `x-follow-list\scripts\daily-x-fetch.ps1` を置き換える。
+
 ### 本番適用前チェック(006の直後・必須)
 anon / authenticated が書ける範囲を確認する。x_posts は `is_read` と `is_starred` の更新だけ、fetch_runs と digest_summaries は SELECT のみ。
 ```sql
