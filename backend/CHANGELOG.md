@@ -1,5 +1,8 @@
 # CHANGELOG(backend)
 
+## v1.5.1 (2026-11-04) 聴くモード: 重要度の読み上げ廃止・点灯警告の撤去
+- UI(index_beta.html): 冒頭の「重要度5。」読み上げを削除(手動昇格の「昇格した投稿です」は残す)。聴く画面上部の常設の赤い警告「画面を点灯したままにしてください…」を削除。サーバー側の変更なし。
+
 ## v1.5.0 (2026-11-02) PC取得の失敗を数秒でntfyへ通知
 - DB(追加・置換): `fetch_report(kind, detail)`(公開キーで呼べる。種類は auth_expired / extension_not_connected / run_failed の3つだけ。同じ種類は360分に1回)、`notify_ops` に3種の日本語ラベル、`x_hourly` の「取得なし」警告を20→15時間へ短縮。マイグレーション 20261102_009_fetch_report.sql。
 - PC側: `backend/pc/daily-x-fetch.ps1`(更新後の全文)と差分。取得スクリプトが失敗の種類を判別して `fetch_report` を呼ぶ。通知先のトピックはPCに置かない。PCへの反映は手動(backend/pc/README.md)。

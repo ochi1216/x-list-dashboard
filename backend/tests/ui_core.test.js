@@ -378,7 +378,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     const holdIdx = idx("保留の上位");
     check("初回の読み上げ順: 要点→(聴く)→保留の見出し", sp[0].includes("今日の要点") && idx("要点見出し甲") > 0 && idx("要点見出し乙") > idx("要点見出し甲") && holdIdx > Math.max(...order), JSON.stringify(sp.slice(0, 4)));
     check("聴く順: 手動昇格→点数降順→新しい順(桜..)", order.every((v, i) => v > 0 && (i === 0 || v > order[i - 1])) && order[0] > idx("要点見出し乙"), JSON.stringify(order));
-    check("冒頭の重要度は5点と手動昇格のみ(「重要度5」「昇格した投稿です」)", sp.filter((x) => x.includes("重要度5")).length === 2 && sp.filter((x) => x.includes("昇格した投稿です")).length === 2 && !sp.some((x) => x.includes("重要度4") || x.includes("重要度3")), JSON.stringify(sp.filter((x) => /重要度|昇格/.test(x))));
+    check("重要度は読み上げない・手動昇格のみ「昇格した投稿です」", !sp.some((x) => x.includes("重要度")) && sp.filter((x) => x.includes("昇格した投稿です")).length === 2, JSON.stringify(sp.filter((x) => /重要度|昇格/.test(x))));
     check("保留の見出し: 上位=15,14のみ(手動降格16は読まない)", sp.slice(holdIdx).join("|").includes(titleOfId(15)) && sp.slice(holdIdx).join("|").includes(titleOfId(14)) && !sp.slice(holdIdx).join("|").includes(titleOfId(16)));
     check("最後まで再生したカードは rpc/mark_read via=listen で既読(6件)", s.rec.reads.filter((r) => r.via === "listen").length === 6 && new Set(s.rec.reads.map((r) => r.url)).size === 6, JSON.stringify(s.rec.reads.map((r) => r.via)));
     const fin = await txt(p, "#plFinish");
@@ -784,7 +784,7 @@ const noOverflow = (page) => page.evaluate(() => document.documentElement.scroll
     await until(async () => (await wakeOf(p)).req >= 1, 2000);
     const w1 = await wakeOf(p);
     check("④聴くの再生中は wakeLock.request('screen') を取得", w1.req === 1 && w1.cur.type === "screen" && !w1.cur.released, JSON.stringify(w1));
-    check("④聴く画面に「画面を点灯したままにしてください(ロックすると読み上げが止まります)」", (await vis(p, "#plWake")) && (await txt(p, "#plWake")) === "画面を点灯したままにしてください(ロックすると読み上げが止まります)", await txt(p, "#plWake"));
+    check("④聴く画面に常設の点灯警告(plWake)は無い", (await p.$("#plWake")) === null);
     await p.click("#plToggle");
     check("④止める→点灯を解放", (await wakeOf(p)).cur.released === true && (await wakeOf(p)).rel === 1);
     check("④止めてすぐは「停止中」を出さない", !(await vis(p, "#plStopped")));

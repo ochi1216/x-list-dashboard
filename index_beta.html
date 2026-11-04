@@ -256,7 +256,6 @@
   .ov-bar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
   .ov-bar .grow { flex: 1; text-align: center; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
   .pl-top { flex: 1 1 50%; min-height: 0; display: flex; flex-direction: column; }
-  .pl-hint { margin: 0 12px; padding: 4px 10px; border-radius: 8px; background: rgba(233,69,96,0.12); border: 1px solid rgba(233,69,96,0.35); color: #ffd9e0; font-size: 12px; line-height: 1.5; text-align: center; }
   #plStopped { margin: 8px 12px 0; padding: 14px 10px; border-radius: 14px; background: #4a2036; border: 2px solid var(--accent); color: #fff; font-size: 34px; font-weight: 800; text-align: center; line-height: 1.2; }
   #plInterrupted .intr-title.long { font-size: 40px; font-weight: 800; color: var(--accent); }
   .pl-card { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 18px 16px; }
@@ -564,7 +563,6 @@
       <span class="grow" id="plPos"></span>
       <button type="button" class="btn small" id="plSpeed">1.2x</button>
     </div>
-    <div class="pl-hint" id="plWake">画面を点灯したままにしてください(ロックすると読み上げが止まります)</div>
     <div id="plStopped" hidden role="status">⏹ 停止中</div>
     <div class="pl-card" id="plCard"></div>
   </div>
@@ -3014,12 +3012,11 @@ function utterOf(p) {
 }
 // 読み上げる文章が1つも無いカード(要約・gistが空で本文がURLのみ等)。聴く対象からは外す
 const speakable = (p) => utterOf(p).length > 0;
-// 冒頭の重要度読み上げは5点と手動昇格のみ
+// 冒頭の読み上げは手動昇格のみ(重要度の読み上げはしない)
 function cardItems(p) {
   if (!speakable(p)) return [];
   const items = [];
   const tag = [];
-  if (scoreNum(p) === 5) tag.push("重要度5。");
   if (p.manual_action === "promote") tag.push("昇格した投稿です。");
   if (tag.length) items.push({ kind: "title", text: tag.join("") });
   for (const it of utterOf(p)) items.push(it);
